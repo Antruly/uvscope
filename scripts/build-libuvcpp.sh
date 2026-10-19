@@ -93,4 +93,14 @@ cmake -S "${CMAKE_SRC}" -B "${CMAKE_SRC}/build-uvscope" \
 
 cmake --build "${CMAKE_SRC}/build-uvscope" -j "${JOBS}"
 cmake --install "${CMAKE_SRC}/build-uvscope"
+
+# On MinGW, llhttp is linked as a DLL but upstream's install rules do not
+# always place it in the SDK. Carry it beside libuvcpp.dll.
+if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
+  find "${SRC_DIR}/build-uvscope" -name 'libllhttp.dll' -type f | while read -r dll; do
+    mkdir -p "${PREFIX}/bin"
+    cp -f "${dll}" "${PREFIX}/bin/"
+    echo "installed $(basename "${dll}")"
+  done
+fi
 echo "libuvcpp installed to ${PREFIX}"

@@ -102,6 +102,7 @@ jobs:
           cp -f .deps/libuvcpp/bin/*.dll build-mingw/ 2>/dev/null || true
           cp -f .deps/libuvcpp/lib/*.dll build-mingw/ 2>/dev/null || true
           cp -f "$MINGW_PREFIX/bin/"*.dll build-mingw/ 2>/dev/null || true
+          find .deps/libuvcpp-src/build-uvscope -name 'libllhttp.dll' -type f -exec cp -f {} build-mingw/ \; 2>/dev/null || true
           echo "--- uvscope dependencies ---"
           ldd build-mingw/uvscope.exe || true
           echo "--- PE import tables ---"

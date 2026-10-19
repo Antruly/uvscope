@@ -113,9 +113,11 @@ jobs:
           cp -f .deps/libuvcpp/bin/*.dll build-mingw/ 2>/dev/null || true
           cp -f .deps/libuvcpp/lib/*.dll build-mingw/ 2>/dev/null || true
           cp -f "$MINGW_PREFIX/bin/"*.dll build-mingw/ 2>/dev/null || true
+          find .deps/libuvcpp-src/build-uvscope -name 'libllhttp.dll' -type f -exec cp -f {} build-mingw/ \; 2>/dev/null || true
           timeout 90 ./build-mingw/uvscope.exe --self-check
           cmake --install build-mingw --prefix "$(cygpath -m "$PWD/stage")"
           mkdir -p stage/bin
+          cp -f build-mingw/libllhttp.dll stage/bin/ 2>/dev/null || true
           ldd build-mingw/uvscope.exe | awk '/=>/ {print $3}' | while read -r dep; do
             case "$dep" in
               "$MINGW_PREFIX"/*|"$PWD/build-mingw"/*) cp -f "$dep" stage/bin/ ;;

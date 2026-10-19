@@ -62,6 +62,11 @@ if(WIN32)
     HINTS ${_uvcpp_hints}
     PATH_SUFFIXES bin lib
     DOC "libuvcpp runtime DLL")
+  find_file(UVCPP_LLHTTP_RUNTIME_DLL
+    NAMES libllhttp.dll
+    HINTS ${_uvcpp_hints}
+    PATH_SUFFIXES bin lib
+    DOC "llhttp runtime DLL required by libuvcpp")
 endif()
 
 find_package(OpenSSL REQUIRED)
@@ -172,6 +177,9 @@ install(DIRECTORY "${UVSCOPE_WEB_SOURCE}/"
 if(UVSCOPE_PACKAGE_RUNTIME)
   if(WIN32 AND UVCPP_RUNTIME_DLL)
     install(FILES "${UVCPP_RUNTIME_DLL}" DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    if(UVCPP_LLHTTP_RUNTIME_DLL)
+      install(FILES "${UVCPP_LLHTTP_RUNTIME_DLL}" DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    endif()
   elseif(UNIX)
     install(FILES "${UVCPP_LIBRARY}" DESTINATION "${CMAKE_INSTALL_LIBDIR}/uvscope")
     file(GLOB _uvcpp_runtime_libs
