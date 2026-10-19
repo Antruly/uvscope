@@ -117,9 +117,14 @@ if(WIN32)
     INSTALL_RPATH ""
     BUILD_WITH_INSTALL_RPATH FALSE)
 else()
+  if(APPLE)
+    set(_uvscope_install_rpath "@executable_path/../${CMAKE_INSTALL_LIBDIR}/uvscope")
+  else()
+    set(_uvscope_install_rpath "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/uvscope")
+  endif()
   set_target_properties(uvscope PROPERTIES
     BUILD_RPATH "${UVCPP_LIBRARY_DIR}"
-    INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/uvscope"
+    INSTALL_RPATH "${_uvscope_install_rpath}"
     BUILD_WITH_INSTALL_RPATH FALSE)
 endif()
 
