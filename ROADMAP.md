@@ -28,7 +28,6 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Light / dark / system theme switching
 - [ ] Page-by-page light-theme color audit for every workbench
 - [x] Raw / preview / hex switching for binary and truncated bodies
-- [ ] Translate the remaining workbench pages (HTTP, WebSocket, TCP/UDP, SOAP, TLS, proxy, settings, help)
 
 ## 0.3 — transport workbench
 
