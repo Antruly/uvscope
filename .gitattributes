@@ -1,0 +1,6 @@
+# Keep shell scripts and patches LF on every platform. Without this, a Windows
+# checkout with core.autocrlf=true converts the patch text to CRLF and
+# `git apply` refuses to match the LF sources of libuvcpp.
+* text=auto
+*.patch text eol=lf
+*.sh text eol=lf
