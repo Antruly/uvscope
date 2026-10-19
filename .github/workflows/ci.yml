@@ -88,6 +88,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
+          export PATH="$PWD/.deps/libuvcpp/bin:$MINGW_PREFIX/bin:$PATH"
           bash ./scripts/build-libuvcpp.sh .deps/libuvcpp-src .deps/libuvcpp
           UVCPP_DIR="$(cygpath -m "$PWD/.deps/libuvcpp")"
           OPENSSL_DIR="$(cygpath -m "$MINGW_PREFIX")"
