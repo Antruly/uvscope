@@ -156,7 +156,7 @@ jobs:
           name: web-dist
           path: web/dist
       - name: Dependencies
-        run: brew install cmake ninja libuv openssl@3 sqlite dylibbundler
+        run: brew install cmake ninja libuv openssl@3 sqlite
       - name: Build
         env:
           OPENSSL_ROOT_DIR: ""
@@ -175,7 +175,10 @@ jobs:
         run: |
           mkdir -p packages stage
           cmake --install build --prefix "$PWD/stage"
-          dylibbundler -of -cd -b -x stage/bin/uvscope -d stage/lib/uvscope -p @executable_path/../lib/uvscope || true
+          # macOS 0.1.0 is a source-oriented build: libuvcpp and llhttp are
+          # bundled; Homebrew supplies libuv and OpenSSL. Record the linkage for
+          # diagnostics and ad-hoc sign the executable.
+          otool -L stage/bin/uvscope || true
           codesign --force --deep -s - stage/bin/uvscope || true
           VERSION="${GITHUB_REF_NAME#v}"
           tar -C stage -czf "packages/uvscope-${VERSION}-macos-arm64.tar.gz" .
