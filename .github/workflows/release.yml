@@ -71,7 +71,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
-          path: packages/*
+          path: packages/uvscope*
           if-no-files-found: error
 
   windows:
@@ -142,7 +142,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: packages/*
+          path: packages/uvscope*
           if-no-files-found: error
 
   macos:
@@ -183,7 +183,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: packages/*
+          path: packages/uvscope*
           if-no-files-found: error
 
   publish:
