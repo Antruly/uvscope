@@ -439,7 +439,7 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 ### 构建事实
 
 - libuvcpp 1.8.0 的上游 TLS 客户端缺少 SNI。uvscope 携带补丁，CI 构建时应用到 libuvcpp 源码。
-- 0.1.0 发布构建默认关闭 libuvcpp 的 HTTP/2、QUIC、HTTP/3 选项，避免发布“能选但不可用”的协议路径。
+- 0.2.0 发布构建默认关闭 libuvcpp 的 HTTP/2、QUIC、HTTP/3 选项，避免发布“能选但不可用”的协议路径。
 - 本地开发可以打开这些选项做实验，但不应把它们写进稳定版发行说明。
 - Windows 使用 MinGW-w64，不使用 MSVC 作为默认工具链。
 
