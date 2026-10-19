@@ -175,7 +175,7 @@ jobs:
         run: |
           mkdir -p packages stage
           cmake --install build --prefix "$PWD/stage"
-          timeout 180 dylibbundler -of -cd -b -x stage/bin/uvscope -d stage/lib/uvscope -p @executable_path/../lib/uvscope || true
+          dylibbundler -of -cd -b -x stage/bin/uvscope -d stage/lib/uvscope -p @executable_path/../lib/uvscope || true
           codesign --force --deep -s - stage/bin/uvscope || true
           VERSION="${GITHUB_REF_NAME#v}"
           tar -C stage -czf "packages/uvscope-${VERSION}-macos-arm64.tar.gz" .
