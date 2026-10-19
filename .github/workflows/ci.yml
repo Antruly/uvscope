@@ -104,6 +104,16 @@ jobs:
           cp -f "$MINGW_PREFIX/bin/"*.dll build-mingw/ 2>/dev/null || true
           echo "--- uvscope dependencies ---"
           ldd build-mingw/uvscope.exe || true
+          echo "--- PE import tables ---"
+          for f in build-mingw/uvscope.exe build-mingw/libuvcpp.dll; do
+            echo "== $f"
+            objdump -p "$f" | grep "DLL Name" || true
+          done
+          echo "--- copied ssl/uv DLLs ---"
+          ls -1 build-mingw/libssl* build-mingw/libuv* build-mingw/libcrypto* build-mingw/libsqlite* 2>/dev/null || true
+          printf '#include <cstdio>\nint main(){std::printf("hello\\n");return 0;}\n' > build-mingw/hello.cpp
+          g++ build-mingw/hello.cpp -o build-mingw/hello.exe
+          ./build-mingw/hello.exe || true
           set +e
           ./build-mingw/uvscope.exe --version
           echo "bash version rc=$?"

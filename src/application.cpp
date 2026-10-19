@@ -173,6 +173,7 @@ Application::Application(AppOptions options)
       started_at_(now_iso8601()) {}
 
 Application::~Application() {
+  if (update_thread_.joinable()) update_thread_.join();
   if (proxies_) proxies_->stop_all();
 }
 

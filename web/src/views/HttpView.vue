@@ -4,10 +4,12 @@ import Icon from '../components/Icon.vue'
 import { del, errorMessage, get, post } from '../api'
 import type { HistoryEntry, HttpHeader, HttpResult } from '../types'
 import { useUiStore } from '../stores/ui'
+import { useAuthStore } from '../stores/auth'
 
 defineOptions({ name: 'HttpView' })
 
 const ui = useUiStore()
+const auth = useAuthStore()
 const method = ref('GET')
 const url = ref('https://httpbin.org/anything')
 const protocol = ref<'http1' | 'http2' | 'http3'>('http1')
@@ -413,7 +415,7 @@ onBeforeUnmount(() => {
           <Icon name="clock" :size="18" />
           <span>No requests sent yet.</span>
         </div>
-        <button v-if="history.length" class="history-clear" @click="clearHistory">
+        <button v-if="history.length && auth.isAdmin" class="history-clear" @click="clearHistory">
           <Icon name="trash" :size="14" />Clear history
         </button>
       </aside>
