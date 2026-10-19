@@ -110,16 +110,18 @@ jobs:
             -DUVCPP_ROOT="$UVCPP_DIR" \
             -DOPENSSL_ROOT_DIR="$OPENSSL_DIR"
           cmake --build build-mingw -j"$(nproc)"
-          ./build-mingw/uvscope.exe --self-check
+          cp -f .deps/libuvcpp/bin/*.dll build-mingw/ 2>/dev/null || true
+          cp -f .deps/libuvcpp/lib/*.dll build-mingw/ 2>/dev/null || true
+          cp -f "$MINGW_PREFIX/bin/"*.dll build-mingw/ 2>/dev/null || true
+          timeout 90 ./build-mingw/uvscope.exe --self-check
           cmake --install build-mingw --prefix "$(cygpath -m "$PWD/stage")"
-          mkdir -p stage/bin stage/web
-          for dll in libuv.dll libllhttp.dll zlib1.dll libsqlite3-0.dll \
-                     libssl-3-x64.dll libcrypto-3-x64.dll libgcc_s_seh-1.dll \
-                     libstdc++-6.dll libwinpthread-1.dll; do
-            if [ -f "$MINGW_PREFIX/bin/$dll" ]; then cp "$MINGW_PREFIX/bin/$dll" stage/bin/; fi
+          mkdir -p stage/bin
+          ldd build-mingw/uvscope.exe | awk '/=>/ {print $3}' | while read -r dep; do
+            case "$dep" in
+              "$MINGW_PREFIX"/*|"$PWD/build-mingw"/*) cp -f "$dep" stage/bin/ ;;
+            esac
           done
           curl -fsSL https://curl.se/ca/cacert.pem -o stage/bin/cacert.pem
-          cp -f "$PWD/web/dist/"* -r stage/web/ 2>/dev/null || true
       - name: Create zip
         shell: pwsh
         run: |
@@ -170,7 +172,7 @@ jobs:
         run: |
           mkdir -p packages stage
           cmake --install build --prefix "$PWD/stage"
-          dylibbundler -cd -b -x stage/bin/uvscope -d stage/lib -p @executable_path/../lib || true
+          dylibbundler -cd -b -x stage/bin/uvscope -d stage/lib/uvscope -p @executable_path/../lib/uvscope || true
           codesign --force --deep -s - stage/bin/uvscope || true
           VERSION="${GITHUB_REF_NAME#v}"
           tar -C stage -czf "packages/uvscope-${VERSION}-macos-arm64.tar.gz" .

@@ -1,6 +1,6 @@
 ; uvscope Windows installer (Inno Setup 6+)
 ; Build with: iscc packaging\windows\uvscope.iss
-; Expects the CMake install tree under stage\ (bin/, web/).
+; Expects the CMake install tree under stage\ (bin/, share/uvscope/web/).
 
 #define MyAppName "uvscope"
 #define MyAppVersion "0.1.0"
@@ -41,7 +41,7 @@ Name: "addtopath"; Description: "Add uvscope to the user PATH"; GroupDescription
 
 [Files]
 Source: "..\..\stage\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "..\..\stage\web\*"; DestDir: "{app}\web"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\..\stage\share\uvscope\web\*"; DestDir: "{app}\web"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion

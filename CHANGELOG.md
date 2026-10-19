@@ -23,7 +23,9 @@ All notable changes to uvscope are documented here. The format is based on
 - SOAP/WSDL workbench: fetch or paste WSDL, operation discovery, SOAPAction, envelope generation
   and Fault display.
 - Managed HTTP reverse proxy: create, edit, start/stop, delete, TLS listener paths and live logs.
-- Module toggles, user management, password reset, factory reset, update check, about and help.
+- Module toggles, user management, password reset, factory reset, scheduled/manual update check,
+  about and help.
+- TLS Inspector accepts both PEM text and binary DER uploads.
 - Linux/Windows/macOS build scaffolding, GitHub Actions CI/release workflows, CPack deb/rpm and
   Windows Inno Setup installer script.
 

@@ -98,16 +98,14 @@ jobs:
           cmake --build build-mingw -j"$(nproc)"
           # MinGW resolves dependent DLLs at process start. Put the private SDK
           # and toolchain runtimes next to the executable for self-check.
+          ls -l build-mingw/uvscope.exe
           cp -f .deps/libuvcpp/bin/*.dll build-mingw/ 2>/dev/null || true
           cp -f .deps/libuvcpp/lib/*.dll build-mingw/ 2>/dev/null || true
-          for dll in libuv.dll libllhttp.dll zlib1.dll libsqlite3-0.dll \
-                     libssl-3-x64.dll libcrypto-3-x64.dll libgcc_s_seh-1.dll \
-                     libstdc++-6.dll libwinpthread-1.dll; do
-            cp -f "$MINGW_PREFIX/bin/$dll" build-mingw/ 2>/dev/null || true
-          done
-          ldd build-mingw/uvscope.exe | grep -i 'not found' || true
+          cp -f "$MINGW_PREFIX/bin/"*.dll build-mingw/ 2>/dev/null || true
+          echo "--- uvscope dependencies ---"
+          ldd build-mingw/uvscope.exe || true
           ./build-mingw/uvscope.exe --version
-          ./build-mingw/uvscope.exe --self-check
+          timeout 90 ./build-mingw/uvscope.exe --self-check
 
   macos:
     name: macOS arm64

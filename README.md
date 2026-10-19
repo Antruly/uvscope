@@ -2,6 +2,9 @@
 
 **A libuvcpp-powered, local-first multi-protocol web debugging workbench and gateway.**
 
+[![CI](https://github.com/Antruly/uvscope/actions/workflows/ci.yml/badge.svg)](https://github.com/Antruly/uvscope/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 uvscope puts HTTP, WebSocket, TCP, UDP, TLS, SOAP/WSDL and managed reverse proxies behind one
 Vue 3 control plane. A single C++ daemon owns the event loop, SQLite store, authentication and
 all outbound network traffic; the browser only renders state and sends commands.

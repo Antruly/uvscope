@@ -26,6 +26,7 @@
   --warn: #f0b35c;
   --warn-rgb: 240, 179, 92;
   --ok: #62e6a7;
+  --ok-rgb: 98, 230, 167;
   --brand-bg: #0c1420;
   --brand-border: rgba(124, 156, 255, 0.22);
   --grid-line: rgba(124, 156, 255, 0.045);
@@ -65,6 +66,7 @@
   --warn: #b87514;
   --warn-rgb: 184, 117, 20;
   --ok: #0e9f67;
+  --ok-rgb: 14, 159, 103;
   --brand-bg: #ffffff;
   --brand-border: rgba(73, 103, 232, 0.18);
   --grid-line: rgba(73, 103, 232, 0.055);
@@ -396,8 +398,8 @@ kbd {
 }
 .chip--success {
   color: var(--ok);
-  border-color: rgba(var(--ok), 0.28);
-  background: rgba(var(--ok), 0.08);
+  border-color: rgba(var(--ok-rgb), 0.28);
+  background: rgba(var(--ok-rgb), 0.08);
 }
 .chip--warn {
   color: var(--warn);
