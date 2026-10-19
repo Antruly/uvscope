@@ -29,11 +29,14 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 
 ![HTTP Studio](docs/screenshots/http-studio.png)
 
-## What is in 0.1.0
+## What is in 0.2.0
 
 | Area | Status |
 | --- | --- |
 | HTTP/1.1 request debugger with headers, body, timing and history | ✅ Stable |
+| Response preview: sandboxed HTML, images, audio, video and PDF | ✅ New in 0.2.0 |
+| Chinese / English UI with browser-language detection and manual switch | ✅ New in 0.2.0 |
+| Dark / light / follow-system theme | ✅ New in 0.2.0 |
 | HTTPS with system CA bundle / explicit insecure mode | ✅ Stable |
 | WebSocket console (browser-native, text + binary) | ✅ Stable |
 | TCP and UDP one-shot probes (text / hex) | ✅ Stable |
@@ -42,7 +45,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Managed HTTP reverse proxy with live logs | ✅ Stable |
 | SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
 | Module toggles, factory reset, update check, about/help | ✅ Stable |
-| HTTP/2 and HTTP/3 wire transports | 🧪 Experimental protocol preference (HTTP/1.1 is the reliable path in 0.1.0) |
+| HTTP/2 and HTTP/3 wire transports | 🧪 Experimental protocol preference (HTTP/1.1 is the reliable path in 0.2.0) |
 | Persistent TCP/UDP listeners, raw QUIC streams, HTTP/3 server | 🗺️ Roadmap |
 
 The UI exposes HTTP/2 and HTTP/3 as protocol preferences so the protocol plumbing can be tested.
@@ -57,10 +60,10 @@ upstream validation on every target. Use HTTP/1.1 for production debugging today
 
 ## Download
 
-Prebuilt **v0.1.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.1.0):
+Prebuilt **v0.2.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.2.0):
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.1.0-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.2.0-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 ## Quick start
@@ -88,8 +91,8 @@ cd uvscope
 ./build/uvscope --port 8787 --open
 ```
 
-`build.sh` clones libuvcpp v1.8.0 into `.deps/`, applies the TLS SNI fix from
-[`patches/`](patches/libuvcpp-1.8.0-sni.patch), builds the frontend, then builds uvscope.
+`build.sh` clones libuvcpp v1.8.0 into `.deps/`, applies the upstream fixes from
+[`patches/upstream/`](patches/upstream/), builds the frontend, then builds uvscope.
 
 If you already have a patched libuvcpp SDK:
 

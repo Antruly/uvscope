@@ -9,9 +9,12 @@ import BrandMark from './components/BrandMark.vue'
 import { useAuthStore } from './stores/auth'
 import { useTabsStore } from './stores/tabs'
 import { useUiStore } from './stores/ui'
+import { useI18nStore } from './stores/i18n'
 
 const auth = useAuthStore()
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const tabs = useTabsStore()
 const router = useRouter()
 const loading = ref(true)
@@ -24,7 +27,7 @@ async function bootstrap() {
   if (state === 'ready') {
     await router.replace(router.currentRoute.value.path === '/' ? '/' : router.currentRoute.value.fullPath)
   } else if (state === 'login' && auth.statusError) {
-    ui.notify('error', 'Cannot reach uvscope', auth.statusError)
+    ui.notify('error', t('app.cannotReach'), auth.statusError)
   }
 }
 
@@ -38,7 +41,7 @@ function authenticated() {
 function unauthorized() {
   if (!auth.isAuthenticated) return
   auth.clearSession()
-  ui.notify('warning', 'Session expired', 'Sign in again to continue.')
+  ui.notify('warning', t('shell.sessionExpired'), t('shell.sessionExpiredBody'))
   router.replace('/')
 }
 
@@ -57,7 +60,7 @@ onBeforeUnmount(() => window.removeEventListener('uvscope:unauthorized', unautho
       <BrandMark :size="58" />
       <div class="splash__word">uvscope</div>
       <div class="splash__line"><span /></div>
-      <p>Warming up the protocol workbench</p>
+      <p>{{ t('app.warming') }}</p>
     </div>
 
     <SetupView v-else-if="auth.setupRequired" @authenticated="authenticated" />

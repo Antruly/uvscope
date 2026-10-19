@@ -4,10 +4,13 @@ import Icon from '../components/Icon.vue'
 import { errorMessage, post } from '../api'
 import type { CertificateInfo } from '../types'
 import { useUiStore } from '../stores/ui'
+import { useI18nStore } from '../stores/i18n'
 
 defineOptions({ name: 'TlsView' })
 
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const pem = ref('')
 const info = ref<CertificateInfo | null>(null)
 const error = ref('')
@@ -32,7 +35,7 @@ const validityTone = computed(() => {
 
 async function parse() {
   if (!pem.value.trim()) {
-    ui.notify('warning', 'Paste a PEM or DER certificate first')
+    ui.notify('warning', t('tls.msg.needInput'))
     return
   }
   parsing.value = true
@@ -41,10 +44,10 @@ async function parse() {
   if (pem.value.includes('-----BEGIN CERTIFICATE-----')) inputEncoding.value = 'text'
   try {
     info.value = await post<CertificateInfo>('/api/tls/inspect', { pem: pem.value, encoding: inputEncoding.value })
-    ui.notify('success', 'Certificate decoded')
+    ui.notify('success', t('tls.msg.decoded'))
   } catch (err) {
     error.value = errorMessage(err)
-    ui.toastError(err, 'Certificate could not be parsed')
+    ui.toastError(err, t('tls.msg.parseFailed'))
   } finally {
     parsing.value = false
   }
@@ -55,7 +58,7 @@ async function loadFile(event: Event) {
   const file = target.files?.[0]
   if (!file) return
   if (file.size > 1024 * 1024) {
-    ui.notify('warning', 'Certificate file is larger than 1 MiB')
+    ui.notify('warning', t('tls.msg.fileTooLarge'))
     return
   }
   const bytes = new Uint8Array(await file.arrayBuffer())
@@ -76,16 +79,16 @@ async function loadFile(event: Event) {
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text)
-    ui.notify('success', 'Copied')
+    ui.notify('success', t('tls.msg.copied'))
   } catch {
-    ui.notify('error', 'Clipboard access denied')
+    ui.notify('error', t('tls.msg.clipboardDenied'))
   }
 }
 
 function loadExample() {
   pem.value = ''
   inputEncoding.value = 'text'
-  ui.notify('info', 'Paste PEM text or upload a PEM/DER file to decode it')
+  ui.notify('info', t('tls.msg.hint'))
 }
 </script>
 
@@ -93,12 +96,12 @@ function loadExample() {
   <div class="page tls-page">
     <header class="page-head">
       <div>
-        <span class="eyebrow">TLS Inspector</span>
-        <h2>Know what the handshake trusts.</h2>
-        <p>Decode a PEM certificate or DER file locally. Nothing is uploaded to a third party.</p>
+        <span class="eyebrow">{{ t('tls.head.eyebrow') }}</span>
+        <h2>{{ t('tls.head.title') }}</h2>
+        <p>{{ t('tls.head.lead') }}</p>
       </div>
       <div class="page-head__actions">
-        <button class="button" @click="fileInput?.click()"><Icon name="upload" :size="16" />Upload certificate</button>
+        <button class="button" @click="fileInput?.click()"><Icon name="upload" :size="16" />{{ t('tls.upload') }}</button>
         <input ref="fileInput" type="file" accept=".pem,.crt,.cer,.der" hidden @change="loadFile" />
       </div>
     </header>
@@ -106,31 +109,31 @@ function loadExample() {
     <div class="tls-grid">
       <section class="card tls-input">
         <header class="card__head">
-          <div><span class="eyebrow">Input</span><h3>Certificate material</h3></div>
+          <div><span class="eyebrow">{{ t('tls.input.eyebrow') }}</span><h3>{{ t('tls.input.title') }}</h3></div>
           <span class="chip mono">PEM / DER</span>
         </header>
         <textarea v-model="pem" class="code-input code-input--cert" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----&#10;…&#10;-----END CERTIFICATE-----" />
         <div class="form-actions">
-          <button class="link-button" @click="loadExample">Paste a placeholder</button>
+          <button class="link-button" @click="loadExample">{{ t('tls.input.placeholderButton') }}</button>
           <button class="button button--primary" :disabled="parsing" @click="parse">
-            <span v-if="parsing" class="spinner" /><Icon v-else name="shield" :size="16" />Decode certificate
+            <span v-if="parsing" class="spinner" /><Icon v-else name="shield" :size="16" />{{ t('tls.input.decode') }}
           </button>
         </div>
         <div v-if="error" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ error }}</div>
         <div class="inline-alert inline-alert--info">
           <Icon name="lock" :size="16" />
-          <span>Chain parsing shows the leaf first in 0.1.0. Live TLS handshake inspection is planned next.</span>
+          <span>{{ t('tls.input.note') }}</span>
         </div>
       </section>
 
       <section class="card tls-result">
         <header class="card__head">
-          <div><span class="eyebrow">Decoded</span><h3>Certificate profile</h3></div>
+          <div><span class="eyebrow">{{ t('tls.result.eyebrow') }}</span><h3>{{ t('tls.result.title') }}</h3></div>
           <div v-if="info" class="card__tools">
             <span class="status-pill" :class="`status-pill--${info.expired ? 'bad' : info.daysRemaining < 30 ? 'warn' : 'ok'}`">
-              {{ info.expired ? 'EXPIRED' : `${info.daysRemaining} days left` }}
+              {{ info.expired ? t('tls.result.expired') : t('tls.result.daysLeft', { count: info.daysRemaining }) }}
             </span>
-            <button class="icon-button icon-button--sm" title="Copy JSON" @click="copy(JSON.stringify(info, null, 2))"><Icon name="copy" :size="15" /></button>
+            <button class="icon-button icon-button--sm" :title="t('tls.result.copyJson')" @click="copy(JSON.stringify(info, null, 2))"><Icon name="copy" :size="15" /></button>
           </div>
         </header>
 
@@ -139,8 +142,8 @@ function loadExample() {
             <div class="cert-art__ring" />
             <Icon name="shield" :size="30" />
           </div>
-          <h3>No certificate decoded</h3>
-          <p>Upload a certificate or paste PEM text to inspect subject, issuer, SANs, key usage and validity.</p>
+          <h3>{{ t('tls.empty.title') }}</h3>
+          <p>{{ t('tls.empty.body') }}</p>
         </div>
         <template v-else>
           <div class="cert-hero">
@@ -149,10 +152,10 @@ function loadExample() {
             </div>
             <div class="cert-hero__copy">
               <h4>{{ info.subject }}</h4>
-              <p>Issued by {{ info.issuer }}</p>
+              <p>{{ t('tls.cert.issuedBy', { issuer: info.issuer }) }}</p>
               <div class="chip-row">
                 <span class="chip">v{{ info.version }}</span>
-                <span v-if="info.selfSigned" class="chip chip--warn">self-signed</span>
+                <span v-if="info.selfSigned" class="chip chip--warn">{{ t('tls.cert.selfSigned') }}</span>
                 <span class="chip mono">{{ info.publicKey.algorithm }} {{ info.publicKey.bits }} bit</span>
               </div>
             </div>
@@ -162,40 +165,40 @@ function loadExample() {
             <div class="validity__labels"><span>{{ info.notBefore }}</span><span>{{ info.notAfter }}</span></div>
             <div class="validity__bar"><span :class="`validity__bar--${validityTone}`" :style="{ width: `${validityPercent}%` }" /></div>
             <div class="validity__foot">
-              <span><i class="status-dot" :class="{ 'status-dot--warn': validityTone === 'warn', 'status-dot--bad': validityTone === 'bad' }" />{{ info.expired ? 'outside validity window' : 'currently valid' }}</span>
-              <span class="mono">{{ validityPercent.toFixed(0) }}% of lifetime</span>
+              <span><i class="status-dot" :class="{ 'status-dot--warn': validityTone === 'warn', 'status-dot--bad': validityTone === 'bad' }" />{{ info.expired ? t('tls.validity.outside') : t('tls.validity.current') }}</span>
+              <span class="mono">{{ t('tls.validity.lifetime', { percent: validityPercent.toFixed(0) }) }}</span>
             </div>
           </div>
 
           <div class="cert-grid">
-            <div class="cert-field"><span>Serial</span><code class="mono">{{ info.serial }}</code></div>
-            <div class="cert-field"><span>Signature</span><code class="mono">{{ info.signatureAlgorithm }}</code></div>
-            <div class="cert-field cert-field--wide"><span>SHA-256 fingerprint</span><code class="mono">{{ info.fingerprintSha256 }}</code></div>
+            <div class="cert-field"><span>{{ t('tls.field.serial') }}</span><code class="mono">{{ info.serial }}</code></div>
+            <div class="cert-field"><span>{{ t('tls.field.signature') }}</span><code class="mono">{{ info.signatureAlgorithm }}</code></div>
+            <div class="cert-field cert-field--wide"><span>{{ t('tls.field.fingerprint') }}</span><code class="mono">{{ info.fingerprintSha256 }}</code></div>
           </div>
 
           <div class="cert-section">
-            <div class="cert-section__head"><span>Subject alternative names</span><span class="mono">{{ info.san.length }}</span></div>
+            <div class="cert-section__head"><span>{{ t('tls.field.san') }}</span><span class="mono">{{ info.san.length }}</span></div>
             <div v-if="info.san.length" class="san-list">
               <span v-for="name in info.san" :key="name.type + name.value" class="san-chip">
                 <small>{{ name.type }}</small>{{ name.value }}
               </span>
             </div>
-            <p v-else class="muted">No subject alternative names.</p>
+            <p v-else class="muted">{{ t('tls.field.noSan') }}</p>
           </div>
 
           <div class="cert-columns">
             <div class="cert-section">
-              <div class="cert-section__head"><span>Key usage</span></div>
+              <div class="cert-section__head"><span>{{ t('tls.field.keyUsage') }}</span></div>
               <div class="usage-list">
                 <span v-for="usage in info.keyUsage" :key="usage" class="usage-chip">{{ usage }}</span>
-                <span v-if="!info.keyUsage.length" class="muted">Not restricted</span>
+                <span v-if="!info.keyUsage.length" class="muted">{{ t('tls.field.notRestricted') }}</span>
               </div>
             </div>
             <div class="cert-section">
-              <div class="cert-section__head"><span>Extended usage</span></div>
+              <div class="cert-section__head"><span>{{ t('tls.field.eku') }}</span></div>
               <div class="usage-list">
                 <span v-for="usage in info.extendedKeyUsage" :key="usage" class="usage-chip">{{ usage }}</span>
-                <span v-if="!info.extendedKeyUsage.length" class="muted">Not specified</span>
+                <span v-if="!info.extendedKeyUsage.length" class="muted">{{ t('tls.field.notSpecified') }}</span>
               </div>
             </div>
           </div>

@@ -3,10 +3,13 @@ import { computed, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import { errorMessage, post } from '../api'
 import { useUiStore } from '../stores/ui'
+import { useI18nStore } from '../stores/i18n'
 
 defineOptions({ name: 'TransportView' })
 
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const mode = ref<'tcp' | 'udp'>('tcp')
 const host = ref('example.com')
 const port = ref(80)
@@ -41,7 +44,7 @@ function switchMode(next: 'tcp' | 'udp') {
 
 async function probe() {
   if (!host.value.trim() || !port.value) {
-    ui.notify('warning', 'Host and port are required')
+    ui.notify('warning', t('transport.notify.hostPortRequired'))
     return
   }
   running.value = true
@@ -66,10 +69,10 @@ async function probe() {
           timeoutMs: udpTimeoutMs.value,
         }
     result.value = await post<Record<string, unknown>>(path, body)
-    if (!result.value.ok) ui.notify('error', 'Probe failed', String(result.value.error || ''))
+    if (!result.value.ok) ui.notify('error', t('transport.notify.probeFailed'), String(result.value.error || ''))
   } catch (err) {
     error.value = errorMessage(err)
-    ui.toastError(err, 'Probe failed')
+    ui.toastError(err, t('transport.notify.probeFailed'))
   } finally {
     running.value = false
   }
@@ -85,9 +88,9 @@ function displayPayload(value: Record<string, unknown> | null) {
   <div class="page transport-page">
     <header class="page-head">
       <div>
-        <span class="eyebrow">Transport bench</span>
-        <h2>Bytes, without the ceremony.</h2>
-        <p>Open a one-shot TCP connection or fire a UDP datagram through the libuvcpp net layer.</p>
+        <span class="eyebrow">{{ t('transport.header.eyebrow') }}</span>
+        <h2>{{ t('transport.header.title') }}</h2>
+        <p>{{ t('transport.header.lead') }}</p>
       </div>
       <div class="page-head__actions">
         <div class="segmented">
@@ -100,80 +103,80 @@ function displayPayload(value: Record<string, unknown> | null) {
     <div class="transport-grid">
       <section class="card transport-form">
         <header class="card__head">
-          <div><span class="eyebrow">{{ mode.toUpperCase() }} client</span><h3>One-shot probe</h3></div>
+          <div><span class="eyebrow">{{ t('transport.form.client', { mode: mode.toUpperCase() }) }}</span><h3>{{ t('transport.form.title') }}</h3></div>
           <span class="chip mono">{{ isTcp ? 'stream' : 'datagram' }}</span>
         </header>
 
         <div class="form-grid">
-          <label class="field field--grow"><span>Host</span><input v-model="host" class="mono" spellcheck="false" placeholder="127.0.0.1" /></label>
-          <label class="field field--port"><span>Port</span><input v-model.number="port" type="number" min="1" max="65535" class="mono" /></label>
+          <label class="field field--grow"><span>{{ t('transport.form.host') }}</span><input v-model="host" class="mono" spellcheck="false" placeholder="127.0.0.1" /></label>
+          <label class="field field--port"><span>{{ t('transport.form.port') }}</span><input v-model.number="port" type="number" min="1" max="65535" class="mono" /></label>
         </div>
 
         <div class="form-grid">
           <label class="field">
-            <span>Payload encoding</span>
+            <span>{{ t('transport.form.encoding') }}</span>
             <select v-model="encoding" class="select">
-              <option value="text">UTF-8 text</option>
-              <option value="hex">Hex bytes</option>
+              <option value="text">{{ t('transport.form.encodingText') }}</option>
+              <option value="hex">{{ t('transport.form.encodingHex') }}</option>
             </select>
           </label>
-          <label v-if="isTcp" class="field"><span>Connect timeout</span><input v-model.number="connectTimeoutMs" type="number" min="200" class="mono" /></label>
-          <label v-if="isTcp" class="field"><span>Read timeout</span><input v-model.number="readTimeoutMs" type="number" min="0" class="mono" /></label>
-          <label v-else class="field"><span>Receive timeout</span><input v-model.number="udpTimeoutMs" type="number" min="100" class="mono" /></label>
+          <label v-if="isTcp" class="field"><span>{{ t('transport.form.connectTimeout') }}</span><input v-model.number="connectTimeoutMs" type="number" min="200" class="mono" /></label>
+          <label v-if="isTcp" class="field"><span>{{ t('transport.form.readTimeout') }}</span><input v-model.number="readTimeoutMs" type="number" min="0" class="mono" /></label>
+          <label v-else class="field"><span>{{ t('transport.form.receiveTimeout') }}</span><input v-model.number="udpTimeoutMs" type="number" min="100" class="mono" /></label>
         </div>
 
         <label class="field">
-          <span>Payload</span>
-          <textarea v-model="payload" class="code-input code-input--short" spellcheck="false" :placeholder="encoding === 'hex' ? '48 65 6c 6c 6f' : 'Bytes to send…'" />
+          <span>{{ t('transport.form.payload') }}</span>
+          <textarea v-model="payload" class="code-input code-input--short" spellcheck="false" :placeholder="encoding === 'hex' ? '48 65 6c 6c 6f' : t('transport.form.payloadPlaceholder')" />
         </label>
 
         <div class="form-actions">
-          <span class="muted">{{ payload.length }} chars · encrypted transport is configured per endpoint</span>
+          <span class="muted">{{ t('transport.form.meta', { count: payload.length }) }}</span>
           <button class="button button--primary" :disabled="running" @click="probe">
             <span v-if="running" class="spinner" />
             <Icon v-else :name="isTcp ? 'bolt' : 'send'" :size="16" />
-            {{ running ? 'Probing…' : isTcp ? 'Open TCP connection' : 'Send datagram' }}
+            {{ running ? t('transport.form.probing') : isTcp ? t('transport.form.openTcp') : t('transport.form.sendDatagram') }}
           </button>
         </div>
         <div class="inline-alert inline-alert--info">
           <Icon name="spark" :size="16" />
-          <span>Persistent TCP/UDP listeners and raw QUIC streams are planned for 0.2. This bench is a one-shot probe.</span>
+          <span>{{ t('transport.form.info') }}</span>
         </div>
       </section>
 
       <section class="card transport-result">
         <header class="card__head">
-          <div><span class="eyebrow">Result</span><h3>Wire transcript</h3></div>
+          <div><span class="eyebrow">{{ t('transport.result.eyebrow') }}</span><h3>{{ t('transport.result.title') }}</h3></div>
           <div v-if="result" class="status-pill" :class="result.ok ? 'status-pill--ok' : 'status-pill--bad'">
-            {{ result.ok ? 'COMPLETE' : 'FAILED' }}
+            {{ result.ok ? t('transport.result.complete') : t('transport.result.failed') }}
           </div>
         </header>
 
         <div v-if="error" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ error }}</div>
         <div v-else-if="!result" class="transport-empty">
           <div class="response-empty__art"><Icon name="layers" :size="28" /></div>
-          <h3>No wire data yet</h3>
-          <p>Send a probe to inspect raw bytes, timing and the peer response.</p>
+          <h3>{{ t('transport.empty.title') }}</h3>
+          <p>{{ t('transport.empty.body') }}</p>
         </div>
         <template v-else>
           <div class="wire-meta">
-            <div><span>Target</span><strong class="mono">{{ result.host }}:{{ result.port }}</strong></div>
-            <div><span>Elapsed</span><strong>{{ timing.totalMs ?? '—' }} ms</strong></div>
-            <div v-if="isTcp"><span>Connect</span><strong>{{ timing.connectMs ?? '—' }} ms</strong></div>
-            <div><span>Read</span><strong>{{ result.readTimedOut ? 'timed out' : 'complete' }}</strong></div>
+            <div><span>{{ t('transport.meta.target') }}</span><strong class="mono">{{ result.host }}:{{ result.port }}</strong></div>
+            <div><span>{{ t('transport.meta.elapsed') }}</span><strong>{{ timing.totalMs ?? '—' }} ms</strong></div>
+            <div v-if="isTcp"><span>{{ t('transport.meta.connect') }}</span><strong>{{ timing.connectMs ?? '—' }} ms</strong></div>
+            <div><span>{{ t('transport.meta.read') }}</span><strong>{{ result.readTimedOut ? t('transport.meta.timedOut') : t('transport.meta.complete') }}</strong></div>
           </div>
           <div v-if="result.error" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ result.error }}</div>
           <div class="wire-block">
-            <div class="wire-block__head"><span><Icon name="upload" :size="14" />Sent</span><span class="mono">{{ sent?.length ?? 0 }} B</span></div>
-            <pre>{{ displayPayload(sent) || '(empty payload)' }}</pre>
+            <div class="wire-block__head"><span><Icon name="upload" :size="14" />{{ t('transport.wire.sent') }}</span><span class="mono">{{ sent?.length ?? 0 }} B</span></div>
+            <pre>{{ displayPayload(sent) || t('transport.wire.emptyPayload') }}</pre>
           </div>
           <div class="wire-block wire-block--receive">
-            <div class="wire-block__head"><span><Icon name="download" :size="14" />Received</span><span class="mono">{{ received?.length ?? 0 }} B</span></div>
-            <pre>{{ displayPayload(received) || (result.readTimedOut ? 'No datagram before the receive timeout.' : '(no bytes)') }}</pre>
+            <div class="wire-block__head"><span><Icon name="download" :size="14" />{{ t('transport.wire.received') }}</span><span class="mono">{{ received?.length ?? 0 }} B</span></div>
+            <pre>{{ displayPayload(received) || (result.readTimedOut ? t('transport.wire.noDatagram') : t('transport.wire.noBytes')) }}</pre>
           </div>
           <div class="hex-note">
             <span class="eyebrow">Hex</span>
-            <pre>{{ received?.hex || sent?.hex || 'No bytes to display.' }}</pre>
+            <pre>{{ received?.hex || sent?.hex || t('transport.hex.noBytes') }}</pre>
           </div>
         </template>
       </section>

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(uvscope
-  VERSION 0.1.0
+  VERSION 0.2.0
   DESCRIPTION "A libuvcpp-powered multi-protocol web debugging workbench and gateway"
   HOMEPAGE_URL "https://github.com/Antruly/uvscope"
   LANGUAGES CXX)
@@ -258,7 +258,7 @@ if(UVSCOPE_BUILD_TESTS)
   add_test(NAME uvscope_version
     COMMAND uvscope --version)
   set_tests_properties(uvscope_version PROPERTIES
-    PASS_REGULAR_EXPRESSION "uvscope 0\\.1\\.0")
+    PASS_REGULAR_EXPRESSION "uvscope 0\\.2\\.0")
 
   add_test(NAME uvscope_selfcheck
     COMMAND uvscope --self-check)

@@ -30,7 +30,7 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
                      HTTP(S) / TCP / UDP / TLS targets
 ```
 
-## Process model in 0.1.0
+## Process model in 0.2.0
 
 - **Main daemon**: the only process. It owns the UI server, SQLite, auth and all protocol clients.
 - **Short-lived work**: HTTP/TCP/UDP/TLS probes run on the libuv thread pool through `uvcpp_work`; the
@@ -58,6 +58,8 @@ supervisor and IPC so the main daemon remains responsive under many long-lived s
 5. Back on the loop thread the handler increments metrics, writes a summary to SQLite, and returns
    the JSON payload.
 6. The SPA renders body/headers/timing and adds the summary to the history rail.
+7. Renderable responses can switch to Preview: HTML is injected into a sandboxed `srcdoc`
+   iframe, media/PDF use Blob URLs, and unknown or truncated bodies stay raw/hex.
 
 ## Request lifecycle: reverse proxy
 
@@ -88,6 +90,26 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
 - History is pruned to the latest 5,000 rows on insert.
 - Deleting the database (or the factory reset action) reopens a fresh file and returns to first-run
   setup.
+
+## Response preview safety
+
+- The preview iframe uses `sandbox=""`: scripts, forms, popups and top-level navigation are off.
+- An injected CSP adds `script-src 'none'`, `connect-src 'none'` and `frame-src 'none'`.
+- Remote images/audio/video are blocked until the user ticks “Load remote assets”. The child CSP
+  stays stricter than the embedding page, so the opt-in is per preview.
+- Relative URLs are resolved by rewriting `src`/`href`/`srcset`/CSS `url()` against the response
+  URL. `<base>` is not used because the embedding page's `base-uri 'self'` would reject it.
+- Blob URLs are revoked when the response or tab changes.
+- Preview is a viewer, not a security boundary against resource exhaustion; the body is still
+  capped at 4 MiB.
+
+## Internationalization and theme
+
+- `web/src/i18n.ts` holds the base dictionary; per-view fragments live in `web/src/i18n/*.ts`.
+- `useI18nStore` detects `navigator.language`, persists the manual choice in `localStorage`, and
+  keeps `<html lang>` in sync.
+- Theme is `dark`, `light` or `auto`; `auto` follows `prefers-color-scheme` through a media-query
+  listener. Both choices are client-only convenience state.
 
 ## Authentication and authorization
 
@@ -120,9 +142,12 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 - **Vue 3 / Vite / Pinia / Vue Router** — SPA.
 - **Inno Setup** — Windows installer.
 
-## Known architectural gaps (0.1.0)
+## Known architectural gaps (0.2.0)
 
-- HTTP/2 and HTTP/3 are not trustworthy yet; the async TLS path in libuvcpp needs upstream work.
+- HTTP/2 and HTTP/3 remain opt-in and experimental; the libuvcpp async TLS/h2 path works in local
+  Linux testing but still needs the full Windows/macOS matrix.
+- Persistent TCP/UDP listeners and SOCKS5 client/server are planned for 0.3.
+- Preview cannot execute scripts and does not stream bodies larger than the probe cap.
 - Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
 - No WebSocket upgrade pass-through in the proxy.
 - No per-path/Host routing rules; one upstream per listener.

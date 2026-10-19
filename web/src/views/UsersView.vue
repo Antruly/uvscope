@@ -5,11 +5,14 @@ import { del, errorMessage, get, patch, post } from '../api'
 import type { User } from '../types'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
+import { useI18nStore } from '../stores/i18n'
 
 defineOptions({ name: 'UsersView' })
 
 const auth = useAuthStore()
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const users = ref<User[]>([])
 const loading = ref(true)
 const modalOpen = ref(false)
@@ -26,7 +29,7 @@ async function load() {
     const response = await get<{ users: User[] }>('/api/users')
     users.value = response.users
   } catch (err) {
-    ui.toastError(err, 'Could not load users')
+    ui.toastError(err, t('users.error.load'))
   } finally {
     loading.value = false
   }
@@ -41,11 +44,11 @@ function openCreate() {
 async function createUser() {
   formError.value = ''
   if (form.value.username.trim().length < 3) {
-    formError.value = 'Username must be at least 3 characters.'
+    formError.value = t('users.error.usernameShort')
     return
   }
   if (form.value.password.length < 8) {
-    formError.value = 'Password must be at least 8 characters.'
+    formError.value = t('users.error.passwordShort')
     return
   }
   saving.value = true
@@ -53,7 +56,7 @@ async function createUser() {
     await post('/api/users', { ...form.value, username: form.value.username.trim() })
     modalOpen.value = false
     await load()
-    ui.notify('success', 'User created')
+    ui.notify('success', t('users.notify.created'))
   } catch (err) {
     formError.value = errorMessage(err)
   } finally {
@@ -66,9 +69,9 @@ async function changeRole(user: User, event: Event) {
   try {
     await patch(`/api/users/${user.id}`, { role })
     await load()
-    ui.notify('success', 'Role updated', `${user.username} is now ${role}`)
+    ui.notify('success', t('users.notify.roleUpdated'), t('users.notify.roleUpdatedBody', { username: user.username, role }))
   } catch (err) {
-    ui.toastError(err, 'Could not update role')
+    ui.toastError(err, t('users.error.updateRole'))
     await load()
   }
 }
@@ -77,18 +80,18 @@ async function toggleEnabled(user: User) {
   try {
     await patch(`/api/users/${user.id}`, { enabled: !user.enabled })
     await load()
-    ui.notify('success', user.enabled ? 'User disabled' : 'User enabled', user.username)
+    ui.notify('success', user.enabled ? t('users.notify.disabled') : t('users.notify.enabled'), user.username)
   } catch (err) {
     ui.toastError(err)
   }
 }
 
 async function remove(user: User) {
-  if (!window.confirm(`Delete user “${user.username}”? This cannot be undone.`)) return
+  if (!window.confirm(t('users.confirm.delete', { username: user.username }))) return
   try {
     await del(`/api/users/${user.id}`)
     await load()
-    ui.notify('success', 'User deleted')
+    ui.notify('success', t('users.notify.deleted'))
   } catch (err) {
     ui.toastError(err)
   }
@@ -102,16 +105,16 @@ function openReset(user: User) {
 async function saveReset() {
   if (!resetFor.value) return
   if (resetPassword.value.length < 8) {
-    ui.notify('warning', 'Password must be at least 8 characters')
+    ui.notify('warning', t('users.notify.passwordShort'))
     return
   }
   try {
     await patch(`/api/users/${resetFor.value.id}`, { password: resetPassword.value })
-    ui.notify('success', 'Password reset', `Existing sessions for ${resetFor.value.username} were invalidated.`)
+    ui.notify('success', t('users.notify.reset'), t('users.notify.resetBody', { username: resetFor.value.username }))
     resetFor.value = null
     resetPassword.value = ''
   } catch (err) {
-    ui.toastError(err, 'Password reset failed')
+    ui.toastError(err, t('users.error.resetFailed'))
   }
 }
 
@@ -127,35 +130,35 @@ onActivated(load)
   <div class="page users-page">
     <header class="page-head">
       <div>
-        <span class="eyebrow">Access control</span>
-        <h2>People, roles, blast radius.</h2>
-        <p>Provision local accounts and keep administrative surfaces limited to the right people.</p>
+        <span class="eyebrow">{{ t('users.eyebrow') }}</span>
+        <h2>{{ t('users.title') }}</h2>
+        <p>{{ t('users.lead') }}</p>
       </div>
       <div class="page-head__actions">
-        <button class="button button--primary" @click="openCreate"><Icon name="plus" :size="16" />New user</button>
+        <button class="button button--primary" @click="openCreate"><Icon name="plus" :size="16" />{{ t('users.new') }}</button>
       </div>
     </header>
 
     <div class="role-strip">
-      <div class="role-card"><span class="role-card__badge role-card__badge--admin"><Icon name="shield" :size="17" /></span><div><strong>Administrator</strong><p>Users, settings, reset, every debug module and gateway.</p></div></div>
-      <div class="role-card"><span class="role-card__badge role-card__badge--operator"><Icon name="bolt" :size="17" /></span><div><strong>Operator</strong><p>Debug modules, history and reverse proxy management.</p></div></div>
-      <div class="role-card"><span class="role-card__badge role-card__badge--viewer"><Icon name="eye" :size="17" /></span><div><strong>Viewer</strong><p>Read-only dashboard, history and about pages.</p></div></div>
+      <div class="role-card"><span class="role-card__badge role-card__badge--admin"><Icon name="shield" :size="17" /></span><div><strong>{{ t('users.roles.admin.title') }}</strong><p>{{ t('users.roles.admin.text') }}</p></div></div>
+      <div class="role-card"><span class="role-card__badge role-card__badge--operator"><Icon name="bolt" :size="17" /></span><div><strong>{{ t('users.roles.operator.title') }}</strong><p>{{ t('users.roles.operator.text') }}</p></div></div>
+      <div class="role-card"><span class="role-card__badge role-card__badge--viewer"><Icon name="eye" :size="17" /></span><div><strong>{{ t('users.roles.viewer.title') }}</strong><p>{{ t('users.roles.viewer.text') }}</p></div></div>
     </div>
 
     <section class="card">
       <header class="card__head">
-        <div><span class="eyebrow">Directory</span><h3>{{ users.length }} local accounts</h3></div>
+        <div><span class="eyebrow">{{ t('users.directory.eyebrow') }}</span><h3>{{ t('users.directory.count', { count: users.length }) }}</h3></div>
         <span class="chip mono">SQLite</span>
       </header>
-      <div v-if="loading" class="proxy-loading"><span class="spinner" />Loading users…</div>
+      <div v-if="loading" class="proxy-loading"><span class="spinner" />{{ t('users.loading') }}</div>
       <div v-else class="user-table">
         <div class="user-table__head">
-          <span>User</span><span>Role</span><span>Status</span><span>Last login</span><span />
+          <span>{{ t('users.table.user') }}</span><span>{{ t('users.table.role') }}</span><span>{{ t('users.table.status') }}</span><span>{{ t('users.table.lastLogin') }}</span><span />
         </div>
         <div v-for="user in users" :key="user.id" class="user-row">
           <div class="user-cell">
             <span class="avatar avatar--table">{{ initials(user.username) }}</span>
-            <div><strong>{{ user.username }}<em v-if="user.id === auth.user?.id">you</em></strong><small>#{{ user.id }} · created {{ new Date(user.createdAt).toLocaleDateString() }}</small></div>
+            <div><strong>{{ user.username }}<em v-if="user.id === auth.user?.id">{{ t('users.row.you') }}</em></strong><small>{{ t('users.row.created', { id: user.id, date: new Date(user.createdAt).toLocaleDateString() }) }}</small></div>
           </div>
           <div>
             <select class="select select--compact" :value="user.role" :disabled="user.id === auth.user?.id" @change="changeRole(user, $event)">
@@ -166,13 +169,13 @@ onActivated(load)
           </div>
           <div>
             <button class="state-toggle" :class="{ 'state-toggle--on': user.enabled }" :disabled="user.id === auth.user?.id" @click="toggleEnabled(user)">
-              <i />{{ user.enabled ? 'enabled' : 'disabled' }}
+              <i />{{ user.enabled ? t('users.status.enabled') : t('users.status.disabled') }}
             </button>
           </div>
-          <div class="user-login">{{ user.lastLogin ? new Date(user.lastLogin).toLocaleString() : 'never' }}</div>
+          <div class="user-login">{{ user.lastLogin ? new Date(user.lastLogin).toLocaleString() : t('users.row.never') }}</div>
           <div class="user-actions">
-            <button class="icon-button icon-button--sm" title="Reset password" @click="openReset(user)"><Icon name="key" :size="15" /></button>
-            <button class="icon-button icon-button--sm icon-button--danger" title="Delete user" :disabled="user.id === auth.user?.id" @click="remove(user)"><Icon name="trash" :size="15" /></button>
+            <button class="icon-button icon-button--sm" :title="t('users.action.resetPassword')" @click="openReset(user)"><Icon name="key" :size="15" /></button>
+            <button class="icon-button icon-button--sm icon-button--danger" :title="t('users.action.deleteUser')" :disabled="user.id === auth.user?.id" @click="remove(user)"><Icon name="trash" :size="15" /></button>
           </div>
         </div>
       </div>
@@ -183,24 +186,24 @@ onActivated(load)
         <div v-if="modalOpen" class="modal-scrim" @click.self="modalOpen = false">
           <form class="modal-card" @submit.prevent="createUser">
             <header class="modal-head">
-              <div><span class="eyebrow">Local account</span><h3>Create user</h3></div>
+              <div><span class="eyebrow">{{ t('users.modal.eyebrow') }}</span><h3>{{ t('users.modal.createTitle') }}</h3></div>
               <button type="button" class="icon-button" @click="modalOpen = false"><Icon name="close" :size="18" /></button>
             </header>
             <div class="modal-body">
-              <label class="field"><span>Username</span><input v-model="form.username" autocomplete="off" placeholder="alice" autofocus /></label>
-              <label class="field"><span>Temporary password</span><input v-model="form.password" type="password" autocomplete="new-password" placeholder="At least 8 characters" /></label>
-              <label class="field"><span>Role</span>
+              <label class="field"><span>{{ t('users.modal.username') }}</span><input v-model="form.username" autocomplete="off" :placeholder="t('users.modal.usernamePlaceholder')" autofocus /></label>
+              <label class="field"><span>{{ t('users.modal.tempPassword') }}</span><input v-model="form.password" type="password" autocomplete="new-password" :placeholder="t('users.modal.passwordPlaceholder')" /></label>
+              <label class="field"><span>{{ t('users.modal.role') }}</span>
                 <select v-model="form.role" class="select">
-                  <option value="viewer">Viewer — read only</option>
-                  <option value="operator">Operator — debug and gateway</option>
-                  <option value="admin">Administrator — full control</option>
+                  <option value="viewer">{{ t('users.modal.roleViewer') }}</option>
+                  <option value="operator">{{ t('users.modal.roleOperator') }}</option>
+                  <option value="admin">{{ t('users.modal.roleAdmin') }}</option>
                 </select>
               </label>
               <div v-if="formError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ formError }}</div>
             </div>
             <footer class="modal-foot">
-              <button type="button" class="button" @click="modalOpen = false">Cancel</button>
-              <button type="submit" class="button button--primary" :disabled="saving"><span v-if="saving" class="spinner" /><Icon v-else name="plus" :size="15" />Create user</button>
+              <button type="button" class="button" @click="modalOpen = false">{{ t('users.modal.cancel') }}</button>
+              <button type="submit" class="button button--primary" :disabled="saving"><span v-if="saving" class="spinner" /><Icon v-else name="plus" :size="15" />{{ t('users.modal.create') }}</button>
             </footer>
           </form>
         </div>
@@ -209,16 +212,16 @@ onActivated(load)
         <div v-if="resetFor" class="modal-scrim" @click.self="resetFor = null">
           <form class="modal-card modal-card--sm" @submit.prevent="saveReset">
             <header class="modal-head">
-              <div><span class="eyebrow">Credential reset</span><h3>{{ resetFor.username }}</h3></div>
+              <div><span class="eyebrow">{{ t('users.reset.eyebrow') }}</span><h3>{{ resetFor.username }}</h3></div>
               <button type="button" class="icon-button" @click="resetFor = null"><Icon name="close" :size="18" /></button>
             </header>
             <div class="modal-body">
-              <label class="field"><span>New password</span><input v-model="resetPassword" type="password" autocomplete="new-password" placeholder="At least 8 characters" autofocus /></label>
-              <div class="inline-alert inline-alert--warning"><Icon name="alert" :size="16" />All existing sessions for this user will be invalidated.</div>
+              <label class="field"><span>{{ t('users.reset.newPassword') }}</span><input v-model="resetPassword" type="password" autocomplete="new-password" :placeholder="t('users.modal.passwordPlaceholder')" autofocus /></label>
+              <div class="inline-alert inline-alert--warning"><Icon name="alert" :size="16" />{{ t('users.reset.warning') }}</div>
             </div>
             <footer class="modal-foot">
-              <button type="button" class="button" @click="resetFor = null">Cancel</button>
-              <button type="submit" class="button button--primary"><Icon name="key" :size="15" />Reset password</button>
+              <button type="button" class="button" @click="resetFor = null">{{ t('users.modal.cancel') }}</button>
+              <button type="submit" class="button button--primary"><Icon name="key" :size="15" />{{ t('users.reset.submit') }}</button>
             </footer>
           </form>
         </div>

@@ -6,6 +6,8 @@ import Icon from './Icon.vue'
 import { useAuthStore } from '../stores/auth'
 import { useTabsStore } from '../stores/tabs'
 import { useUiStore } from '../stores/ui'
+import { useI18nStore } from '../stores/i18n'
+import type { AppTab } from '../stores/tabs'
 
 defineOptions({ name: 'AppShell' })
 
@@ -20,6 +22,8 @@ interface NavItem {
 const auth = useAuthStore()
 const tabs = useTabsStore()
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const route = useRoute()
 const router = useRouter()
 
@@ -28,33 +32,43 @@ const userMenuRef = ref<HTMLElement | null>(null)
 
 const sections = computed(() => {
   const workspace: NavItem[] = [
-    { label: 'Overview', icon: 'dashboard', to: '/' },
-    { label: 'HTTP Studio', icon: 'bolt', to: '/http', module: 'http' },
-    { label: 'WebSocket', icon: 'pulse', to: '/websocket', module: 'websocket' },
-    { label: 'TCP / UDP', icon: 'layers', to: '/transport', module: 'tcpudp' },
-    { label: 'SOAP / WSDL', icon: 'braces', to: '/soap', module: 'soap' },
-    { label: 'TLS Inspector', icon: 'shield', to: '/tls', module: 'tls' },
+    { label: t('nav.overview'), icon: 'dashboard', to: '/' },
+    { label: t('nav.http'), icon: 'bolt', to: '/http', module: 'http' },
+    { label: t('nav.websocket'), icon: 'pulse', to: '/websocket', module: 'websocket' },
+    { label: t('nav.transport'), icon: 'layers', to: '/transport', module: 'tcpudp' },
+    { label: t('nav.soap'), icon: 'braces', to: '/soap', module: 'soap' },
+    { label: t('nav.tls'), icon: 'shield', to: '/tls', module: 'tls' },
   ].filter((item) => !item.module || auth.moduleEnabled(item.module as keyof typeof auth.modules))
 
-  const gateway: NavItem[] = [{ label: 'Reverse Proxy', icon: 'route', to: '/proxy', module: 'proxy' }].filter(
+  const gateway: NavItem[] = [{ label: t('nav.proxy'), icon: 'route', to: '/proxy', module: 'proxy' }].filter(
     (item) => !item.module || auth.moduleEnabled(item.module as keyof typeof auth.modules),
   )
 
   const system: NavItem[] = [
-    ...(auth.canAdminUsers ? [{ label: 'Users & Roles', icon: 'users', to: '/users' }] : []),
-    ...(auth.canAdminSettings ? [{ label: 'Settings', icon: 'settings', to: '/settings' }] : []),
-    { label: 'About', icon: 'spark', to: '/about' },
-    { label: 'Help', icon: 'help', to: '/help' },
+    ...(auth.canAdminUsers ? [{ label: t('nav.users'), icon: 'users', to: '/users' }] : []),
+    ...(auth.canAdminSettings ? [{ label: t('nav.settings'), icon: 'settings', to: '/settings' }] : []),
+    { label: t('nav.about'), icon: 'spark', to: '/about' },
+    { label: t('nav.help'), icon: 'help', to: '/help' },
   ]
 
   return [
-    { title: 'Workspace', items: workspace },
-    { title: 'Gateway', items: gateway },
-    { title: 'System', items: system },
+    { title: t('section.workspace'), items: workspace },
+    { title: t('section.gateway'), items: gateway },
+    { title: t('section.system'), items: system },
   ].filter((section) => section.items.length > 0)
 })
 
-const routeTitle = computed(() => (route.meta.title as string) || 'uvscope')
+const routeTitle = computed(() => {
+  const key = route.meta.titleKey as string | undefined
+  return key ? t(key) : (route.meta.title as string) || 'uvscope'
+})
+const tabLabel = (tab: AppTab) => (tab.titleKey ? t(tab.titleKey) : tab.title)
+const themeTitle = computed(() => {
+  const mode = ui.theme === 'auto'
+    ? `${t('theme.auto')} (${t(`theme.${ui.resolvedTheme}`)})`
+    : t(`theme.${ui.theme}`)
+  return t('theme.switch', { mode })
+})
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path.startsWith(to))
 
 watch(
@@ -62,12 +76,12 @@ watch(
   () => {
     const meta = route.meta
     if (meta.module && !auth.moduleEnabled(meta.module as keyof typeof auth.modules)) {
-      ui.notify('warning', 'Module disabled', `${routeTitle.value} is disabled in Settings.`)
+      ui.notify('warning', t('shell.moduleDisabled'), t('shell.moduleDisabledBody', { title: routeTitle.value }))
       router.replace('/')
       return
     }
     if (meta.admin === 'users' && !auth.canAdminUsers) {
-      ui.notify('warning', 'Administrator required')
+      ui.notify('warning', t('shell.adminRequired'))
       router.replace('/')
       return
     }
@@ -106,7 +120,7 @@ function closeOthers(name: string) {
 async function logout() {
   userMenuOpen.value = false
   await auth.logout()
-  ui.notify('info', 'Signed out')
+  ui.notify('info', t('shell.signedOut'))
 }
 
 function onDocumentClick(event: MouseEvent) {
@@ -124,16 +138,16 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
     <div class="mobile-scrim" @click="ui.mobileNavOpen = false" />
     <aside class="sidebar">
       <div class="sidebar__brand">
-        <button class="brand-button" aria-label="Go to overview" @click="go('/')">
+        <button class="brand-button" :aria-label="t('shell.brandHome')" @click="go('/')">
           <BrandMark :size="34" />
           <span class="brand-copy">
             <strong>uvscope</strong>
-            <small>protocol workbench</small>
+            <small>{{ t('shell.tagline') }}</small>
           </span>
         </button>
         <button
           class="icon-button sidebar__collapse"
-          :title="ui.sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          :title="ui.sidebarCollapsed ? t('shell.expand') : t('shell.collapse')"
           @click="ui.sidebarCollapsed = !ui.sidebarCollapsed"
         >
           <Icon :name="ui.sidebarCollapsed ? 'chevron-right' : 'chevron-left'" :size="16" />
@@ -161,7 +175,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
         <div class="daemon-chip">
           <span class="status-dot" />
           <span class="daemon-chip__copy">
-            <strong>daemon online</strong>
+            <strong>{{ t('shell.daemonOnline') }}</strong>
             <small>v{{ auth.version }} · libuvcpp {{ auth.libuvcpp || '1.8.0' }}</small>
           </span>
         </div>
@@ -170,20 +184,23 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
     <main class="main">
       <header class="topbar">
-        <button class="icon-button mobile-menu" aria-label="Open navigation" @click="ui.mobileNavOpen = true">
+        <button class="icon-button mobile-menu" :aria-label="t('shell.openNav')" @click="ui.mobileNavOpen = true">
           <Icon name="menu" :size="19" />
         </button>
         <div class="topbar__title">
-          <span class="topbar__eyebrow">uvscope / workspace</span>
+          <span class="topbar__eyebrow">{{ t('shell.eyebrow') }}</span>
           <h1>{{ routeTitle }}</h1>
         </div>
         <div class="topbar__spacer" />
         <a class="ph-badge" href="https://github.com/Antruly/uvscope" target="_blank" rel="noreferrer">
           <Icon name="spark" :size="14" />
-          <span>0.1.0 preview</span>
+          <span>v{{ auth.version }} {{ t('shell.preview') }}</span>
         </a>
-        <button class="icon-button" :title="ui.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'" @click="ui.toggleTheme">
-          <Icon :name="ui.theme === 'dark' ? 'sun' : 'moon'" :size="18" />
+        <button class="icon-button" :title="themeTitle" @click="ui.cycleTheme">
+          <Icon :name="ui.themeIcon" :size="18" />
+        </button>
+        <button class="icon-button locale-toggle" :title="t('language.switch')" @click="i18n.toggleLocale">
+          {{ i18n.nextLabel }}
         </button>
         <div ref="userMenuRef" class="user-menu">
           <button class="user-button" :aria-expanded="userMenuOpen" @click.stop="userMenuOpen = !userMenuOpen">
@@ -200,13 +217,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
                 <strong>{{ auth.user?.username }}</strong>
                 <span>{{ auth.user?.roleDescription }}</span>
               </div>
-              <button class="dropdown__item" @click="go('/about')"><Icon name="spark" :size="16" />About uvscope</button>
+              <button class="dropdown__item" @click="go('/about')"><Icon name="spark" :size="16" />{{ t('shell.about') }}</button>
               <button v-if="auth.canAdminSettings" class="dropdown__item" @click="go('/settings')">
-                <Icon name="settings" :size="16" />Settings
+                <Icon name="settings" :size="16" />{{ t('nav.settings') }}
               </button>
               <div class="dropdown__sep" />
               <button class="dropdown__item dropdown__item--danger" @click="logout">
-                <Icon name="logout" :size="16" />Sign out
+                <Icon name="logout" :size="16" />{{ t('shell.signOut') }}
               </button>
             </div>
           </Transition>
@@ -226,13 +243,13 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
             @contextmenu.prevent="tab.closable && closeOthers(tab.name)"
           >
             <Icon :name="tab.icon" :size="15" />
-            <span>{{ tab.title }}</span>
+            <span>{{ tabLabel(tab) }}</span>
             <span
               v-if="tab.closable"
               class="tab__close"
               role="button"
               tabindex="0"
-              aria-label="Close tab"
+              :aria-label="t('shell.closeTab')"
               @click.stop="closeTab(tab.name)"
               @keydown.enter.stop="closeTab(tab.name)"
             >
@@ -241,7 +258,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
           </button>
         </div>
         <div class="tabbar__actions">
-          <span class="tabbar__hint">right-click a tab to close the rest</span>
+          <span class="tabbar__hint">{{ t('shell.rightClickHint') }}</span>
         </div>
       </div>
 

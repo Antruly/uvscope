@@ -4,6 +4,50 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-20
+
+### Added
+
+- HTTP response preview: sandboxed HTML, images, audio, video and PDF, with raw/hex fallback.
+  HTML scripts are disabled and remote media is opt-in.
+- Chinese/English UI across every workbench, with browser-language detection, a manual top-bar
+  switch and a persisted choice. `<html lang>` follows the selection.
+- Theme control now cycles dark, light and follow-system; `auto` reacts to `prefers-color-scheme`.
+- Per-view translation fragments under `web/src/i18n/` and a lightweight `t()` store with no new
+  runtime dependency.
+
+### Changed
+
+- The application CSP allows `blob:` for image/media/frame previews and `http:`/`https:` for the
+  opt-in remote media mode. Scripts stay disabled by both the sandbox and `script-src 'none'`.
+- Version bumped to 0.2.0 across CMake, npm, the Windows installer and the UI fallback.
+
+### Fixed
+
+- libuvcpp: TLS SNI is set on both the async and blocking client paths and omitted for IP
+  literals, as RFC 6066 requires.
+- libuvcpp: `timeout_ms` is honoured in the blocking `connect_wait` / `send_wait` paths on Linux
+  and macOS. A silent peer no longer blocks until it closes the socket, and a timeout is no longer
+  reported as `200 OK` with an empty body.
+- libuvcpp: `cmake --install` now produces a usable SDK. Shared FetchContent dependencies
+  (`libllhttp`) are installed, installed libraries carry `$ORIGIN` / `@loader_path` RPATH, and
+  bundled libuv headers are exposed to `find_package(uvcpp)` consumers.
+
+The libuvcpp fixes are submitted upstream as
+[#38](https://github.com/Antruly/libuvcpp/pull/38),
+[#39](https://github.com/Antruly/libuvcpp/pull/39) and
+[#40](https://github.com/Antruly/libuvcpp/pull/40). Reproduction and verification are in
+[`docs/LIBUVCPP_UPSTREAM.zh-CN.md`](docs/LIBUVCPP_UPSTREAM.zh-CN.md).
+
+### Known limitations
+
+- Persistent TCP/UDP listeners, repeated-send TCP sessions and SOCKS5 client/server are planned
+  for 0.3; this release keeps the one-shot transport probes.
+- HTTP/2 and HTTP/3 remain experimental and are disabled in release builds until the libuvcpp
+  async TLS/h2/h3 matrix is green on Windows and macOS.
+- Preview is a viewer, not a security boundary against resource exhaustion; bodies remain capped
+  at 4 MiB.
+
 ## [0.1.0] - 2026-10-20
 
 ### Added
@@ -32,7 +76,7 @@ All notable changes to uvscope are documented here. The format is based on
 ### Fixed
 
 - Added TLS SNI support to libuvcpp HTTP/1.1 clients via
-  [`patches/libuvcpp-1.8.0-sni.patch`](patches/libuvcpp-1.8.0-sni.patch). Without it, HTTPS
+  [`patches/upstream/0001-tls-sni.patch`](patches/upstream/0001-tls-sni.patch). Without it, HTTPS
   requests to modern virtual hosts fail or receive an unrelated certificate.
 
 ### Known limitations

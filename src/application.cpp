@@ -301,8 +301,11 @@ void Application::register_middleware() {
     resp.set_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     resp.set_header("Content-Security-Policy",
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                    "img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss: "
-                    "http: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+                    "img-src 'self' data: blob: http: https:; "
+                    "media-src 'self' data: blob: http: https:; "
+                    "font-src 'self' data:; connect-src 'self' ws: wss: http: https:; "
+                    "frame-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; "
+                    "form-action 'self'");
     next();
   });
 }

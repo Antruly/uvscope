@@ -1,6 +1,6 @@
 # uvscope 开发计划
 
-> 版本：0.1.0 基线  
+> 版本：0.2.0 开发中
 > 技术底座：libuvcpp 1.8.0 + Vue 3 + SQLite + libuvcpp WSDL/SOAP  
 > 目标：做一款覆盖 Web 调试、协议探测与可编程反向代理的本地瑞士军刀，并保持单机、可审计、可离线部署。
 
@@ -38,7 +38,9 @@
   - 代理与主服务共享 libuvcpp 技术栈。
 - 开源运营能力：关于页、GitHub 链接、star 数、版本检查、更新说明、帮助页。
 - 跨平台构建基础：CMake、MinGW-w64、CPack、GitHub Actions 工作流、Windows Inno Setup 安装脚本。
-- libuvcpp 上游修复：TLS SNI 补丁（`patches/libuvcpp-1.8.0-sni.patch`），否则现代虚拟主机 HTTPS 握手失败。
+- libuvcpp 上游修复：TLS SNI（`patches/upstream/0001-tls-sni.patch`），否则现代虚拟主机 HTTPS 握手失败；
+  另有同步 I/O 超时（`0002`）与 `cmake --install` 完整性（`0003`）补丁，见
+  [`LIBUVCPP_UPSTREAM.zh-CN.md`](LIBUVCPP_UPSTREAM.zh-CN.md)。
 
 ### 1.2 0.1.0 明确不承诺的能力
 
@@ -46,6 +48,27 @@
 - 反向代理仅支持 HTTP/1.1 转发；WebSocket Upgrade、HTTP/2 入站、按路径/Host 规则匹配属于下一阶段。
 - TCP/UDP 仅一次性探测，没有常驻监听与动态会话。
 - 没有原始 QUIC 双向流 / datagram 调试。
+
+### 1.3 本轮新增范围（2026-10-20）
+
+| 优先级 | 能力 | 说明 |
+| --- | --- | --- |
+| P0 | 响应预览 | HTML 沙箱渲染、图片、音频、视频、PDF；不能预览的类型保持 raw/hex |
+| P0 | 国际化 | 浏览器语言自动选择，中文/英文手动切换并持久化 |
+| P0 | 主题 | 亮色 / 暗色 / 跟随系统；补齐硬编码颜色 |
+| P1 | 持久 TCP 客户端 | 一条连接多次发送、持续接收、十六进制视图、主动关闭 |
+| P1 | TCP 服务端 | 监听、会话列表、逐会话发送/关闭、日志与字节统计 |
+| P1 | UDP 服务端 | 绑定、收包、按来源回复、会话时间线 |
+| P1 | SOCKS5 客户端 | HTTP / TCP / UDP 出站可选择代理；认证与错误分类 |
+| P1 | SOCKS5 服务端 | CONNECT / BIND / UDP ASSOCIATE；no-auth 与用户名密码 |
+| P2 | QUIC / HTTP/3 | 客户端与 stream/datagram 调试，跨平台验证后再打开 |
+
+约束：
+
+- 每个能力单独一个切片、单独验证，不把协议、数据库、UI、打包混在一次改动里。
+- 所有目标网络 I/O 继续只走 libuvcpp；不引入第二个网络栈。
+- SOCKS5 “没连上代理”必须报错，**绝不静默直连**。
+- 预览只在沙箱里渲染；默认禁脚本、禁远程资源，明确写出安全边界。
 
 ---
 
@@ -76,90 +99,127 @@
 - 离线 `uvscope --self-check` 全部通过。
 - `npm run build` 与 C++ Release 构建通过。
 
-### M1 — 协议正确性与可信调试（0.2.x）
+### M1 — 调试体验与响应预览（0.2.x）
 
-目标：把“能发请求”升级为“能解释请求”。
+目标：让“看到响应”变成“看懂并安全地预览响应”。
+
+- 响应预览：
+  - Body 增加 raw / preview 切换；
+  - `text/html`、`application/xhtml+xml` 用 `iframe sandbox` + `srcdoc` 渲染，默认禁用脚本与远程资源；
+  - `image/*`、`audio/*`、`video/*`、`application/pdf` 用 Blob URL 预览；
+  - 二进制、截断 body、未知类型继续显示 hex/raw；
+  - Blob URL 在切换响应/卸载时释放。
+- 国际化：
+  - `navigator.language` 自动选择 `zh-CN` / `en`；
+  - 顶栏手动切换，持久化到 `localStorage`；
+  - 壳层、导航、登录/初始化、设置、帮助先行，其余页面逐页补齐。
+- 主题：
+  - 亮色 / 暗色 / 跟随系统三档；
+  - 所有页面使用 `--*` 变量，清理硬编码颜色。
+- 安全说明写进 Help：预览不是安全边界，恶意 HTML 仍可能消耗资源；默认禁脚本。
+
+验收：
+
+- `npm --prefix web run typecheck && npm --prefix web run build`；
+- 同一响应可在 raw 与 preview 间切换；HTML 中 `<script>` 不执行；
+- 语言与主题刷新后保持；
+- 无新增网络栈。
+
+### M2 — 传输工作台（0.3.x）
+
+目标：从“一次性探测”升级为“可持续观察和交互的传输会话”。
+
+- 持久 TCP 客户端：
+  - 一条连接多次发送、持续接收、主动关闭；
+  - 文本/hex 发送，接收字节计数与时间线；
+  - 断线原因、重连、超时与背压可观测。
+- TCP 服务端：
+  - 绑定/监听/停止，端口占用检测；
+  - 会话列表、逐会话发送/关闭、字节统计；
+  - 监听配置持久化，可选自动启动。
+- UDP 服务端：
+  - 绑定/收包/按来源回复；
+  - 每个数据报的来源、长度、hex 与时间线。
+- 统一会话事件 schema：`type/timestamp/bytes/peer/error`。
+- 常驻监听继续遵守“主进程单写 SQLite”，运行时只读配置快照。
+
+验收：
+
+- 本地 echo 服务端上，一条 TCP 连接连续两次发送都收到响应；
+- 断开后会话状态可见，重连成功；
+- TCP/UDP 服务端可启动、被外部客户端访问、在 UI 中回复、停止后端口释放；
+- `--self-check` 与 smoke test 覆盖最小 echo 回合。
+
+### M2.5 — SOCKS5 客户端与服务端（0.3.x）
+
+目标：把代理能力做成一等公民，而不是隐藏开关。
+
+- 客户端：
+  - HTTP / 持久 TCP / UDP 三类出站都可选择 SOCKS5；
+  - no-auth 与 RFC 1929 用户名密码；
+  - CONNECT、UDP ASSOCIATE；错误区分代理不可达、认证失败、目标拒绝、超时；
+  - 代理配置错误时直接失败，不回落直连。
+- 服务端：
+  - 监听、no-auth / 用户名密码、会话列表；
+  - CONNECT / BIND / UDP ASSOCIATE 状态；
+  - 来源、目标、字节数、失败原因、连接时长；
+  - 默认只监听 `127.0.0.1`，开放到局域网需要显式修改。
+
+验收：
+
+- 通过本机 SOCKS5 服务端访问外部 HTTP 与 TCP echo；
+- `curl --socks5-hostname` 对照；
+- 错误凭据、不可达目标、未授权命令有明确错误码；
+- 代理失败时目标没有直连行为。
+
+### M3 — 协议深度（0.4.x）
 
 - HTTP/2：
-  - 修复/验证 libuvcpp 异步 TLS + h2 路径；
-  - 输出 ALPN、流 ID、GOAWAY、HEADERS/DATA 帧摘要；
+  - 验证 ALPN、stream ID、GOAWAY、HEADERS/DATA 摘要；
   - 失败时明确区分 TLS、ALPN、GOAWAY、连接重置。
 - HTTP/3 / QUIC：
-  - 使用 libuvcpp HTTP/3 客户端；
-  - 暴露 0-RTT、连接迁移、QPACK 解码摘要；
+  - libuvcpp HTTP/3 客户端；
+  - 0-RTT、连接迁移、QPACK 摘要；
   - 原始 QUIC stream / datagram 调试。
 - HTTP Body：
   - gzip/br 解压与原始字节切换；
   - 大响应流式查看与下载；
   - multipart 上传、文件下载、Range 续传。
 - WebSocket：
-  - 可选后端代理模式，保留帧级 opcode、mask、压缩标志；
+  - 可选后端代理模式，保留 opcode、mask、压缩标志；
   - Ping/Pong、Close code、重连与导出日志。
 - TLS：
-  - 上传证书链逐张解析；
+  - 证书链逐张解析；
   - 连接目标抓取 peer certificate；
-  - 证书过期/域名不匹配/自签名的结构化诊断。
-- 统一事件 schema：所有模块输出 `type/timestamp/payload`，前端共用解析器。
+  - 过期/域名不匹配/自签名的结构化诊断。
 
 验收：
 
-- 对 `https://httpbin.org`、本地 nginx h2、公开 h3 端点完成回归；
 - HTTP/2 与 HTTP/3 在 Linux x64 和 Windows x64 CI 中可重复；
-- 失败路径有可操作错误，而不是超时。
+- 失败路径有可操作错误，而不是超时；
+- QUIC 未通过跨平台验证前，发布构建继续关闭。
 
-### M2 — 网关化（0.3.x）
-
-目标：从“调试客户端”升级为“可编程本地网关”。
+### M4 — 网关化与团队使用（0.5.x）
 
 - 反向代理：
-  - 路由规则（Host / Path / Header / Method）可视化编辑；
+  - Host / Path / Header / Method 路由规则；
   - 上游组、权重、超时、重试；
   - WebSocket Upgrade 透传；
-  - 请求/响应改写（Header、前缀剥离）；
-  - TLS 入站证书管理（导入/自签/选择）。
-- 多实例治理：
-  - 配置版本化、热重载、端口冲突检测；
-  - 实例级指标（QPS、p50/p95、错误率、流量）；
-  - 访问日志落 SQLite/文件，支持导出。
-- 常驻 TCP/UDP 服务端：
-  - 监听、会话列表、实时发送；
-  - 十六进制视图与时间线。
-- 进程模型升级：
-  - SessionSupervisor / ServiceSupervisor；
-  - 常驻代理和协议服务支持独立子进程（stdio / UDS），崩溃回收；
-  - 主进程提供统一进程拓扑视图。
+  - 请求/响应改写；
+  - TLS 入站证书管理。
+- 多实例治理：配置版本化、热重载、端口冲突检测、指标。
+- 多用户审计日志、强制下线。
+- 集合 / 环境变量 / 脚本 / HAR / cURL / OpenAPI / Postman 导入导出。
+- 备份恢复、SQLite 迁移框架。
+- 进程模型：SessionSupervisor / ServiceSupervisor，常驻服务子进程化。
 
-验收：
-
-- 同一时间运行 4 个代理实例 + 1 个 TCP 服务端 + 多个调试标签；
-- 停止/重启主服务时，子服务行为可预期（自动退出或回收）；
-- 代理规则变更不重启监听端口。
-
-### M3 — 产品化与团队使用（0.4.x）
-
-- 多用户审计日志、操作记录、会话管理（强制下线）。
-- 请求集合 / 环境变量 / 变量替换 / 脚本前置后置（类似 Postman Collections）。
-- 导入导出：HAR、cURL、OpenAPI、WSDL、Postman Collection。
-- 定时任务与健康检查。
-- 主题、快捷键、命令面板、国际化（中/英）。
-- 升级检查与强制最低版本策略。
-- 数据备份/恢复、SQLite 迁移框架、模块级 reset。
-
-验收：
-
-- 团队可以在同一台调试机上共享 uvscope，角色边界清晰；
-- 配置与历史可备份、导出、恢复；
-- 升级不丢数据。
-
-### M4 — 1.0
+### M5 — 1.0
 
 - 完整测试矩阵：Linux x64/arm64、Windows x64/arm64（MinGW）、macOS arm64；
 - 安装包签名、SBOM、可复现构建；
 - 性能基线与内存泄漏回归；
 - 完整文档、贡献指南和发布流程；
 - 稳定的 IPC/事件 schema 与插件接口。
-
----
 
 ## 4. 任务拆解（按模块）
 
@@ -178,17 +238,24 @@
 
 | 任务 | 说明 | 优先级 |
 | --- | --- | --- |
-| 异步 TLS 修复 | libuvcpp memory BIO 写路径 | P0 |
-| HTTP/2 事件 | ALPN、stream、GOAWAY、帧摘要 | P1 |
-| HTTP/3 客户端 | QPACK、0-RTT、连接迁移 | P1 |
+| 响应预览 | HTML sandbox、图片、音视频、PDF、raw/hex 回落 | P0 |
 | Body 解码 | gzip/br、流式、下载 | P1 |
+| HTTP/2 事件 | ALPN、stream、GOAWAY、帧摘要 | P1 |
+| HTTP/3 客户端 | QPACK、0-RTT、连接迁移 | P2 |
 | 上传/下载 | multipart、Range、断点续传 | P2 |
 | 证书抓取 | TLS 连接 peer cert chain | P1 |
 
-### 4.3 网关
+> 异步 TLS/h2 已在 Linux x64 用本地 h2 服务端复测：ALPN=h2、`send()` 返回 0、preface 正常。旧记录中的“异步 TLS 不可用”已撤回；跨平台矩阵仍待 CI。
+
+### 4.3 网关与传输服务
 
 | 任务 | 说明 | 优先级 |
 | --- | --- | --- |
+| 持久 TCP 客户端 | 多次发送、持续接收、重连、hex | P1 |
+| TCP 服务端 | 监听、会话、发送、关闭、日志 | P1 |
+| UDP 服务端 | 绑定、收包、按来源回复 | P1 |
+| SOCKS5 客户端 | HTTP/TCP/UDP 出站，认证与错误分类 | P1 |
+| SOCKS5 服务端 | CONNECT/BIND/UDP ASSOCIATE，会话日志 | P1 |
 | 规则引擎 | Host/Path/Header/Method 匹配 | P1 |
 | WebSocket 代理 | Upgrade 双向透传 | P1 |
 | 规则编辑器 | 可视化表单 + 冲突检测 | P1 |
@@ -203,7 +270,9 @@
 | 命令面板 | 全局跳转与运行 | P3 |
 | 统一日志查看器 | 虚拟滚动、过滤、导出 | P2 |
 | 响应式增强 | 手机/平板布局 | P2 |
-| 国际化 | 中/英 | P3 |
+| 国际化 | 浏览器语言自动 + 中/英手动切换 | P0 |
+| 主题 | 亮色 / 暗色 / 跟随系统，变量化清理 | P0 |
+| 响应预览 | 见 4.2，组件放在 HTTP 视图内 | P0 |
 | 可访问性 | 键盘导航、ARIA、对比度 | P2 |
 
 ### 4.5 开源运营
@@ -218,7 +287,147 @@
 
 ---
 
-## 5. 跨平台与发布
+## 5. 当前迭代：切片、边界与验收
+
+按顺序推进；每个切片单独提交、单独验证。除 S0 外不跨切片合并改动。
+
+### S0 — libuvcpp 上游补丁（已完成）
+
+- 0001 TLS SNI、0002 同步 I/O 超时、0003 `cmake --install` 完整性；
+- 已提 PR：Antruly/libuvcpp #38 / #39 / #40；
+- 验收：补丁可应用到 `v1.8.0` 与 `master`，uvscope 用新 SDK 通过 self-check 与 smoke。
+
+### S1 — HTTP 响应预览（前端，已实现）
+
+边界：只改 `web/src/views/HttpView.vue`、`web/src/styles.css`，必要时加 `web/src/lib/preview.ts`。
+
+状态：已实现并验证（HTML/图片预览、脚本禁用、远程媒体默认关闭、默认 CSP、Blob 生命周期）。
+
+内容：
+
+- Body / Preview 子切换；按 `content-type` 选择渲染方式；
+- HTML：`iframe sandbox` + `srcdoc`，默认 CSP `default-src 'none'`，禁脚本、禁远程资源；
+- 图片/音频/视频/PDF：Blob URL；切换响应或卸载时 `revokeObjectURL`；
+- `bodyTruncated` 或未知类型回落 raw/hex；
+- 预览容量上限与提示。
+
+验收：
+
+```sh
+npm --prefix web run typecheck
+npm --prefix web run build
+```
+
+手工：HTML 中的 `<script>` 不执行；PNG/MP4/PDF 可预览；二进制响应仍显示 hex。
+
+不做：后端流式下载、预览编辑、脚本执行开关。
+
+### S2 — 国际化与主题（前端，进行中）
+
+边界：`web/src/i18n.ts`、`web/src/stores/i18n.ts`、`web/src/stores/ui.ts`、壳层与登录/初始化页面、`styles.css`。
+
+状态：主题三档（亮/暗/跟随系统）已完成；中英文字典、浏览器语言检测、手动切换与持久化已完成，
+壳层/导航/登录/初始化已翻译。其余工作台页面按清单逐页补齐。
+
+内容：
+
+- 轻量 `t()` 字典（中/英），不引入新的运行时网络依赖；
+- `navigator.language` 自动选择，手动切换持久化，`<html lang>` 同步；
+- 主题三档：`light` / `dark` / `auto`，`auto` 跟随 `prefers-color-scheme`；
+- 先翻译壳层、导航、登录、初始化、设置、帮助；其余页面列清单逐页补。
+
+验收：
+
+```sh
+npm --prefix web run typecheck
+npm --prefix web run build
+```
+
+手工：`zh-CN`/`en-US` 浏览器首次打开语言正确；切换后刷新保持；三档主题无闪烁。
+
+不做：一次性翻译全部业务文案、RTL。
+
+### S3 — 持久 TCP 客户端（后端 + 前端）
+
+边界：新增 `src/transport_manager.*`、`/api/tcp/sessions*`、`TransportView` TCP 会话区、`docs/API.md`、Help、smoke。
+
+内容：
+
+- 独立 libuv 循环线程管理多条 TCP 会话；
+- connect / send / read events / close / reconnect；
+- 文本与 hex；字节计数；每会话事件环形缓冲；
+- 会话上限、空闲回收、错误分类。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 增加：本地 echo 服务端 + 同一连接两次发送。
+
+不做：TLS 客户端、SOCKS5、服务端监听。
+
+### S4 — TCP / UDP 服务端（后端 + 前端）
+
+边界：监听配置表与迁移、`/api/listeners*`、运行时管理器、TransportView 服务端区、Help/API/smoke。
+
+内容：
+
+- TCP/UDP 监听、启停、端口冲突、会话/数据报列表；
+- 逐会话或按来源发送；字节统计；事件时间线；
+- 监听配置持久化与可选自动启动。
+
+验收：
+
+- 外部 `nc` / `curl` 能连上并在 UI 看到会话；
+- 停止后端口释放；
+- smoke 覆盖一次 TCP 回显与一次 UDP 请求/响应。
+
+不做：QUIC、TLS 终止、SOCKS5。
+
+### S5 — SOCKS5 客户端与服务端
+
+边界：请求字段与校验、`/api/socks5/*`、运行时管理器、UI、Help/API/smoke。
+
+内容：
+
+- 客户端：HTTP/TCP/UDP 可选代理，认证，CONNECT/UDP ASSOCIATE，错误分类；
+- 服务端：监听、认证、会话列表、CONNECT/BIND/UDP ASSOCIATE 状态；
+- 代理失败不回落直连。
+
+验收：
+
+- `curl --socks5-hostname` 与本机客户端都能穿过服务端；
+- 错误凭据/不可达目标/未授权命令有结构化错误；
+- 代理断开时目标侧无直连流量。
+
+不做：透明代理、PAC、按域名分流。
+
+### S6 — QUIC / HTTP/3
+
+- 先完成 libuvcpp h3 的跨平台 CI 与真实端点回归；
+- 再开放客户端、stream/datagram 调试；
+- 未通过前发布构建继续关闭。
+
+---
+
+### 风险与回退（本迭代）
+
+| 风险 | 处理 |
+| --- | --- |
+| 预览 HTML 执行恶意脚本或加载外部资源 | sandbox + CSP，默认禁脚本/远程资源；只作为“查看器” |
+| 常驻会话泄漏内存/端口 | 每会话上限、空闲超时、监听停止即释放、self-check 覆盖 |
+| SOCKS5 配置错误导致直连 | 代理字段存在即必须走代理，失败即失败 |
+| 常驻服务阻塞主循环 | 独立循环线程；主进程只做管理和聚合 |
+| 大 body 进入 JSON 导致内存放大 | 预览只处理未截断 body；后续做流式下载 |
+| i18n 一次性改动过大 | 先壳层与关键页，逐页补齐，字典集中管理 |
+
+---
+
+## 6. 跨平台与发布
 
 ### 目标平台
 
@@ -237,20 +446,20 @@
 ### 发布产物
 
 ```text
-uvscope-0.1.0-linux-x64.tar.gz
-uvscope-0.1.0-linux-arm64.tar.gz
-uvscope_0.1.0_amd64.deb
-uvscope_0.1.0_arm64.deb
-uvscope-0.1.0-1.x86_64.rpm
-uvscope-0.1.0-1.aarch64.rpm
-uvscope-0.1.0-mingw-x64.zip
-uvscope-0.1.0-setup.exe
-uvscope-0.1.0-macos-arm64.zip
+uvscope-0.2.0-linux-x64.tar.gz
+uvscope-0.2.0-linux-arm64.tar.gz
+uvscope_0.2.0_amd64.deb
+uvscope_0.2.0_arm64.deb
+uvscope-0.2.0-1.x86_64.rpm
+uvscope-0.2.0-1.aarch64.rpm
+uvscope-0.2.0-mingw-x64.zip
+uvscope-0.2.0-setup.exe
+uvscope-0.2.0-macos-arm64.zip
 ```
 
 ---
 
-## 6. AI 分步开发与 uvp-agents 配合
+## 7. AI 分步开发与 uvp-agents 配合
 
 建议把每个里程碑拆成“可独立验证的 AI 任务”，每个任务必须带：
 
@@ -276,7 +485,7 @@ uvscope-0.1.0-macos-arm64.zip
 
 ---
 
-## 7. 风险清单
+## 8. 风险清单
 
 | 风险 | 影响 | 应对 |
 | --- | --- | --- |
@@ -290,10 +499,12 @@ uvscope-0.1.0-macos-arm64.zip
 
 ---
 
-## 8. 0.1.1 建议立即处理
+## 9. 0.1.1 建议立即处理
 
 1. 将 HTTP/2 / HTTP/3 按钮标注为“实验”，或在稳定版构建中从 UI 隐藏。
 2. 修复 HTTP 历史记录在 `bodySize` 对 TCP/TLS 的字段映射。
 3. 为反向代理增加上游超时配置与 WebSocket Upgrade 检测。
 4. 增加 `scripts/smoke-test.sh`，在 CI 中真实启动服务并断言 setup/login/proxy。
-5. 将 libuvcpp 补丁提交上游（SNI）；跟踪异步 TLS 写路径问题。
+5. libuvcpp 补丁已提交上游：SNI（#38）、同步 I/O 超时（#39）、`cmake --install` 完整性（#40）；跟踪 review 与三平台 CI。异步 TLS/h2 已在 Linux 复测通过，旧结论已撤回。
+
+---

@@ -4,12 +4,21 @@ import BrandMark from '../components/BrandMark.vue'
 import Icon from '../components/Icon.vue'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
+import { useI18nStore } from '../stores/i18n'
 import { errorMessage } from '../api'
 
 defineOptions({ name: 'SetupView' })
 const emit = defineEmits<{ authenticated: [] }>()
 const auth = useAuthStore()
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
+const themeTitle = computed(() => {
+  const mode = ui.theme === 'auto'
+    ? `${t('theme.auto')} (${t(`theme.${ui.resolvedTheme}`)})`
+    : t(`theme.${ui.theme}`)
+  return t('theme.switch', { mode })
+})
 
 const username = ref('')
 const password = ref('')
@@ -25,26 +34,26 @@ const strength = computed(() => {
   if (/\d/.test(password.value) || /[^A-Za-z0-9]/.test(password.value)) score++
   return score
 })
-const strengthLabel = computed(() => ['Too short', 'Fair', 'Good', 'Strong', 'Excellent'][strength.value] || 'Too short')
+const strengthLabel = computed(() => t(`auth.setup.strength.${strength.value}`))
 
 async function submit() {
   error.value = ''
   if (username.value.trim().length < 3) {
-    error.value = 'Username must be at least 3 characters.'
+    error.value = t('auth.setup.usernameShort')
     return
   }
   if (password.value.length < 8) {
-    error.value = 'Password must be at least 8 characters.'
+    error.value = t('auth.setup.passwordShort')
     return
   }
   if (password.value !== confirm.value) {
-    error.value = 'Passwords do not match.'
+    error.value = t('auth.setup.mismatch')
     return
   }
   submitting.value = true
   try {
     await auth.setup(username.value.trim(), password.value)
-    ui.notify('success', 'Workbench initialized', 'Your administrator account is ready.')
+    ui.notify('success', t('auth.setup.success'), t('auth.setup.successBody'))
     emit('authenticated')
   } catch (err) {
     error.value = errorMessage(err)
@@ -61,52 +70,52 @@ async function submit() {
       <div class="auth-art__top">
         <BrandMark :size="40" />
         <span class="auth-wordmark">uvscope</span>
-        <span class="chip chip--warn">first run</span>
+        <span class="chip chip--warn">{{ t('auth.setup.chip') }}</span>
       </div>
       <div class="auth-art__copy">
-        <p class="eyebrow">Fresh installation</p>
+        <p class="eyebrow">{{ t('auth.setup.eyebrow') }}</p>
         <h1>
-          Your workbench.<br />
-          <span class="text-gradient">Your rules.</span>
+          {{ t('auth.setup.title1') }}<br />
+          <span class="text-gradient">{{ t('auth.setup.title2') }}</span>
         </h1>
-        <p class="auth-art__lead">
-          uvscope stores everything locally in SQLite. Create the first administrator, then decide which
-          protocol modules and gateway controls are available to your team.
-        </p>
+        <p class="auth-art__lead">{{ t('auth.setup.lead') }}</p>
       </div>
       <div class="setup-steps">
         <div class="setup-step setup-step--active">
           <span>01</span>
-          <div><strong>Create administrator</strong><p>Owns users, roles, settings and reset.</p></div>
+          <div><strong>{{ t('auth.setup.step1.title') }}</strong><p>{{ t('auth.setup.step1.text') }}</p></div>
         </div>
         <div class="setup-step">
           <span>02</span>
-          <div><strong>Choose modules</strong><p>Toggle protocol surfaces after sign-in.</p></div>
+          <div><strong>{{ t('auth.setup.step2.title') }}</strong><p>{{ t('auth.setup.step2.text') }}</p></div>
         </div>
         <div class="setup-step">
           <span>03</span>
-          <div><strong>Start probing</strong><p>Or launch your first reverse proxy.</p></div>
+          <div><strong>{{ t('auth.setup.step3.title') }}</strong><p>{{ t('auth.setup.step3.text') }}</p></div>
         </div>
       </div>
       <div class="auth-art__foot">
-        <span><i class="status-dot" /> no telemetry, no cloud</span>
+        <span><i class="status-dot" /> {{ t('auth.setup.noTelemetry') }}</span>
         <span class="mono">{{ auth.dataDir }}</span>
       </div>
     </section>
 
     <section class="auth-panel">
-      <button class="icon-button auth-theme" :title="ui.theme === 'dark' ? 'Light theme' : 'Dark theme'" @click="ui.toggleTheme">
-        <Icon :name="ui.theme === 'dark' ? 'sun' : 'moon'" :size="18" />
-      </button>
+      <div class="auth-actions">
+        <button class="icon-button locale-toggle" :title="t('language.switch')" @click="i18n.toggleLocale">{{ i18n.nextLabel }}</button>
+        <button class="icon-button auth-theme" :title="themeTitle" @click="ui.cycleTheme">
+          <Icon :name="ui.themeIcon" :size="18" />
+        </button>
+      </div>
       <form class="auth-card" @submit.prevent="submit">
         <div class="auth-card__head">
-          <span class="eyebrow">Initialize</span>
-          <h2>Create the administrator</h2>
-          <p>This account is created once. Recovery is available from Settings.</p>
+          <span class="eyebrow">{{ t('auth.setup.eyebrowCard') }}</span>
+          <h2>{{ t('auth.setup.title') }}</h2>
+          <p>{{ t('auth.setup.leadCard') }}</p>
         </div>
 
         <label class="field">
-          <span>Username</span>
+          <span>{{ t('auth.setup.username') }}</span>
           <div class="input-shell">
             <Icon name="users" :size="17" />
             <input v-model="username" autocomplete="username" placeholder="admin" autofocus />
@@ -114,10 +123,10 @@ async function submit() {
         </label>
 
         <label class="field">
-          <span>Password</span>
+          <span>{{ t('auth.setup.password') }}</span>
           <div class="input-shell">
             <Icon name="lock" :size="17" />
-            <input v-model="password" type="password" autocomplete="new-password" placeholder="At least 8 characters" />
+            <input v-model="password" type="password" autocomplete="new-password" :placeholder="t('auth.setup.passwordHint')" />
           </div>
         </label>
 
@@ -129,10 +138,10 @@ async function submit() {
         </div>
 
         <label class="field">
-          <span>Confirm password</span>
+          <span>{{ t('auth.setup.confirm') }}</span>
           <div class="input-shell">
             <Icon name="check" :size="17" />
-            <input v-model="confirm" type="password" autocomplete="new-password" placeholder="Repeat the password" />
+            <input v-model="confirm" type="password" autocomplete="new-password" :placeholder="t('auth.setup.confirmHint')" />
           </div>
         </label>
 
@@ -144,10 +153,10 @@ async function submit() {
         <button class="button button--primary button--lg auth-submit" :disabled="submitting">
           <span v-if="submitting" class="spinner" />
           <Icon v-else name="spark" :size="17" />
-          {{ submitting ? 'Initializing…' : 'Initialize workbench' }}
+          {{ submitting ? t('auth.setup.initializing') : t('auth.setup.initialize') }}
         </button>
         <div class="auth-card__meta">
-          <span>Storage</span>
+          <span>{{ t('auth.setup.storage') }}</span>
           <span class="mono">SQLite · {{ auth.dataDir }}</span>
         </div>
       </form>

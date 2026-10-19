@@ -1,21 +1,32 @@
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from '../components/Icon.vue'
 import { del, errorMessage, get, post } from '../api'
 import type { HistoryEntry, HttpHeader, HttpResult } from '../types'
 import { useUiStore } from '../stores/ui'
 import { useAuthStore } from '../stores/auth'
+import { useI18nStore } from '../stores/i18n'
+import {
+  base64ToBytes,
+  buildHtmlDocument,
+  bytesToText,
+  contentTypeOf,
+  previewKindOf,
+  type PreviewKind,
+} from '../lib/preview'
 
 defineOptions({ name: 'HttpView' })
 
 const ui = useUiStore()
 const auth = useAuthStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const method = ref('GET')
 const url = ref('https://httpbin.org/anything')
 const protocol = ref<'http1' | 'http2' | 'http3'>('http1')
 const headers = ref<HttpHeader[]>([
   { name: 'accept', value: 'application/json' },
-  { name: 'user-agent', value: 'uvscope/0.1.0' },
+  { name: 'user-agent', value: `uvscope/${auth.version}` },
 ])
 const body = ref('')
 const bodyType = ref('application/json')
@@ -24,7 +35,9 @@ const insecure = ref(false)
 const compression = ref(false)
 const sending = ref(false)
 const result = ref<HttpResult | null>(null)
-const responseTab = ref<'body' | 'headers' | 'timing'>('body')
+const responseTab = ref<'body' | 'preview' | 'headers' | 'timing'>('body')
+const allowRemotePreview = ref(false)
+const previewUrl = ref('')
 const requestTab = ref<'headers' | 'body'>('headers')
 const advancedOpen = ref(false)
 const history = ref<HistoryEntry[]>([])
@@ -73,6 +86,65 @@ const responseBody = computed(() => {
 
 const responseIsBinary = computed(() => result.value?.bodyEncoding === 'base64')
 
+const contentType = computed(() => contentTypeOf(result.value?.headers))
+const previewKind = computed<PreviewKind>(() => previewKindOf(contentType.value))
+const previewAvailable = computed(
+  () => result.value?.ok === true && previewKind.value !== 'none',
+)
+
+const responseBytes = computed<Uint8Array | null>(() => {
+  const res = result.value
+  if (!res?.ok) return null
+  if (res.bodyEncoding === 'base64' && res.bodyBase64) {
+    try {
+      return base64ToBytes(res.bodyBase64)
+    } catch {
+      return null
+    }
+  }
+  return new TextEncoder().encode(res.bodyText || '')
+})
+
+const htmlSource = computed(() => {
+  if (previewKind.value !== 'html') return ''
+  const bytes = responseBytes.value
+  return bytes ? bytesToText(bytes) : ''
+})
+
+const htmlPreviewDocument = computed(() => {
+  if (previewKind.value !== 'html') return ''
+  return buildHtmlDocument(htmlSource.value, {
+    allowRemote: allowRemotePreview.value,
+    baseUrl: result.value?.request?.url,
+  })
+})
+
+function revokePreviewUrl() {
+  if (!previewUrl.value) return
+  URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = ''
+}
+
+watch(
+  [() => result.value, previewKind, responseTab],
+  () => {
+    revokePreviewUrl()
+    if (responseTab.value !== 'preview') return
+    const kind = previewKind.value
+    if (kind === 'none' || kind === 'html') return
+    const bytes = responseBytes.value
+    if (!bytes) return
+    const type = contentType.value.split(';', 1)[0].trim() || 'application/octet-stream'
+    const copy = new Uint8Array(bytes)
+    previewUrl.value = URL.createObjectURL(new Blob([copy], { type }))
+  },
+  { immediate: true },
+)
+
+watch(previewKind, (kind) => {
+  if (kind === 'none' && responseTab.value === 'preview') responseTab.value = 'body'
+})
+
 function addHeader() {
   headers.value.push({ name: '', value: '' })
 }
@@ -105,15 +177,15 @@ function downloadBody() {
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text)
-    ui.notify('success', 'Copied to clipboard')
+    ui.notify('success', t('http.notify.copied'))
   } catch {
-    ui.notify('error', 'Clipboard access was denied')
+    ui.notify('error', t('http.notify.clipboardDenied'))
   }
 }
 
 async function send() {
   if (!url.value.trim()) {
-    ui.notify('warning', 'A URL is required')
+    ui.notify('warning', t('http.notify.urlRequired'))
     return
   }
   if (sending.value) return
@@ -142,10 +214,10 @@ async function send() {
     result.value = await post<HttpResult>('/api/http/send', payload)
     responseTab.value = 'body'
     await loadHistory()
-    if (!result.value.ok) ui.notify('error', 'Request failed', result.value.error)
+    if (!result.value.ok) ui.notify('error', t('http.requestFailed'), result.value.error)
   } catch (err) {
     result.value = { ok: false, error: errorMessage(err) }
-    ui.toastError(err, 'Request failed')
+    ui.toastError(err, t('http.requestFailed'))
   } finally {
     sending.value = false
     if (ticker) window.clearInterval(ticker)
@@ -174,13 +246,13 @@ function restore(entry: HistoryEntry) {
 }
 
 async function clearHistory() {
-  if (!window.confirm('Clear HTTP request history for all users?')) return
+  if (!window.confirm(t('http.history.clearConfirm'))) return
   try {
     await del('/api/history?kind=http')
     history.value = []
-    ui.notify('success', 'HTTP history cleared')
+    ui.notify('success', t('http.history.cleared'))
   } catch (err) {
-    ui.toastError(err)
+    ui.toastError(err, t('http.somethingWentWrong'))
   }
 }
 
@@ -210,6 +282,7 @@ onActivated(() => void loadHistory())
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   if (ticker) window.clearInterval(ticker)
+  revokePreviewUrl()
 })
 </script>
 
@@ -217,9 +290,9 @@ onBeforeUnmount(() => {
   <div class="page http-page">
     <header class="page-head">
       <div>
-        <span class="eyebrow">HTTP Studio</span>
-        <h2>Requests without the mystery.</h2>
-        <p>Compose any method, inspect raw headers, timing and bytes. Sent by the local libuvcpp daemon.</p>
+        <span class="eyebrow">{{ t('http.eyebrow') }}</span>
+        <h2>{{ t('http.title') }}</h2>
+        <p>{{ t('http.lead') }}</p>
       </div>
       <div class="page-head__actions">
         <span class="chip mono"><Icon name="terminal" :size="13" /> Ctrl + Enter</span>
@@ -231,7 +304,7 @@ onBeforeUnmount(() => {
         <section class="request-card">
           <div class="request-line">
             <div class="method-select" :class="`method-select--${method.toLowerCase()}`">
-              <select v-model="method" aria-label="HTTP method">
+              <select v-model="method" :aria-label="t('http.methodAria')">
                 <option v-for="item in methods" :key="item" :value="item">{{ item }}</option>
               </select>
               <Icon name="chevron-down" :size="14" />
@@ -246,48 +319,48 @@ onBeforeUnmount(() => {
             <button class="button button--primary send-button" :disabled="sending" @click="send">
               <span v-if="sending" class="spinner" />
               <Icon v-else name="send" :size="16" />
-              {{ sending ? 'Sending' : 'Send' }}
+              {{ sending ? t('http.sending') : t('http.send') }}
             </button>
           </div>
 
           <div class="request-toolbar">
-            <div class="protocol-switch" role="group" aria-label="Protocol preference">
+            <div class="protocol-switch" role="group" :aria-label="t('http.protocol.group')">
               <button :class="{ active: protocol === 'http1' }" @click="protocol = 'http1'">HTTP/1.1</button>
-              <button :class="{ active: protocol === 'http2' }" title="HTTP/2 preference — experimental in 0.1.0" @click="protocol = 'http2'">H2 <em>exp</em></button>
-              <button :class="{ active: protocol === 'http3' }" title="HTTP/3 preference — experimental in 0.1.0" @click="protocol = 'http3'">H3 <em>exp</em></button>
+              <button :class="{ active: protocol === 'http2' }" :title="t('http.protocol.http2Title')" @click="protocol = 'http2'">H2 <em>{{ t('http.protocol.experimental') }}</em></button>
+              <button :class="{ active: protocol === 'http3' }" :title="t('http.protocol.http3Title')" @click="protocol = 'http3'">H3 <em>{{ t('http.protocol.experimental') }}</em></button>
             </div>
             <div class="request-toolbar__right">
               <button class="ghost-toggle" :class="{ active: advancedOpen }" @click="advancedOpen = !advancedOpen">
-                <Icon name="settings" :size="15" /> Options
+                <Icon name="settings" :size="15" /> {{ t('http.options') }}
               </button>
             </div>
           </div>
 
           <Transition name="reveal">
             <div v-if="advancedOpen" class="advanced-row">
-              <label><span>Timeout (ms)</span><input v-model.number="timeoutMs" type="number" min="1000" max="120000" /></label>
-              <label class="switch-field"><span>Allow insecure TLS</span><button class="switch" :class="{ on: insecure }" @click="insecure = !insecure"><i /></button></label>
-              <label class="switch-field"><span>Request compression</span><button class="switch" :class="{ on: compression }" @click="compression = !compression"><i /></button></label>
+              <label><span>{{ t('http.timeout') }}</span><input v-model.number="timeoutMs" type="number" min="1000" max="120000" /></label>
+              <label class="switch-field"><span>{{ t('http.allowInsecureTls') }}</span><button class="switch" :class="{ on: insecure }" @click="insecure = !insecure"><i /></button></label>
+              <label class="switch-field"><span>{{ t('http.requestCompression') }}</span><button class="switch" :class="{ on: compression }" @click="compression = !compression"><i /></button></label>
             </div>
           </Transition>
 
           <div class="sub-tabs">
             <button :class="{ active: requestTab === 'headers' }" @click="requestTab = 'headers'">
-              Headers <span class="count">{{ cleanHeaders().length }}</span>
+              {{ t('http.request.tab.headers') }} <span class="count">{{ cleanHeaders().length }}</span>
             </button>
-            <button :class="{ active: requestTab === 'body' }" @click="requestTab = 'body'">Body</button>
+            <button :class="{ active: requestTab === 'body' }" @click="requestTab = 'body'">{{ t('http.request.tab.body') }}</button>
           </div>
 
           <div v-show="requestTab === 'headers'" class="editor-pane">
-            <div class="kv-head"><span>Header</span><span>Value</span><span /></div>
+            <div class="kv-head"><span>{{ t('http.headers.name') }}</span><span>{{ t('http.headers.value') }}</span><span /></div>
             <div v-for="(header, index) in headers" :key="index" class="kv-row">
-              <input v-model="header.name" placeholder="header-name" spellcheck="false" class="mono" />
-              <input v-model="header.value" placeholder="value" spellcheck="false" class="mono" />
-              <button class="icon-button icon-button--sm" title="Remove header" @click="removeHeader(index)">
+              <input v-model="header.name" :placeholder="t('http.headers.namePlaceholder')" spellcheck="false" class="mono" />
+              <input v-model="header.value" :placeholder="t('http.headers.valuePlaceholder')" spellcheck="false" class="mono" />
+              <button class="icon-button icon-button--sm" :title="t('http.headers.remove')" @click="removeHeader(index)">
                 <Icon name="close" :size="14" />
               </button>
             </div>
-            <button class="add-row" @click="addHeader"><Icon name="plus" :size="14" />Add header</button>
+            <button class="add-row" @click="addHeader"><Icon name="plus" :size="14" />{{ t('http.headers.add') }}</button>
           </div>
 
           <div v-show="requestTab === 'body'" class="editor-pane">
@@ -295,35 +368,35 @@ onBeforeUnmount(() => {
               <select v-model="bodyType" class="select">
                 <option value="application/json">JSON</option>
                 <option value="application/xml">XML</option>
-                <option value="text/plain">Text</option>
-                <option value="application/x-www-form-urlencoded">Form URL encoded</option>
-                <option value="application/octet-stream">Binary / raw</option>
+                <option value="text/plain">{{ t('http.body.typeText') }}</option>
+                <option value="application/x-www-form-urlencoded">{{ t('http.body.typeForm') }}</option>
+                <option value="application/octet-stream">{{ t('http.body.typeBinary') }}</option>
               </select>
-              <span class="muted mono">{{ body.length }} chars</span>
+              <span class="muted mono">{{ t('http.body.chars', { count: body.length }) }}</span>
             </div>
-            <textarea v-model="body" class="code-input" spellcheck="false" placeholder="Request body…" />
+            <textarea v-model="body" class="code-input" spellcheck="false" :placeholder="t('http.body.placeholder')" />
           </div>
         </section>
 
         <section class="response-card">
           <header class="response-head">
             <div class="response-head__title">
-              <span class="eyebrow">Response</span>
+              <span class="eyebrow">{{ t('http.response.eyebrow') }}</span>
               <div v-if="result" class="response-meta">
                 <span class="status-pill" :class="`status-pill--${statusTone}`">
                   {{ result.ok ? result.status : 'ERR' }}
                 </span>
                 <span class="mono">{{ result.ok ? result.statusText : result.error }}</span>
               </div>
-              <span v-else class="muted">Waiting for a request</span>
+              <span v-else class="muted">{{ t('http.response.waiting') }}</span>
             </div>
             <div class="response-head__actions">
               <template v-if="result?.ok">
                 <span class="meta-pill mono">{{ result.httpVersion }}</span>
                 <span class="meta-pill mono">{{ result.timing?.totalMs ?? 0 }} ms</span>
                 <span class="meta-pill mono">{{ formatBytes(result.bodySize ?? 0) }}</span>
-                <button class="icon-button icon-button--sm" title="Copy body" @click="copy(responseBody)"><Icon name="copy" :size="15" /></button>
-                <button class="icon-button icon-button--sm" title="Download body" @click="downloadBody"><Icon name="download" :size="15" /></button>
+                <button class="icon-button icon-button--sm" :title="t('http.response.copyBody')" @click="copy(responseBody)"><Icon name="copy" :size="15" /></button>
+                <button class="icon-button icon-button--sm" :title="t('http.response.downloadBody')" @click="downloadBody"><Icon name="download" :size="15" /></button>
               </template>
             </div>
           </header>
@@ -331,21 +404,21 @@ onBeforeUnmount(() => {
           <div v-if="sending" class="response-loading">
             <div class="pulse-orbit"><span /><span /><span /></div>
             <div>
-              <strong>Waiting on {{ protocol.toUpperCase() }}</strong>
-              <p class="mono">{{ elapsed }} ms elapsed · the daemon is still working</p>
+              <strong>{{ t('http.response.waitingOn', { protocol: protocol.toUpperCase() }) }}</strong>
+              <p class="mono">{{ t('http.response.elapsed', { elapsed }) }}</p>
             </div>
           </div>
 
           <div v-else-if="!result" class="response-empty">
             <div class="response-empty__art"><Icon name="send" :size="30" /></div>
-            <h3>Ready when you are.</h3>
-            <p>Send a request to see status, headers, raw body and timings. Everything stays on this machine.</p>
+            <h3>{{ t('http.response.readyTitle') }}</h3>
+            <p>{{ t('http.response.readyLead') }}</p>
           </div>
 
           <div v-else-if="!result.ok" class="response-error">
             <div class="inline-alert inline-alert--danger">
               <Icon name="alert" :size="17" />
-              <span>{{ result.error || 'Request failed' }}</span>
+              <span>{{ result.error || t('http.requestFailed') }}</span>
             </div>
             <div class="error-details mono">
               {{ result.request?.method }} {{ result.request?.url }} · {{ result.timing?.totalMs ?? 0 }} ms
@@ -355,18 +428,61 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="sub-tabs sub-tabs--response">
               <button :class="{ active: responseTab === 'body' }" @click="responseTab = 'body'">
-                Body <span v-if="responseIsBinary" class="count">base64/hex</span>
+                {{ t('http.response.tab.body') }} <span v-if="responseIsBinary" class="count">base64/hex</span>
+              </button>
+              <button
+                v-if="previewAvailable"
+                :class="{ active: responseTab === 'preview' }"
+                @click="responseTab = 'preview'"
+              >
+                {{ t('http.response.tab.preview') }} <span class="count">{{ previewKind }}</span>
               </button>
               <button :class="{ active: responseTab === 'headers' }" @click="responseTab = 'headers'">
-                Headers <span class="count">{{ result.headers?.length ?? 0 }}</span>
+                {{ t('http.response.tab.headers') }} <span class="count">{{ result.headers?.length ?? 0 }}</span>
               </button>
-              <button :class="{ active: responseTab === 'timing' }" @click="responseTab = 'timing'">Timing</button>
+              <button :class="{ active: responseTab === 'timing' }" @click="responseTab = 'timing'">{{ t('http.response.tab.timing') }}</button>
             </div>
             <div v-if="responseTab === 'body'" class="response-body">
               <pre class="code-output">{{ responseBody }}</pre>
               <div v-if="result.bodyTruncated" class="truncation-note">
-                <Icon name="alert" :size="14" />Preview truncated at 4 MiB.
+                <Icon name="alert" :size="14" />{{ t('http.response.truncated') }}
               </div>
+            </div>
+            <div v-else-if="responseTab === 'preview'" class="response-preview">
+              <div class="preview-toolbar">
+                <span class="chip mono">{{ contentType || t('http.response.unknownContentType') }}</span>
+                <span class="muted">{{ formatBytes(result.bodySize ?? 0) }}</span>
+                <label v-if="previewKind === 'html'" class="preview-toggle">
+                  <input v-model="allowRemotePreview" type="checkbox" />
+                  {{ t('http.preview.loadRemote') }}
+                </label>
+                <span class="muted preview-hint">
+                  {{ previewKind === 'html' ? t('http.preview.scriptsDisabled') : t('http.preview.localBrowser') }}
+                </span>
+              </div>
+              <div v-if="result.bodyTruncated" class="preview-warning">
+                <Icon name="alert" :size="14" />
+                {{ t('http.preview.warning') }}
+              </div>
+              <iframe
+                v-if="previewKind === 'html'"
+                class="preview-frame preview-frame--html"
+                sandbox=""
+                :srcdoc="htmlPreviewDocument"
+                :title="t('http.preview.htmlTitle')"
+              />
+              <div v-else-if="previewKind === 'image'" class="preview-media">
+                <img :src="previewUrl" :alt="t('http.preview.imageAlt')" />
+              </div>
+              <audio v-else-if="previewKind === 'audio'" class="preview-audio" :src="previewUrl" controls />
+              <video v-else-if="previewKind === 'video'" class="preview-video" :src="previewUrl" controls />
+              <iframe
+                v-else-if="previewKind === 'pdf'"
+                class="preview-frame"
+                :src="previewUrl"
+                :title="t('http.preview.pdfTitle')"
+              />
+              <div v-else class="preview-empty">{{ t('http.preview.empty') }}</div>
             </div>
             <div v-else-if="responseTab === 'headers'" class="response-headers">
               <div v-for="header in result.headers" :key="header.name + header.value" class="header-line">
@@ -376,20 +492,20 @@ onBeforeUnmount(() => {
             </div>
             <div v-else class="timing-panel">
               <div class="timing-row">
-                <div class="timing-row__label"><Icon name="globe" :size="15" />Connect</div>
+                <div class="timing-row__label"><Icon name="globe" :size="15" />{{ t('http.timing.connect') }}</div>
                 <div class="timing-bar"><span :style="{ width: `${Math.min(100, ((result.timing?.connectMs ?? 0) / Math.max(1, result.timing?.totalMs ?? 1)) * 100)}%` }" /></div>
                 <span class="mono">{{ result.timing?.connectMs ?? 0 }} ms</span>
               </div>
               <div class="timing-row">
-                <div class="timing-row__label"><Icon name="bolt" :size="15" />Total</div>
+                <div class="timing-row__label"><Icon name="bolt" :size="15" />{{ t('http.timing.total') }}</div>
                 <div class="timing-bar timing-bar--total"><span style="width: 100%" /></div>
                 <span class="mono">{{ result.timing?.totalMs ?? 0 }} ms</span>
               </div>
               <div class="timing-facts">
-                <div><span>Protocol</span><strong>{{ result.httpVersion || '—' }}</strong></div>
+                <div><span>{{ t('http.timing.protocol') }}</span><strong>{{ result.httpVersion || '—' }}</strong></div>
                 <div><span>ALPN</span><strong class="mono">{{ result.alpn || '—' }}</strong></div>
-                <div><span>Body bytes</span><strong>{{ result.bodySize ?? 0 }}</strong></div>
-                <div><span>Sent at</span><strong class="mono">{{ result.startedAt }}</strong></div>
+                <div><span>{{ t('http.timing.bodyBytes') }}</span><strong>{{ result.bodySize ?? 0 }}</strong></div>
+                <div><span>{{ t('http.timing.sentAt') }}</span><strong class="mono">{{ result.startedAt }}</strong></div>
               </div>
             </div>
           </template>
@@ -398,10 +514,10 @@ onBeforeUnmount(() => {
 
       <aside class="history-panel">
         <header class="history-head">
-          <div><span class="eyebrow">Recent</span><h3>Request history</h3></div>
-          <button class="icon-button icon-button--sm" title="Refresh history" @click="loadHistory"><Icon name="refresh" :size="15" /></button>
+          <div><span class="eyebrow">{{ t('http.history.eyebrow') }}</span><h3>{{ t('http.history.title') }}</h3></div>
+          <button class="icon-button icon-button--sm" :title="t('http.history.refresh')" @click="loadHistory"><Icon name="refresh" :size="15" /></button>
         </header>
-        <div v-if="historyLoading" class="history-empty"><span class="spinner" />Loading…</div>
+        <div v-if="historyLoading" class="history-empty"><span class="spinner" />{{ t('http.history.loading') }}</div>
         <div v-else-if="history.length" class="history-list">
           <button v-for="entry in history" :key="entry.id" class="history-item" @click="restore(entry)">
             <span class="status-code" :class="entry.status === 'success' ? 'status-code--ok' : 'status-code--bad'">{{ entry.httpStatus || 'ERR' }}</span>
@@ -413,10 +529,10 @@ onBeforeUnmount(() => {
         </div>
         <div v-else class="history-empty">
           <Icon name="clock" :size="18" />
-          <span>No requests sent yet.</span>
+          <span>{{ t('http.history.empty') }}</span>
         </div>
         <button v-if="history.length && auth.isAdmin" class="history-clear" @click="clearHistory">
-          <Icon name="trash" :size="14" />Clear history
+          <Icon name="trash" :size="14" />{{ t('http.history.clear') }}
         </button>
       </aside>
     </div>

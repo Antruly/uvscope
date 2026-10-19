@@ -10,15 +10,21 @@
 
 Node.js 20+ is required for the frontend.
 
-## The libuvcpp TLS patch
+## The libuvcpp patches
 
-uvscope builds against libuvcpp 1.8.0. The upstream HTTP client does not set TLS SNI, which makes
-almost every modern HTTPS virtual host fail. The repository carries the minimal fix in
-[`patches/libuvcpp-1.8.0-sni.patch`](../patches/libuvcpp-1.8.0-sni.patch):
+uvscope builds against libuvcpp 1.8.0. The repository carries three minimal upstream fixes in
+[`patches/upstream/`](../patches/upstream/), applied in name order:
 
-- `uvcpp_ssl::set_server_name()` calls `SSL_set_tlsext_host_name`.
-- The synchronous HTTP client sets it before the handshake.
-- The async TCP/TLS path sets it before the handshake.
+- `0001-tls-sni.patch` — set TLS SNI (and skip it for IP literals). Without it almost every modern
+  HTTPS virtual host fails or serves an unrelated default certificate.
+- `0002-sync-io-timeouts.patch` — honour `timeout_ms` in the blocking `*_wait` paths on POSIX,
+  distinguish a timeout from a clean EOF, and stop reporting `200 OK` on a failed synchronous
+  response.
+- `0003-install-complete.patch` — install the shared dependency libraries, set `$ORIGIN` /
+  `@loader_path` RPATH, and expose bundled libuv headers to `find_package(uvcpp)` consumers.
+
+See [`LIBUVCPP_UPSTREAM.zh-CN.md`](LIBUVCPP_UPSTREAM.zh-CN.md) for the reproduction, root cause and
+verification of each patch.
 
 Build a patched SDK automatically:
 
@@ -26,8 +32,10 @@ Build a patched SDK automatically:
 ./scripts/build-libuvcpp.sh
 ```
 
-This clones `v1.8.0` into `.deps/libuvcpp-src`, applies the patch, builds a lean runtime (HTTP/1.1,
-WebSocket, webapp, SSL, SQLite, WSDL) and installs it to `.deps/libuvcpp`.
+This clones `v1.8.0` into `.deps/libuvcpp-src`, applies every patch under `patches/upstream/`, builds
+a lean runtime (HTTP/1.1, WebSocket, webapp, SSL, SQLite, WSDL) and installs it to `.deps/libuvcpp`.
+The script fails closed if a patch neither applies nor is already present. If you have a cached
+source tree from 0.1.0, delete `.deps/libuvcpp-src` once and rerun.
 
 To use an existing SDK:
 
@@ -132,7 +140,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-macOS builds are source-oriented in 0.1.0. A signed/notarized `.app` is later work.
+macOS builds are source-oriented in 0.2.0. A signed/notarized `.app` is later work.
 
 ## CI
 

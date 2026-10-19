@@ -5,6 +5,7 @@ import Icon from '../components/Icon.vue'
 import { get, errorMessage } from '../api'
 import type { Dashboard } from '../types'
 import { useAuthStore } from '../stores/auth'
+import { useI18nStore } from '../stores/i18n'
 import { useUiStore } from '../stores/ui'
 
 defineOptions({ name: 'DashboardView' })
@@ -12,6 +13,8 @@ defineOptions({ name: 'DashboardView' })
 const router = useRouter()
 const auth = useAuthStore()
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const data = ref<Dashboard | null>(null)
 const loading = ref(true)
 const refreshing = ref(false)
@@ -32,9 +35,9 @@ const uptime = computed(() => {
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
-  if (days) return `${days}d ${hours}h`
-  if (hours) return `${hours}h ${minutes}m`
-  return `${minutes}m ${seconds % 60}s`
+  if (days) return t('dashboard.duration.dayHours', { days, hours })
+  if (hours) return t('dashboard.duration.hoursMinutes', { hours, minutes })
+  return t('dashboard.duration.minutesSeconds', { minutes, seconds: seconds % 60 })
 })
 
 const rss = computed(() => {
@@ -72,10 +75,10 @@ const sparkline = computed(() => {
 
 const quickActions = computed(() =>
   [
-    { label: 'New HTTP request', icon: 'bolt', to: '/http', module: 'http' },
-    { label: 'Open WebSocket', icon: 'pulse', to: '/websocket', module: 'websocket' },
-    { label: 'Start a reverse proxy', icon: 'route', to: '/proxy', module: 'proxy' },
-    { label: 'Inspect a certificate', icon: 'shield', to: '/tls', module: 'tls' },
+    { label: t('dashboard.action.http'), icon: 'bolt', to: '/http', module: 'http' },
+    { label: t('dashboard.action.websocket'), icon: 'pulse', to: '/websocket', module: 'websocket' },
+    { label: t('dashboard.action.proxy'), icon: 'route', to: '/proxy', module: 'proxy' },
+    { label: t('dashboard.action.tls'), icon: 'shield', to: '/tls', module: 'tls' },
   ].filter((action) => !action.module || auth.moduleEnabled(action.module as never)),
 )
 
@@ -88,7 +91,7 @@ async function load(background = false) {
     lastUpdated.value = new Date()
   } catch (err) {
     error.value = errorMessage(err)
-    if (!background) ui.toastError(err, 'Dashboard unavailable')
+    if (!background) ui.toastError(err, t('dashboard.unavailable'))
   } finally {
     loading.value = false
     refreshing.value = false
@@ -117,10 +120,16 @@ function formatTime(value: string) {
   const date = new Date(value)
   const now = Date.now()
   const delta = Math.max(0, now - date.getTime())
-  if (delta < 60_000) return `${Math.floor(delta / 1000)}s ago`
-  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`
+  if (delta < 60_000) return t('dashboard.secondsAgo', { count: Math.floor(delta / 1000) })
+  if (delta < 3_600_000) return t('dashboard.minutesAgo', { count: Math.floor(delta / 60_000) })
+  if (delta < 86_400_000) return t('dashboard.hoursAgo', { count: Math.floor(delta / 3_600_000) })
   return date.toLocaleDateString()
+}
+
+function greeting() {
+  const hour = new Date().getHours()
+  const key = hour < 12 ? 'dashboard.greeting.morning' : hour < 18 ? 'dashboard.greeting.afternoon' : 'dashboard.greeting.evening'
+  return t(key, { name: auth.user?.username ?? '' })
 }
 
 function formatBytes(bytes: number) {
@@ -147,20 +156,17 @@ onUnmounted(stopPolling)
     <section class="hero">
       <div class="hero__copy">
         <div class="hero__eyebrow">
-          <span class="live-pill"><i class="status-dot" /> live control plane</span>
-          <span class="hero__crumb">workspace overview</span>
+          <span class="live-pill"><i class="status-dot" /> {{ t('dashboard.live') }}</span>
+          <span class="hero__crumb">{{ t('dashboard.crumb') }}</span>
         </div>
-        <h2>Good {{ new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening' }}, {{ auth.user?.username }}.</h2>
-        <p>
-          One local daemon, every handshake in sight. Watch traffic, jump into a protocol module, or put a
-          reverse proxy to work.
-        </p>
+        <h2>{{ greeting() }}</h2>
+        <p>{{ t('dashboard.lead') }}</p>
         <div class="hero__actions">
           <button class="button button--primary" @click="go('/http')">
-            <Icon name="bolt" :size="17" />Send a request
+            <Icon name="bolt" :size="17" />{{ t('dashboard.sendRequest') }}
           </button>
           <button class="button" @click="go('/proxy')">
-            <Icon name="route" :size="17" />Manage gateway
+            <Icon name="route" :size="17" />{{ t('dashboard.manageGateway') }}
           </button>
         </div>
       </div>
@@ -187,38 +193,38 @@ onUnmounted(stopPolling)
       <article class="stat-card stat-card--accent">
         <div class="stat-card__top">
           <span class="stat-card__icon"><Icon name="bolt" :size="18" /></span>
-          <span class="stat-card__trend">session</span>
+          <span class="stat-card__trend">{{ t('dashboard.session') }}</span>
         </div>
         <div class="stat-card__value">{{ data?.metrics.httpRequests ?? 0 }}</div>
-        <div class="stat-card__label">HTTP requests</div>
-        <div class="stat-card__foot"><span>{{ data?.metrics.httpErrors ?? 0 }} failed</span><span class="mono">{{ successRate }}% ok</span></div>
+        <div class="stat-card__label">{{ t('dashboard.httpRequests') }}</div>
+        <div class="stat-card__foot"><span>{{ t('dashboard.failed', { count: data?.metrics.httpErrors ?? 0 }) }}</span><span class="mono">{{ t('dashboard.okRate', { rate: successRate }) }}</span></div>
       </article>
       <article class="stat-card">
         <div class="stat-card__top">
           <span class="stat-card__icon"><Icon name="route" :size="18" /></span>
-          <span class="stat-card__trend" :class="{ 'stat-card__trend--warn': (data?.metrics.proxyErrors ?? 0) > 0 }">gateway</span>
+          <span class="stat-card__trend" :class="{ 'stat-card__trend--warn': (data?.metrics.proxyErrors ?? 0) > 0 }">{{ t('dashboard.gateway') }}</span>
         </div>
         <div class="stat-card__value">{{ data?.metrics.activeProxies ?? 0 }}</div>
-        <div class="stat-card__label">Active reverse proxies</div>
-        <div class="stat-card__foot"><span>{{ data?.metrics.proxyRequests ?? 0 }} proxied</span><span class="mono">{{ data?.metrics.proxyErrors ?? 0 }} errors</span></div>
+        <div class="stat-card__label">{{ t('dashboard.activeProxies') }}</div>
+        <div class="stat-card__foot"><span>{{ t('dashboard.proxied', { count: data?.metrics.proxyRequests ?? 0 }) }}</span><span class="mono">{{ t('dashboard.errors', { count: data?.metrics.proxyErrors ?? 0 }) }}</span></div>
       </article>
       <article class="stat-card">
         <div class="stat-card__top">
           <span class="stat-card__icon"><Icon name="pulse" :size="18" /></span>
-          <span class="stat-card__trend">transport</span>
+          <span class="stat-card__trend">{{ t('dashboard.transport') }}</span>
         </div>
         <div class="stat-card__value">{{ (data?.metrics.tcpProbes ?? 0) + (data?.metrics.udpProbes ?? 0) }}</div>
-        <div class="stat-card__label">Transport probes</div>
-        <div class="stat-card__foot"><span>{{ data?.metrics.tcpProbes ?? 0 }} TCP</span><span class="mono">{{ data?.metrics.udpProbes ?? 0 }} UDP</span></div>
+        <div class="stat-card__label">{{ t('dashboard.transportProbes') }}</div>
+        <div class="stat-card__foot"><span>{{ t('dashboard.tcpCount', { count: data?.metrics.tcpProbes ?? 0 }) }}</span><span class="mono">{{ t('dashboard.udpCount', { count: data?.metrics.udpProbes ?? 0 }) }}</span></div>
       </article>
       <article class="stat-card">
         <div class="stat-card__top">
           <span class="stat-card__icon"><Icon name="clock" :size="18" /></span>
-          <span class="stat-card__trend">process</span>
+          <span class="stat-card__trend">{{ t('dashboard.process') }}</span>
         </div>
         <div class="stat-card__value stat-card__value--small">{{ uptime }}</div>
-        <div class="stat-card__label">Daemon uptime</div>
-        <div class="stat-card__foot"><span>{{ rss }} RSS</span><span class="mono">v{{ data?.server.version }}</span></div>
+        <div class="stat-card__label">{{ t('dashboard.uptime') }}</div>
+        <div class="stat-card__foot"><span>{{ t('dashboard.rss', { value: rss }) }}</span><span class="mono">v{{ data?.server.version }}</span></div>
       </article>
     </section>
 
@@ -226,12 +232,12 @@ onUnmounted(stopPolling)
       <article class="card card--chart">
         <header class="card__head">
           <div>
-            <span class="eyebrow">Telemetry</span>
-            <h3>Request latency profile</h3>
+            <span class="eyebrow">{{ t('dashboard.telemetry') }}</span>
+            <h3>{{ t('dashboard.latencyProfile') }}</h3>
           </div>
           <div class="card__tools">
-            <span class="muted mono">{{ lastUpdated ? lastUpdated.toLocaleTimeString() : 'waiting' }}</span>
-            <button class="icon-button" :class="{ spinning: refreshing }" title="Refresh" @click="load(false)">
+            <span class="muted mono">{{ lastUpdated ? lastUpdated.toLocaleTimeString() : t('dashboard.waiting') }}</span>
+            <button class="icon-button" :class="{ spinning: refreshing }" :title="t('dashboard.refresh')" @click="load(false)">
               <Icon name="refresh" :size="16" />
             </button>
           </div>
@@ -248,26 +254,26 @@ onUnmounted(stopPolling)
               <path :d="sparkline.area" fill="url(#latency-fill)" />
               <path :d="sparkline.line" class="chart__line" />
             </svg>
-            <div class="chart__axis"><span>older</span><span class="mono">peak {{ sparkline.max }}</span><span>now</span></div>
+            <div class="chart__axis"><span>{{ t('dashboard.older') }}</span><span class="mono">{{ t('dashboard.peak', { value: sparkline.max }) }}</span><span>{{ t('dashboard.now') }}</span></div>
           </div>
           <div v-else class="empty-inline">
             <Icon name="activity" :size="20" />
-            <span>Latency samples appear after your first probe.</span>
+            <span>{{ t('dashboard.emptyLatency') }}</span>
           </div>
         </div>
         <div class="metric-row">
-          <div><span>Success rate</span><strong>{{ successRate }}%</strong></div>
-          <div><span>Failures</span><strong>{{ data?.metrics.httpErrors ?? 0 }}</strong></div>
-          <div><span>TLS inspections</span><strong>{{ data?.metrics.tlsInspections ?? 0 }}</strong></div>
-          <div><span>Users</span><strong>{{ data?.metrics.users ?? 0 }}</strong></div>
+          <div><span>{{ t('dashboard.successRate') }}</span><strong>{{ successRate }}%</strong></div>
+          <div><span>{{ t('dashboard.failures') }}</span><strong>{{ data?.metrics.httpErrors ?? 0 }}</strong></div>
+          <div><span>{{ t('dashboard.tlsInspections') }}</span><strong>{{ data?.metrics.tlsInspections ?? 0 }}</strong></div>
+          <div><span>{{ t('dashboard.users') }}</span><strong>{{ data?.metrics.users ?? 0 }}</strong></div>
         </div>
       </article>
 
       <article class="card">
         <header class="card__head">
           <div>
-            <span class="eyebrow">Mix</span>
-            <h3>Protocol activity</h3>
+            <span class="eyebrow">{{ t('dashboard.mix') }}</span>
+            <h3>{{ t('dashboard.protocolActivity') }}</h3>
           </div>
           <Icon name="layers" :size="18" class="muted" />
         </header>
@@ -283,13 +289,13 @@ onUnmounted(stopPolling)
         </div>
         <div class="health-list">
           <div class="health-row">
-            <span><i class="status-dot" />daemon</span><strong>healthy</strong>
+            <span><i class="status-dot" />{{ t('dashboard.daemon') }}</span><strong>{{ t('dashboard.healthy') }}</strong>
           </div>
           <div class="health-row">
-            <span><i class="status-dot status-dot--blue" />database</span><strong>SQLite · WAL</strong>
+            <span><i class="status-dot status-dot--blue" />{{ t('dashboard.database') }}</span><strong>SQLite · WAL</strong>
           </div>
           <div class="health-row">
-            <span><i class="status-dot status-dot--violet" />gateway</span><strong>{{ data?.metrics.activeProxies ?? 0 }} running</strong>
+            <span><i class="status-dot status-dot--violet" />{{ t('dashboard.gateway') }}</span><strong>{{ t('dashboard.running', { count: data?.metrics.activeProxies ?? 0 }) }}</strong>
           </div>
         </div>
       </article>
@@ -297,8 +303,8 @@ onUnmounted(stopPolling)
       <article class="card">
         <header class="card__head">
           <div>
-            <span class="eyebrow">Shortcuts</span>
-            <h3>Open a workbench</h3>
+            <span class="eyebrow">{{ t('dashboard.shortcuts') }}</span>
+            <h3>{{ t('dashboard.openWorkbench') }}</h3>
           </div>
           <Icon name="spark" :size="18" class="muted" />
         </header>
@@ -314,10 +320,10 @@ onUnmounted(stopPolling)
       <article class="card card--activity">
         <header class="card__head">
           <div>
-            <span class="eyebrow">Timeline</span>
-            <h3>Recent activity</h3>
+            <span class="eyebrow">{{ t('dashboard.timeline') }}</span>
+            <h3>{{ t('dashboard.recentActivity') }}</h3>
           </div>
-          <button class="link-button" @click="go('/settings')">History</button>
+          <button class="link-button" @click="go('/settings')">{{ t('dashboard.history') }}</button>
         </header>
         <div v-if="recent.length" class="activity-list">
           <div v-for="item in recent" :key="item.id" class="activity-row">
@@ -327,13 +333,13 @@ onUnmounted(stopPolling)
               <span>{{ formatTime(item.createdAt) }} · {{ item.latencyMs }} ms · {{ formatBytes(item.sizeBytes) }}</span>
             </div>
             <span class="status-code" :class="item.status === 'success' ? 'status-code--ok' : 'status-code--bad'">
-              {{ item.httpStatus || (item.status === 'success' ? 'OK' : 'ERR') }}
+              {{ item.httpStatus || (item.status === 'success' ? t('dashboard.statusOk') : t('dashboard.statusErr')) }}
             </span>
           </div>
         </div>
         <div v-else class="empty-inline">
           <Icon name="terminal" :size="20" />
-          <span>No activity yet. Send your first request from HTTP Studio.</span>
+          <span>{{ t('dashboard.emptyActivity') }}</span>
         </div>
       </article>
     </section>

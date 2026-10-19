@@ -5,6 +5,7 @@ import Icon from '../components/Icon.vue'
 import { errorMessage, get } from '../api'
 import type { UpdateInfo } from '../types'
 import { useAuthStore } from '../stores/auth'
+import { useI18nStore } from '../stores/i18n'
 import { useUiStore } from '../stores/ui'
 
 defineOptions({ name: 'AboutView' })
@@ -26,6 +27,8 @@ interface About {
 
 const auth = useAuthStore()
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const about = ref<About | null>(null)
 const update = ref<UpdateInfo | null>(null)
 const checking = ref(false)
@@ -40,7 +43,7 @@ async function load() {
     about.value = await get<About>('/api/about')
   } catch (err) {
     error.value = errorMessage(err)
-    ui.toastError(err, 'Could not load about page')
+    ui.toastError(err, t('about.notify.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -50,11 +53,11 @@ async function checkUpdates() {
   checking.value = true
   try {
     update.value = await get<UpdateInfo>('/api/update/check?force=1')
-    if (!update.value.ok) ui.notify('warning', 'Update check failed', update.value.error)
-    else if (update.value.updateAvailable) ui.notify('info', 'A newer release is available', update.value.latestVersion)
-    else ui.notify('success', 'You are on the latest release')
+    if (!update.value.ok) ui.notify('warning', t('about.notify.updateCheckFailed'), update.value.error)
+    else if (update.value.updateAvailable) ui.notify('info', t('about.notify.newerRelease'), update.value.latestVersion)
+    else ui.notify('success', t('about.notify.latestRelease'))
   } catch (err) {
-    ui.toastError(err, 'Update check failed')
+    ui.toastError(err, t('about.notify.updateCheckFailed'))
   } finally {
     checking.value = false
   }
@@ -67,13 +70,13 @@ onMounted(load)
   <div class="page about-page">
     <header class="page-head">
       <div>
-        <span class="eyebrow">About</span>
-        <h2>Built for the space between bytes.</h2>
-        <p>uvscope is an open-source, local-first workbench for web protocols and gateway traffic.</p>
+        <span class="eyebrow">{{ t('about.eyebrow') }}</span>
+        <h2>{{ t('about.title') }}</h2>
+        <p>{{ t('about.lead') }}</p>
       </div>
       <div class="page-head__actions">
         <a class="button" href="https://github.com/Antruly/uvscope" target="_blank" rel="noreferrer">
-          <Icon name="star" :size="16" />Star on GitHub
+          <Icon name="star" :size="16" />{{ t('about.starOnGithub') }}
         </a>
       </div>
     </header>
@@ -81,11 +84,11 @@ onMounted(load)
     <section class="about-hero">
       <div class="about-hero__mark"><BrandMark :size="72" /></div>
       <div class="about-hero__copy">
-        <span class="eyebrow">uvscope · v{{ about?.version || auth.version }}</span>
-        <h1>One local scope for every handshake.</h1>
-        <p>{{ about?.description || 'A libuvcpp-powered multi-protocol web debugging workbench and gateway.' }}</p>
+        <span class="eyebrow">{{ t('about.versionLine', { version: about?.version || auth.version }) }}</span>
+        <h1>{{ t('about.hero') }}</h1>
+        <p>{{ about?.description || t('about.descriptionFallback') }}</p>
         <div class="chip-row">
-          <span class="chip chip--accent"><Icon name="spark" :size="12" />MIT licensed</span>
+          <span class="chip chip--accent"><Icon name="spark" :size="12" />{{ t('about.mitLicensed') }}</span>
           <span class="chip mono">libuvcpp {{ about?.libuvcpp || auth.libuvcpp }}</span>
           <span class="chip mono">libuv {{ about?.libuv }}</span>
           <span class="chip">{{ about?.platform }}</span>
@@ -94,7 +97,7 @@ onMounted(load)
       <div class="about-stars">
         <Icon name="star" :size="19" />
         <strong>{{ stars }}</strong>
-        <span>GitHub stars</span>
+        <span>{{ t('about.githubStars') }}</span>
       </div>
     </section>
 
@@ -103,22 +106,22 @@ onMounted(load)
     <section class="about-grid">
       <article class="card about-update">
         <header class="card__head">
-          <div><span class="eyebrow">Release channel</span><h3>Version & updates</h3></div>
+          <div><span class="eyebrow">{{ t('about.releaseChannel') }}</span><h3>{{ t('about.versionUpdates') }}</h3></div>
           <button class="button button--sm" :disabled="checking" @click="checkUpdates">
-            <span v-if="checking" class="spinner" /><Icon v-else name="refresh" :size="14" />Check
+            <span v-if="checking" class="spinner" /><Icon v-else name="refresh" :size="14" />{{ t('about.check') }}
           </button>
         </header>
         <div class="version-line">
-          <div class="version-badge"><span>CURRENT</span><strong>v{{ about?.version || auth.version }}</strong></div>
+          <div class="version-badge"><span>{{ t('about.current') }}</span><strong>v{{ about?.version || auth.version }}</strong></div>
           <div class="version-arrow"><Icon name="arrow-right" :size="17" /></div>
           <div class="version-badge version-badge--next" :class="{ 'version-badge--available': update?.updateAvailable }">
-            <span>LATEST</span><strong>{{ update?.latestVersion || 'not checked' }}</strong>
+            <span>{{ t('about.latest') }}</span><strong>{{ update?.latestVersion || t('about.notChecked') }}</strong>
           </div>
         </div>
         <div v-if="update" class="update-body">
           <div class="update-head">
             <span class="status-pill" :class="update.updateAvailable ? 'status-pill--warn' : 'status-pill--ok'">
-              {{ update.updateAvailable ? 'UPDATE AVAILABLE' : 'UP TO DATE' }}
+              {{ update.updateAvailable ? t('about.updateAvailable') : t('about.upToDate') }}
             </span>
             <span class="muted mono">{{ update.checkedAt }}</span>
           </div>
@@ -126,33 +129,33 @@ onMounted(load)
           <h4 v-if="update.releaseName">{{ update.releaseName }}</h4>
           <pre v-if="update.releaseNotes" class="release-notes">{{ update.releaseNotes }}</pre>
           <a v-if="update.htmlUrl" :href="update.htmlUrl" target="_blank" rel="noreferrer" class="button">
-            <Icon name="external" :size="15" />Open release notes
+            <Icon name="external" :size="15" />{{ t('about.openReleaseNotes') }}
           </a>
         </div>
         <div v-else class="about-update__empty">
           <Icon name="download" :size="22" />
-          <p>Check the public GitHub Releases feed for a newer build. No telemetry is sent.</p>
+          <p>{{ t('about.noUpdates') }}</p>
         </div>
       </article>
 
       <article class="card">
-        <header class="card__head"><div><span class="eyebrow">Stack</span><h3>What is inside</h3></div><Icon name="layers" :size="18" class="muted" /></header>
+        <header class="card__head"><div><span class="eyebrow">{{ t('about.stack') }}</span><h3>{{ t('about.whatsInside') }}</h3></div><Icon name="layers" :size="18" class="muted" /></header>
         <div class="stack-list">
-          <div class="stack-row"><span class="stack-row__badge">C++</span><div><strong>libuvcpp 1.8.0</strong><p>Event loop, HTTP, WebSocket, QUIC and SQLite bindings.</p></div></div>
-          <div class="stack-row"><span class="stack-row__badge">Vue</span><div><strong>Vue 3 + Vite</strong><p>Multi-tab UI with cached workspaces and live telemetry.</p></div></div>
-          <div class="stack-row"><span class="stack-row__badge">SQL</span><div><strong>SQLite WAL</strong><p>Users, sessions, settings, history and proxy configuration.</p></div></div>
-          <div class="stack-row"><span class="stack-row__badge">TLS</span><div><strong>OpenSSL</strong><p>Certificate decoding, HTTPS and gateway listeners.</p></div></div>
+          <div class="stack-row"><span class="stack-row__badge">C++</span><div><strong>libuvcpp 1.8.0</strong><p>{{ t('about.stack.libuvcpp') }}</p></div></div>
+          <div class="stack-row"><span class="stack-row__badge">Vue</span><div><strong>Vue 3 + Vite</strong><p>{{ t('about.stack.vue') }}</p></div></div>
+          <div class="stack-row"><span class="stack-row__badge">SQL</span><div><strong>SQLite WAL</strong><p>{{ t('about.stack.sqlite') }}</p></div></div>
+          <div class="stack-row"><span class="stack-row__badge">TLS</span><div><strong>OpenSSL</strong><p>{{ t('about.stack.openssl') }}</p></div></div>
         </div>
       </article>
 
       <article class="card about-capabilities">
-        <header class="card__head"><div><span class="eyebrow">Surface</span><h3>Capabilities</h3></div></header>
+        <header class="card__head"><div><span class="eyebrow">{{ t('about.surface') }}</span><h3>{{ t('about.capabilities') }}</h3></div></header>
         <div class="capability-list">
           <span v-for="capability in about?.capabilities || []" :key="capability" class="capability-chip"><Icon name="check" :size="13" />{{ capability }}</span>
         </div>
         <div class="about-links">
-          <a :href="about?.repository || 'https://github.com/Antruly/uvscope'" target="_blank" rel="noreferrer"><Icon name="globe" :size="15" />Repository</a>
-          <a :href="about?.issues || 'https://github.com/Antruly/uvscope/issues'" target="_blank" rel="noreferrer"><Icon name="alert" :size="15" />Issues</a>
+          <a :href="about?.repository || 'https://github.com/Antruly/uvscope'" target="_blank" rel="noreferrer"><Icon name="globe" :size="15" />{{ t('about.repository') }}</a>
+          <a :href="about?.issues || 'https://github.com/Antruly/uvscope/issues'" target="_blank" rel="noreferrer"><Icon name="alert" :size="15" />{{ t('about.issues') }}</a>
           <a href="https://github.com/Antruly/libuvcpp" target="_blank" rel="noreferrer"><Icon name="layers" :size="15" />libuvcpp</a>
         </div>
       </article>
@@ -160,10 +163,10 @@ onMounted(load)
       <article class="card about-cta">
         <div class="about-cta__glow" />
         <Icon name="star" :size="28" />
-        <h3>If uvscope saves you a debugging session, star the repo.</h3>
-        <p>Stars help other protocol wranglers find the project and keep the roadmap moving.</p>
+        <h3>{{ t('about.ctaTitle') }}</h3>
+        <p>{{ t('about.ctaText') }}</p>
         <a class="button button--primary" href="https://github.com/Antruly/uvscope" target="_blank" rel="noreferrer">
-          <Icon name="star" :size="16" />Star uvscope on GitHub
+          <Icon name="star" :size="16" />{{ t('about.ctaButton') }}
         </a>
       </article>
     </section>

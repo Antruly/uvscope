@@ -5,6 +5,7 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
 export interface AppTab {
   name: string
   title: string
+  titleKey?: string
   path: string
   icon: string
   componentName: string
@@ -17,6 +18,7 @@ export const useTabsStore = defineStore('tabs', () => {
     {
       name: 'dashboard',
       title: 'Overview',
+      titleKey: 'nav.overview',
       path: '/',
       icon: 'dashboard',
       componentName: 'DashboardView',
@@ -41,6 +43,7 @@ export const useTabsStore = defineStore('tabs', () => {
     tabs.value.push({
       name,
       title: (route.meta.title as string) || name,
+      titleKey: route.meta.titleKey as string | undefined,
       path: route.fullPath,
       icon: (route.meta.icon as string) || 'dot',
       componentName: (route.meta.componentName as string) || '',

@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import BrandMark from '../components/BrandMark.vue'
 import Icon from '../components/Icon.vue'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
+import { useI18nStore } from '../stores/i18n'
 import { errorMessage } from '../api'
 
 defineOptions({ name: 'LoginView' })
 const emit = defineEmits<{ authenticated: [] }>()
 const auth = useAuthStore()
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
+const themeTitle = computed(() => {
+  const mode = ui.theme === 'auto'
+    ? `${t('theme.auto')} (${t(`theme.${ui.resolvedTheme}`)})`
+    : t(`theme.${ui.theme}`)
+  return t('theme.switch', { mode })
+})
 
 const username = ref('')
 const password = ref('')
@@ -19,13 +28,13 @@ const submitting = ref(false)
 async function submit() {
   error.value = ''
   if (!username.value || !password.value) {
-    error.value = 'Enter your username and password.'
+    error.value = t('auth.login.required')
     return
   }
   submitting.value = true
   try {
     await auth.login(username.value.trim(), password.value)
-    ui.notify('success', 'Welcome back', `${auth.user?.username} · ${auth.user?.role}`)
+    ui.notify('success', t('auth.login.welcome'), `${auth.user?.username} · ${auth.user?.role}`)
     emit('authenticated')
   } catch (err) {
     error.value = errorMessage(err)
@@ -42,56 +51,56 @@ async function submit() {
       <div class="auth-art__top">
         <BrandMark :size="40" />
         <span class="auth-wordmark">uvscope</span>
-        <span class="chip chip--accent">v{{ auth.version }} preview</span>
+        <span class="chip chip--accent">v{{ auth.version }} {{ t('auth.preview') }}</span>
       </div>
       <div class="auth-art__copy">
-        <p class="eyebrow">The multi-protocol workbench</p>
+        <p class="eyebrow">{{ t('auth.login.eyebrow') }}</p>
         <h1>
-          One scope for every<br />
-          <span class="text-gradient">web handshake.</span>
+          {{ t('auth.login.title1') }}<br />
+          <span class="text-gradient">{{ t('auth.login.title2') }}</span>
         </h1>
-        <p class="auth-art__lead">
-          Inspect HTTP, WebSocket, TCP, UDP, TLS and SOAP from a single local control plane, then put
-          traffic to work with programmable reverse proxies.
-        </p>
+        <p class="auth-art__lead">{{ t('auth.login.lead') }}</p>
       </div>
       <div class="auth-art__grid">
         <div class="auth-feature">
           <span class="auth-feature__icon"><Icon name="bolt" :size="18" /></span>
-          <div><strong>Protocol-native</strong><p>Raw frames, headers, timing and bytes.</p></div>
+          <div><strong>{{ t('auth.login.feature1.title') }}</strong><p>{{ t('auth.login.feature1.text') }}</p></div>
         </div>
         <div class="auth-feature">
           <span class="auth-feature__icon"><Icon name="route" :size="18" /></span>
-          <div><strong>Gateway built in</strong><p>Managed HTTP reverse proxies with live logs.</p></div>
+          <div><strong>{{ t('auth.login.feature2.title') }}</strong><p>{{ t('auth.login.feature2.text') }}</p></div>
         </div>
         <div class="auth-feature">
           <span class="auth-feature__icon"><Icon name="database" :size="18" /></span>
-          <div><strong>Local by design</strong><p>SQLite storage, RBAC and no cloud dependency.</p></div>
+          <div><strong>{{ t('auth.login.feature3.title') }}</strong><p>{{ t('auth.login.feature3.text') }}</p></div>
         </div>
         <div class="auth-feature">
           <span class="auth-feature__icon"><Icon name="shield" :size="18" /></span>
-          <div><strong>libuvcpp engine</strong><p>One event-driven C++ stack end to end.</p></div>
+          <div><strong>{{ t('auth.login.feature4.title') }}</strong><p>{{ t('auth.login.feature4.text') }}</p></div>
         </div>
       </div>
       <div class="auth-art__foot">
-        <span><i class="status-dot" /> local daemon ready</span>
+        <span><i class="status-dot" /> {{ t('auth.login.localReady') }}</span>
         <span class="mono">libuvcpp {{ auth.libuvcpp || '1.8.0' }}</span>
       </div>
     </section>
 
     <section class="auth-panel">
-      <button class="icon-button auth-theme" :title="ui.theme === 'dark' ? 'Light theme' : 'Dark theme'" @click="ui.toggleTheme">
-        <Icon :name="ui.theme === 'dark' ? 'sun' : 'moon'" :size="18" />
-      </button>
+      <div class="auth-actions">
+        <button class="icon-button locale-toggle" :title="t('language.switch')" @click="i18n.toggleLocale">{{ i18n.nextLabel }}</button>
+        <button class="icon-button auth-theme" :title="themeTitle" @click="ui.cycleTheme">
+          <Icon :name="ui.themeIcon" :size="18" />
+        </button>
+      </div>
       <form class="auth-card" @submit.prevent="submit">
         <div class="auth-card__head">
-          <span class="eyebrow">Control plane</span>
-          <h2>Sign in to uvscope</h2>
-          <p>Use the account provisioned on this machine.</p>
+          <span class="eyebrow">{{ t('auth.login.eyebrowCard') }}</span>
+          <h2>{{ t('auth.login.title') }}</h2>
+          <p>{{ t('auth.login.leadCard') }}</p>
         </div>
 
         <label class="field">
-          <span>Username</span>
+          <span>{{ t('auth.login.username') }}</span>
           <div class="input-shell">
             <Icon name="users" :size="17" />
             <input v-model="username" autocomplete="username" placeholder="admin" autofocus />
@@ -99,7 +108,7 @@ async function submit() {
         </label>
 
         <label class="field">
-          <span>Password</span>
+          <span>{{ t('auth.login.password') }}</span>
           <div class="input-shell">
             <Icon name="lock" :size="17" />
             <input v-model="password" type="password" autocomplete="current-password" placeholder="••••••••" />
@@ -114,11 +123,11 @@ async function submit() {
         <button class="button button--primary button--lg auth-submit" :disabled="submitting">
           <span v-if="submitting" class="spinner" />
           <Icon v-else name="arrow-right" :size="17" />
-          {{ submitting ? 'Signing in…' : 'Enter workspace' }}
+          {{ submitting ? t('auth.login.signingIn') : t('auth.login.enter') }}
         </button>
 
         <div class="auth-card__meta">
-          <span>First install?</span>
+          <span>{{ t('auth.login.firstInstall') }}</span>
           <span class="mono">{{ auth.dataDir }}</span>
         </div>
       </form>

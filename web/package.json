@@ -1,13 +1,14 @@
 {
   "name": "uvscope-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "check:i18n": "node scripts/check-i18n.mjs"
   },
   "dependencies": {
     "pinia": "^3.0.1",

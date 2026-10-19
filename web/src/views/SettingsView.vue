@@ -4,12 +4,15 @@ import Icon from '../components/Icon.vue'
 import { errorMessage, get, post, put } from '../api'
 import type { ModuleMap, UpdateInfo } from '../types'
 import { useAuthStore } from '../stores/auth'
+import { useI18nStore } from '../stores/i18n'
 import { useUiStore } from '../stores/ui'
 
 defineOptions({ name: 'SettingsView' })
 
 const auth = useAuthStore()
 const ui = useUiStore()
+const i18n = useI18nStore()
+const t = i18n.t
 const modules = ref<ModuleMap>({ http: true, websocket: true, tcpudp: true, soap: true, tls: true, proxy: true })
 const autoUpdateCheck = ref(true)
 const updateIntervalHours = ref(24)
@@ -19,13 +22,13 @@ const saving = ref(false)
 const updateInfo = ref<UpdateInfo | null>(null)
 const checkingUpdate = ref(false)
 
-const moduleMeta: Array<{ key: keyof ModuleMap; icon: string; title: string; description: string }> = [
-  { key: 'http', icon: 'bolt', title: 'HTTP Studio', description: 'Request builder, history, HTTP/1.1 and protocol preference.' },
-  { key: 'websocket', icon: 'pulse', title: 'WebSocket console', description: 'Browser-native frame trace with text and binary messages.' },
-  { key: 'tcpudp', icon: 'layers', title: 'TCP / UDP bench', description: 'One-shot transport probes through libuvcpp.' },
-  { key: 'soap', icon: 'braces', title: 'SOAP / WSDL', description: 'WSDL operation discovery, envelope editing and fault view.' },
-  { key: 'tls', icon: 'shield', title: 'TLS Inspector', description: 'Local X.509 decoding and validity analysis.' },
-  { key: 'proxy', icon: 'route', title: 'Reverse proxy', description: 'Managed HTTP gateways with live request logs.' },
+const moduleMeta: Array<{ key: keyof ModuleMap; icon: string; titleKey: string; descriptionKey: string }> = [
+  { key: 'http', icon: 'bolt', titleKey: 'settings.modules.http.title', descriptionKey: 'settings.modules.http.description' },
+  { key: 'websocket', icon: 'pulse', titleKey: 'settings.modules.websocket.title', descriptionKey: 'settings.modules.websocket.description' },
+  { key: 'tcpudp', icon: 'layers', titleKey: 'settings.modules.tcpudp.title', descriptionKey: 'settings.modules.tcpudp.description' },
+  { key: 'soap', icon: 'braces', titleKey: 'settings.modules.soap.title', descriptionKey: 'settings.modules.soap.description' },
+  { key: 'tls', icon: 'shield', titleKey: 'settings.modules.tls.title', descriptionKey: 'settings.modules.tls.description' },
+  { key: 'proxy', icon: 'route', titleKey: 'settings.modules.proxy.title', descriptionKey: 'settings.modules.proxy.description' },
 ]
 
 async function load() {
@@ -37,7 +40,7 @@ async function load() {
     updateIntervalHours.value = response.settings.updateIntervalHours
     dataDir.value = response.settings.dataDir
   } catch (err) {
-    ui.toastError(err, 'Could not load settings')
+    ui.toastError(err, t('settings.notify.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -48,9 +51,9 @@ async function save() {
   try {
     await put('/api/settings', { modules: modules.value, autoUpdateCheck: autoUpdateCheck.value, updateIntervalHours: updateIntervalHours.value })
     await auth.refresh()
-    ui.notify('success', 'Settings saved', 'Module changes apply immediately.')
+    ui.notify('success', t('settings.notify.saved'), t('settings.notify.savedBody'))
   } catch (err) {
-    ui.toastError(err, 'Could not save settings')
+    ui.toastError(err, t('settings.notify.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -64,36 +67,37 @@ async function checkUpdates(force = true) {
   checkingUpdate.value = true
   try {
     updateInfo.value = await get<UpdateInfo>(`/api/update/check${force ? '?force=1' : ''}`)
-    if (!updateInfo.value.ok) ui.notify('warning', 'Update check failed', updateInfo.value.error)
-    else if (updateInfo.value.updateAvailable) ui.notify('info', 'Update available', updateInfo.value.latestVersion)
-    else ui.notify('success', 'You are up to date')
+    if (!updateInfo.value.ok) ui.notify('warning', t('settings.notify.updateCheckFailed'), updateInfo.value.error)
+    else if (updateInfo.value.updateAvailable) ui.notify('info', t('settings.notify.updateAvailable'), updateInfo.value.latestVersion)
+    else ui.notify('success', t('settings.notify.upToDate'))
   } catch (err) {
-    ui.toastError(err, 'Update check failed')
+    ui.toastError(err, t('settings.notify.updateCheckFailed'))
   } finally {
     checkingUpdate.value = false
   }
 }
 
-async function resetModule(module: string, label: string) {
-  if (!window.confirm(`Reset ${label}? Its stored history/config is removed. Other modules are untouched.`)) return
+async function resetModule(module: string, labelKey: string) {
+  const label = t(labelKey)
+  if (!window.confirm(t('settings.reset.confirm', { label }))) return
   try {
     await post('/api/reset', { module })
-    ui.notify('success', `${label} reset`)
+    ui.notify('success', t('settings.reset.success', { label }))
     if (module === 'proxy') window.location.reload()
   } catch (err) {
-    ui.toastError(err, 'Reset failed')
+    ui.toastError(err, t('settings.reset.failed'))
   }
 }
 
 async function factoryReset() {
-  const phrase = window.prompt('This deletes the SQLite database, all users, settings, history and proxies. Type RESET to continue.')
+  const phrase = window.prompt(t('settings.factory.prompt'))
   if (phrase !== 'RESET') return
   try {
     await post('/api/reset', { module: 'all' })
-    ui.notify('success', 'Factory reset complete', 'Reloading into first-run setup.')
+    ui.notify('success', t('settings.factory.success'), t('settings.factory.successBody'))
     window.setTimeout(() => window.location.reload(), 500)
   } catch (err) {
-    ui.toastError(err, 'Factory reset failed')
+    ui.toastError(err, t('settings.factory.failed'))
   }
 }
 
@@ -104,77 +108,77 @@ onMounted(load)
   <div class="page settings-page">
     <header class="page-head">
       <div>
-        <span class="eyebrow">Settings</span>
-        <h2>Tune the workbench.</h2>
-        <p>Module availability, update policy and local storage controls. Changes are admin-only.</p>
+        <span class="eyebrow">{{ t('settings.eyebrow') }}</span>
+        <h2>{{ t('settings.title') }}</h2>
+        <p>{{ t('settings.lead') }}</p>
       </div>
       <div class="page-head__actions">
         <button class="button button--primary" :disabled="saving || loading" @click="save">
-          <span v-if="saving" class="spinner" /><Icon v-else name="check" :size="16" />Save changes
+          <span v-if="saving" class="spinner" /><Icon v-else name="check" :size="16" />{{ t('settings.save') }}
         </button>
       </div>
     </header>
 
-    <div v-if="loading" class="proxy-loading"><span class="spinner" />Loading settings…</div>
+    <div v-if="loading" class="proxy-loading"><span class="spinner" />{{ t('settings.loading') }}</div>
     <div v-else class="settings-grid">
       <section class="card">
         <header class="card__head">
-          <div><span class="eyebrow">Surfaces</span><h3>Protocol modules</h3></div>
-          <span class="chip">{{ Object.values(modules).filter(Boolean).length }} enabled</span>
+          <div><span class="eyebrow">{{ t('settings.surfaces') }}</span><h3>{{ t('settings.protocolModules') }}</h3></div>
+          <span class="chip">{{ t('settings.enabledCount', { count: Object.values(modules).filter(Boolean).length }) }}</span>
         </header>
         <div class="module-list">
           <div v-for="module in moduleMeta" :key="module.key" class="module-row">
             <span class="module-row__icon"><Icon :name="module.icon" :size="18" /></span>
-            <div class="module-row__copy"><strong>{{ module.title }}</strong><p>{{ module.description }}</p></div>
+            <div class="module-row__copy"><strong>{{ t(module.titleKey) }}</strong><p>{{ t(module.descriptionKey) }}</p></div>
             <button class="switch" :class="{ on: modules[module.key] }" :aria-pressed="modules[module.key]" @click="toggleModule(module.key)"><i /></button>
           </div>
         </div>
-        <div class="inline-alert inline-alert--info"><Icon name="alert" :size="16" />Disabling a module hides it from navigation and rejects its API calls. Stored history remains.</div>
+        <div class="inline-alert inline-alert--info"><Icon name="alert" :size="16" />{{ t('settings.disableNote') }}</div>
       </section>
 
       <div class="settings-stack">
         <section class="card">
-          <header class="card__head"><div><span class="eyebrow">Maintenance</span><h3>Release channel</h3></div><Icon name="refresh" :size="18" class="muted" /></header>
+          <header class="card__head"><div><span class="eyebrow">{{ t('settings.maintenance') }}</span><h3>{{ t('settings.releaseChannel') }}</h3></div><Icon name="refresh" :size="18" class="muted" /></header>
           <div class="setting-row">
-            <div><strong>Check GitHub for updates</strong><p>Uses the public Releases API; no account required.</p></div>
+            <div><strong>{{ t('settings.checkGithub') }}</strong><p>{{ t('settings.checkGithubHint') }}</p></div>
             <button class="switch" :class="{ on: autoUpdateCheck }" @click="autoUpdateCheck = !autoUpdateCheck"><i /></button>
           </div>
-          <label class="field"><span>Check interval (hours)</span><input v-model.number="updateIntervalHours" type="number" min="1" max="168" /></label>
+          <label class="field"><span>{{ t('settings.checkInterval') }}</span><input v-model.number="updateIntervalHours" type="number" min="1" max="168" /></label>
           <div class="form-actions">
-            <span class="muted mono">current v{{ auth.version }}</span>
+            <span class="muted mono">{{ t('settings.currentVersion', { version: auth.version }) }}</span>
             <button class="button" :disabled="checkingUpdate" @click="checkUpdates(true)">
-              <span v-if="checkingUpdate" class="spinner" /><Icon v-else name="refresh" :size="15" />Check now
+              <span v-if="checkingUpdate" class="spinner" /><Icon v-else name="refresh" :size="15" />{{ t('settings.checkNow') }}
             </button>
           </div>
           <div v-if="updateInfo" class="update-card">
             <div class="update-card__head">
               <span class="status-pill" :class="updateInfo.updateAvailable ? 'status-pill--warn' : 'status-pill--ok'">
-                {{ updateInfo.updateAvailable ? 'UPDATE AVAILABLE' : 'UP TO DATE' }}
+                {{ updateInfo.updateAvailable ? t('settings.updateAvailablePill') : t('settings.upToDatePill') }}
               </span>
               <span class="mono">{{ updateInfo.latestVersion }}</span>
             </div>
             <p v-if="updateInfo.releaseName">{{ updateInfo.releaseName }}</p>
-            <a v-if="updateInfo.htmlUrl" :href="updateInfo.htmlUrl" target="_blank" rel="noreferrer" class="link-button">Open release notes <Icon name="external" :size="13" /></a>
+            <a v-if="updateInfo.htmlUrl" :href="updateInfo.htmlUrl" target="_blank" rel="noreferrer" class="link-button">{{ t('settings.openReleaseNotes') }} <Icon name="external" :size="13" /></a>
           </div>
         </section>
 
         <section class="card">
-          <header class="card__head"><div><span class="eyebrow">Storage</span><h3>Local data</h3></div><Icon name="database" :size="18" class="muted" /></header>
-          <div class="path-box"><span>Data directory</span><code class="mono">{{ dataDir }}</code></div>
-          <div class="path-box"><span>Engine</span><code class="mono">SQLite · WAL · local-only</code></div>
-          <p class="muted settings-note">Deleting the SQLite database while uvscope is stopped also triggers first-run setup.</p>
+          <header class="card__head"><div><span class="eyebrow">{{ t('settings.storage') }}</span><h3>{{ t('settings.localData') }}</h3></div><Icon name="database" :size="18" class="muted" /></header>
+          <div class="path-box"><span>{{ t('settings.dataDirectory') }}</span><code class="mono">{{ dataDir }}</code></div>
+          <div class="path-box"><span>{{ t('settings.engine') }}</span><code class="mono">{{ t('settings.engineValue') }}</code></div>
+          <p class="muted settings-note">{{ t('settings.storageNote') }}</p>
         </section>
       </div>
 
       <section class="card settings-danger">
-        <header class="card__head"><div><span class="eyebrow">Danger zone</span><h3>Reset data</h3></div><Icon name="alert" :size="18" /></header>
+        <header class="card__head"><div><span class="eyebrow">{{ t('settings.dangerZone') }}</span><h3>{{ t('settings.resetData') }}</h3></div><Icon name="alert" :size="18" /></header>
         <div class="reset-grid">
-          <button class="reset-action" @click="resetModule('http', 'HTTP history')"><Icon name="bolt" :size="16" /><span><strong>HTTP history</strong><small>Request summaries</small></span></button>
-          <button class="reset-action" @click="resetModule('tcpudp', 'TCP/UDP history')"><Icon name="layers" :size="16" /><span><strong>TCP / UDP history</strong><small>Transport probes</small></span></button>
-          <button class="reset-action" @click="resetModule('tls', 'TLS history')"><Icon name="shield" :size="16" /><span><strong>TLS history</strong><small>Certificate decodes</small></span></button>
-          <button class="reset-action" @click="resetModule('proxy', 'proxy configuration')"><Icon name="route" :size="16" /><span><strong>Proxy config</strong><small>Listeners and logs</small></span></button>
-          <button class="reset-action" @click="resetModule('history', 'all history')"><Icon name="clock" :size="16" /><span><strong>All history</strong><small>Keep users/settings</small></span></button>
-          <button class="reset-action reset-action--danger" @click="factoryReset"><Icon name="trash" :size="16" /><span><strong>Factory reset</strong><small>Delete the database</small></span></button>
+          <button class="reset-action" @click="resetModule('http', 'settings.reset.http')"><Icon name="bolt" :size="16" /><span><strong>{{ t('settings.reset.http') }}</strong><small>{{ t('settings.reset.httpHint') }}</small></span></button>
+          <button class="reset-action" @click="resetModule('tcpudp', 'settings.reset.tcpudp')"><Icon name="layers" :size="16" /><span><strong>{{ t('settings.reset.tcpudp') }}</strong><small>{{ t('settings.reset.tcpudpHint') }}</small></span></button>
+          <button class="reset-action" @click="resetModule('tls', 'settings.reset.tls')"><Icon name="shield" :size="16" /><span><strong>{{ t('settings.reset.tls') }}</strong><small>{{ t('settings.reset.tlsHint') }}</small></span></button>
+          <button class="reset-action" @click="resetModule('proxy', 'settings.reset.proxy')"><Icon name="route" :size="16" /><span><strong>{{ t('settings.reset.proxy') }}</strong><small>{{ t('settings.reset.proxyHint') }}</small></span></button>
+          <button class="reset-action" @click="resetModule('history', 'settings.reset.history')"><Icon name="clock" :size="16" /><span><strong>{{ t('settings.reset.history') }}</strong><small>{{ t('settings.reset.historyHint') }}</small></span></button>
+          <button class="reset-action reset-action--danger" @click="factoryReset"><Icon name="trash" :size="16" /><span><strong>{{ t('settings.reset.factory') }}</strong><small>{{ t('settings.reset.factoryHint') }}</small></span></button>
         </div>
       </section>
     </div>

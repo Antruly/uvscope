@@ -1,0 +1,130 @@
+const en: Record<string, string> = {
+  'ws.connection.connected': 'Connected',
+  'ws.connection.opening': 'Opening handshake',
+  'ws.connection.closing': 'Closing',
+  'ws.connection.disconnected': 'Disconnected',
+
+  'ws.duration.minutes': '{minutes}m {seconds}s',
+  'ws.duration.seconds': '{seconds}s',
+
+  'ws.notify.urlRequired': 'A WebSocket URL is required',
+  'ws.notify.connected': 'WebSocket connected',
+  'ws.notify.errorTitle': 'WebSocket error',
+  'ws.notify.errorBody': 'Check the URL, certificate and mixed-content rules.',
+  'ws.notify.openFailedTitle': 'Could not open WebSocket',
+  'ws.notify.connectFirst': 'Connect before sending a message',
+  'ws.notify.hexEven': 'Hex payload must have an even number of digits',
+
+  'ws.log.connecting': 'Connecting to {url}',
+  'ws.log.handshake': 'Handshake complete',
+  'ws.log.subprotocol': '· subprotocol {protocol}',
+  'ws.log.transportError': 'Transport error reported by the browser',
+  'ws.log.closed': 'Closed · code {code}',
+  'ws.log.closeReason': '· {reason}',
+  'ws.log.openFailed': 'Could not open socket: {message}',
+
+  'ws.header.title': 'See every frame move.',
+  'ws.header.lead': 'Open a real WebSocket from the browser, stream text or binary frames, and inspect each message.',
+
+  'ws.placeholder.protocols': 'subprotocols (optional)',
+  'ws.action.connect': 'Connect',
+  'ws.action.disconnect': 'Disconnect',
+
+  'ws.stats.state': 'State',
+  'ws.stats.session': 'Session',
+  'ws.stats.sent': 'Sent',
+  'ws.stats.received': 'Received',
+  'ws.stats.traffic': 'Traffic',
+  'ws.stats.frames': '{count} frames',
+
+  'ws.logCard.eyebrow': 'Frame log',
+  'ws.logCard.title': 'Live trace',
+  'ws.logCard.clear': 'Clear',
+  'ws.empty.title': 'No frames yet',
+  'ws.empty.body': 'Connect and send a message to start the trace.',
+
+  'ws.mode.text': 'Text',
+  'ws.placeholder.message': 'Message payload…',
+  'ws.action.send': 'Send',
+
+  'ws.notes.eyebrow': 'Browser sandbox',
+  'ws.notes.title': 'Connection notes',
+  'ws.notes.origin': 'Origin',
+  'ws.notes.mixedContent': 'Mixed content',
+  'ws.notes.mixedContentBefore': 'HTTPS pages cannot open',
+  'ws.notes.certificate': 'Certificate',
+  'ws.notes.certificateBefore': 'Use a trusted',
+  'ws.notes.certificateAfter': 'endpoint',
+  'ws.notes.persistence': 'Persistence',
+  'ws.notes.persistenceBody': 'Messages remain while this tab is cached',
+
+  'ws.tip.title': 'Try a local echo',
+  'ws.tip.body':
+    'Point the URL at a local WebSocket echo server. uvscope keeps every frame in this tab while you switch between tools.',
+}
+
+const zh: Record<string, string> = {
+  'ws.connection.connected': '已连接',
+  'ws.connection.opening': '握手建立中',
+  'ws.connection.closing': '正在关闭',
+  'ws.connection.disconnected': '未连接',
+
+  'ws.duration.minutes': '{minutes} 分 {seconds} 秒',
+  'ws.duration.seconds': '{seconds} 秒',
+
+  'ws.notify.urlRequired': '请填写 WebSocket URL',
+  'ws.notify.connected': 'WebSocket 已连接',
+  'ws.notify.errorTitle': 'WebSocket 错误',
+  'ws.notify.errorBody': '请检查 URL、证书与混合内容策略。',
+  'ws.notify.openFailedTitle': '无法建立 WebSocket',
+  'ws.notify.connectFirst': '请先连接再发送消息',
+  'ws.notify.hexEven': 'Hex 载荷的位数必须为偶数',
+
+  'ws.log.connecting': '正在连接 {url}',
+  'ws.log.handshake': '握手完成',
+  'ws.log.subprotocol': '· 子协议 {protocol}',
+  'ws.log.transportError': '浏览器报告传输错误',
+  'ws.log.closed': '已关闭 · 代码 {code}',
+  'ws.log.closeReason': '· {reason}',
+  'ws.log.openFailed': '无法打开套接字：{message}',
+
+  'ws.header.title': '看清每一帧的流动。',
+  'ws.header.lead': '在浏览器中建立真实的 WebSocket，收发文本或二进制帧，并逐条检查消息。',
+
+  'ws.placeholder.protocols': '子协议（可选）',
+  'ws.action.connect': '连接',
+  'ws.action.disconnect': '断开',
+
+  'ws.stats.state': '状态',
+  'ws.stats.session': '会话时长',
+  'ws.stats.sent': '已发送',
+  'ws.stats.received': '已接收',
+  'ws.stats.traffic': '流量',
+  'ws.stats.frames': '{count} 帧',
+
+  'ws.logCard.eyebrow': '帧日志',
+  'ws.logCard.title': '实时跟踪',
+  'ws.logCard.clear': '清空',
+  'ws.empty.title': '暂无帧',
+  'ws.empty.body': '连接并发送一条消息以开始跟踪。',
+
+  'ws.mode.text': '文本',
+  'ws.placeholder.message': '消息内容…',
+  'ws.action.send': '发送',
+
+  'ws.notes.eyebrow': '浏览器沙箱',
+  'ws.notes.title': '连接说明',
+  'ws.notes.origin': '来源',
+  'ws.notes.mixedContent': '混合内容',
+  'ws.notes.mixedContentBefore': 'HTTPS 页面无法打开',
+  'ws.notes.certificate': '证书',
+  'ws.notes.certificateBefore': '请使用受信任的',
+  'ws.notes.certificateAfter': '端点',
+  'ws.notes.persistence': '保留',
+  'ws.notes.persistenceBody': '标签页缓存期间消息会保留',
+
+  'ws.tip.title': '试试本地回显',
+  'ws.tip.body': '将 URL 指向本地 WebSocket 回显服务器。切换工具时，uvscope 会保留此标签页中的所有帧。',
+}
+
+export default { en, zh }

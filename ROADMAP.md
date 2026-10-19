@@ -15,17 +15,32 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Managed HTTP reverse proxies with live logs
 - [x] Module switches, reset, update check, about/help
 - [x] CI, Linux packages, Windows installer scaffold
+- [x] libuvcpp SNI, POSIX sync timeouts and install-completeness patches
+      ([PR #38](https://github.com/Antruly/libuvcpp/pull/38),
+      [#39](https://github.com/Antruly/libuvcpp/pull/39),
+      [#40](https://github.com/Antruly/libuvcpp/pull/40))
 
-## 0.1.x — hardening
+## 0.2 — debug experience
 
-- [ ] Mark HTTP/2 / HTTP/3 as experimental in the UI and hide them when not compiled
-- [ ] Smoke test in CI: setup → login → HTTP probe → proxy round-trip
-- [ ] Proxy upstream timeout and WebSocket upgrade detection
-- [ ] Better binary/body viewer and downloadable responses
-- [ ] Windows and macOS runtime DLL/dylib bundling verification
-- [ ] Submit the TLS SNI fix upstream to libuvcpp
+- [x] Response preview for HTML (sandboxed), images, audio, video and PDF
+- [x] Preview safety: no scripts, no remote resources by default, clear limits
+- [x] Chinese/English shell, navigation, login and setup; browser-language detection and manual switch
+- [x] Light / dark / system theme switching
+- [ ] Page-by-page light-theme color audit for every workbench
+- [x] Raw / preview / hex switching for binary and truncated bodies
+- [ ] Translate the remaining workbench pages (HTTP, WebSocket, TCP/UDP, SOAP, TLS, proxy, settings, help)
 
-## 0.2 — protocol depth
+## 0.3 — transport workbench
+
+- [ ] Persistent TCP client sessions (send repeatedly, stream receives, close, reconnect)
+- [ ] TCP server listeners with session list, send and close
+- [ ] UDP server listeners with datagram timeline and replies
+- [ ] Listener persistence and optional auto-start
+- [ ] SOCKS5 client for HTTP/TCP/UDP with authentication and error classification
+- [ ] SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) with session logs
+- [ ] No silent direct fallback when a proxy is configured
+
+## 0.4 — protocol depth
 
 - [ ] Reliable HTTP/2 over libuvcpp (ALPN, stream IDs, GOAWAY, frame summary)
 - [ ] HTTP/3 / QUIC client with QPACK / 0-RTT / migration events
@@ -35,7 +50,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [ ] Live peer certificate chain inspection
 - [ ] WebSocket ping/pong, close-code and backend relay mode
 
-## 0.3 — gateway
+## 0.5 — gateway and team workflow
 
 - [ ] Host/path/header/method routing rules
 - [ ] WebSocket pass-through
@@ -43,18 +58,12 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [ ] Multiple upstreams and retry policy
 - [ ] Certificate import / self-sign / selection
 - [ ] Per-instance QPS, latency and traffic metrics
-- [ ] Persistent TCP/UDP listeners with session timelines
-- [ ] Supervisor + IPC for long-lived services
-
-## 0.4 — team workflow
-
 - [ ] Collections, environments and variable substitution
 - [ ] Pre-request / post-response scripts
 - [ ] HAR, cURL, OpenAPI and Postman import/export
 - [ ] Audit log and active session management
 - [ ] Backup / restore / migrations
-- [ ] Scheduled health checks
-- [ ] Command palette and keyboard navigation
+- [ ] Supervisor + IPC for long-lived services
 
 ## 1.0 — stable
 
