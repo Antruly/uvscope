@@ -15,6 +15,7 @@
 #include "auth.h"
 #include "proxy_manager.h"
 #include "store.h"
+#include "transport_manager.h"
 
 namespace uvscope {
 
@@ -78,6 +79,7 @@ class Application {
   Store store_;
   Auth auth_;
   std::unique_ptr<ProxyManager> proxies_;
+  std::unique_ptr<TransportManager> transport_;
   uvcpp::uvcpp_web_app app_;
   AppMetrics metrics_;
   std::chrono::steady_clock::time_point started_;

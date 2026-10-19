@@ -3268,6 +3268,197 @@ button.nav-item {
   margin: 0 0 6px;
   font-size: 15px;
 }
+.session-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+.session-create {
+  padding-bottom: 16px;
+}
+.session-create > .form-grid,
+.session-create > .form-actions {
+  margin-left: 18px;
+  margin-right: 18px;
+}
+.session-create > .form-grid {
+  margin-top: 14px;
+}
+.session-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.7fr) minmax(0, 1.6fr);
+  gap: 13px;
+  align-items: start;
+}
+.session-list,
+.session-detail {
+  min-height: 480px;
+}
+.session-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 10px 12px 14px;
+}
+.session-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-soft);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+.session-card:hover {
+  border-color: var(--border-strong);
+  background: var(--panel-hover);
+}
+.session-card--active {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-soft));
+}
+.session-card__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.session-card__dot--connected { background: var(--ok); box-shadow: 0 0 0 3px rgba(var(--ok-rgb), 0.14); }
+.session-card__dot--connecting { background: var(--warn); }
+.session-card__dot--closing { background: var(--warn); }
+.session-card__dot--error { background: var(--danger); }
+.session-card__dot--closed { background: var(--faint); }
+.session-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.session-card__body strong {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-card__body small {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+.session-card__actions {
+  display: flex;
+  align-items: center;
+}
+.session-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.session-empty--large {
+  min-height: 360px;
+  flex-direction: column;
+}
+.session-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.session-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.session-facts span {
+  color: var(--faint);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.session-facts strong {
+  font-size: 11px;
+}
+.session-events {
+  height: 300px;
+  overflow: auto;
+  padding: 8px 12px;
+  font-size: 10px;
+}
+.session-event {
+  display: grid;
+  grid-template-columns: 36px 72px minmax(0, 1fr) 68px;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: start;
+}
+.session-event__seq {
+  color: var(--faint);
+  text-align: right;
+}
+.session-event__type {
+  color: var(--accent);
+}
+.session-event--recv .session-event__type {
+  color: var(--accent-2);
+}
+.session-event--error .session-event__type {
+  color: var(--danger);
+}
+.session-event--closed .session-event__type,
+.session-event--peer-closed .session-event__type {
+  color: var(--warn);
+}
+.session-event__body {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.session-event__time {
+  color: var(--faint);
+  text-align: right;
+}
+.session-send {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--border);
+}
+.session-send__row {
+  display: flex;
+  gap: 8px;
+}
+.session-send__row .select {
+  width: 112px;
+  flex: 0 0 auto;
+}
+.session-send__row input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+}
+.session-send__row input:disabled {
+  opacity: 0.55;
+}
 .transport-empty p {
   max-width: 340px;
   margin: 0;

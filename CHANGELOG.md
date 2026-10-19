@@ -4,6 +4,18 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Persistent TCP sessions: create a connection, send repeatedly (text or hex), inspect a
+  per-session event log, and close it explicitly. Sessions run on a dedicated libuv loop so a
+  stalled target cannot block the control plane.
+- `GET/POST /api/tcp/sessions`, `GET /api/tcp/sessions/:id/events`, `POST .../send` and
+  `DELETE /api/tcp/sessions/:id`.
+- Transport panel with session state, byte counters, queued writes and an incremental event log.
+- Smoke coverage for a two-send TCP echo round-trip on one persistent connection.
+
 ## [0.2.0] - 2026-10-20
 
 ### Added

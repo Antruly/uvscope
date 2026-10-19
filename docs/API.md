@@ -34,6 +34,12 @@ Each module must be enabled in Settings and the role must have `debug`.
 | POST | `/api/http/send` | `{url, method, protocol, headers[{name,value}], body, timeoutMs, insecure, compression}` → probe result |
 | POST | `/api/tcp/probe` | `{host, port, payload, encoding, connectTimeoutMs, readTimeoutMs}` |
 | POST | `/api/udp/probe` | `{host, port, payload, encoding, timeoutMs}` |
+| POST | `/api/tcp/sessions` | `{host, port, connectTimeoutMs}` → persistent TCP session |
+| GET | `/api/tcp/sessions` | List retained TCP sessions |
+| GET | `/api/tcp/sessions/:id` | One session snapshot |
+| GET | `/api/tcp/sessions/:id/events?after=&limit=` | Incremental session event log |
+| POST | `/api/tcp/sessions/:id/send` | `{payload, encoding}` → queue a write |
+| DELETE | `/api/tcp/sessions/:id` | Close a session |
 | POST | `/api/tls/inspect` | `{pem}` → certificate profile |
 | POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, autoStart, tls, certPath, keyPath, start}` |
 | POST | `/api/proxies/:id/start` | Start a proxy |
@@ -42,6 +48,43 @@ Each module must be enabled in Settings and the role must have `debug`.
 
 `encoding` is `text` or `hex`. Probe results always include `ok`; protocol failures are reported in
 the result rather than as an API error.
+
+## Persistent TCP sessions
+
+A session is created with `POST /api/tcp/sessions` and stays open until `DELETE` or the peer closes
+it. It runs on a dedicated libuv loop, so a stalled target never blocks the control plane.
+
+```json
+{
+  "ok": true,
+  "session": {
+    "id": "…",
+    "transport": "tcp",
+    "host": "127.0.0.1",
+    "port": 9000,
+    "state": "connected",
+    "error": "",
+    "closeReason": "",
+    "createdAt": "2026-10-20T…Z",
+    "connectedAt": "2026-10-20T…Z",
+    "closedAt": "",
+    "sentBytes": 10,
+    "receivedBytes": 20,
+    "nextSeq": 6,
+    "queuedWrites": 0,
+    "queuedBytes": 0
+  }
+}
+```
+
+`state` is `connecting`, `connected`, `closing`, `closed` or `error`. Sends are queued; the
+`send` event is appended only after libuv reports the write complete. Event types are `created`,
+`connected`, `send`, `recv`, `peer-closed`, `closed` and `error`; every event has `seq` and `at`.
+Data events carry `payload` with `length`, `encoding` (`utf8` or `base64`), `text` or `base64`,
+`hex`, and `truncated` (payloads over 64 KiB are clipped for the event log).
+
+Limits: 64 live sessions, 1 MiB per payload, 1 MiB queued per session, 512 KiB / 2,000 events
+retained per session. Closed sessions remain visible until the retained list exceeds 128.
 
 ## Administration
 

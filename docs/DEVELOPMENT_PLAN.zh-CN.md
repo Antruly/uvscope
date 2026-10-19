@@ -347,9 +347,12 @@ npm --prefix web run build
 
 不做：一次性翻译全部业务文案、RTL。
 
-### S3 — 持久 TCP 客户端（后端 + 前端）
+### S3 — 持久 TCP 客户端（后端 + 前端，已实现）
 
 边界：新增 `src/transport_manager.*`、`/api/tcp/sessions*`、`TransportView` TCP 会话区、`docs/API.md`、Help、smoke。
+
+状态：已实现。独立 libuv 循环线程、命令队列、连接超时扫描、写队列、事件环形缓冲、
+连接/发送/接收/关闭/错误事件、前端 TCP 会话面板与 smoke 断言均已落地。
 
 内容：
 

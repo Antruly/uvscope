@@ -31,7 +31,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 
 ## 0.3 — transport workbench
 
-- [ ] Persistent TCP client sessions (send repeatedly, stream receives, close, reconnect)
+- [x] Persistent TCP client sessions (send repeatedly, stream receives, close, reconnect)
 - [ ] TCP server listeners with session list, send and close
 - [ ] UDP server listeners with datagram timeline and replies
 - [ ] Listener persistence and optional auto-start

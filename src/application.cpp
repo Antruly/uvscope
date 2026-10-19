@@ -35,7 +35,7 @@ namespace {
 
 volatile std::sig_atomic_t g_signal_stop = 0;
 
-extern "C" void handle_stop_signal(int) { g_signal_stop = 1; }
+extern "C" void handle_stop_signal(int) { g_signal_stop = 1;  }
 
 void send_json(uvcpp::uvcpp_web_response& resp, int status, const nlohmann::json& body) {
   std::string text = body.dump();
@@ -174,6 +174,9 @@ Application::Application(AppOptions options)
 
 Application::~Application() {
   if (update_thread_.joinable()) update_thread_.join();
+
+  transport_.reset();
+
   if (proxies_) proxies_->stop_all();
 }
 
@@ -188,6 +191,11 @@ bool Application::initialize() {
     return false;
   }
   proxies_.reset(new ProxyManager(store_));
+  transport_.reset(new TransportManager());
+  if (!transport_->available()) {
+    std::fprintf(stderr, "uvscope: transport sessions unavailable: %s\n",
+                 transport_->start_error().c_str());
+  }
   web_root_ = options_.web_root.string();
   if (!web_root_.empty()) {
     std::error_code ec;
@@ -281,8 +289,11 @@ int Application::run() {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
+
   app_.stop();
+
   app_.join();
+
   if (update_thread_.joinable()) update_thread_.join();
   if (proxies_) proxies_->stop_all();
   store_.close();
@@ -693,6 +704,132 @@ void Application::register_debug_routes() {
                           std::to_string(result.body.value("port", 0)),
                       result.body);
         });
+  });
+
+  app_.post("/api/tcp/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                        uvcpp::uvcpp_web_response& resp,
+                                        uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    if (!transport_ || !transport_->available()) {
+      send_error(resp, 503, "transport sessions are unavailable", "unavailable");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const std::string host = string_field(*body, "host");
+    const int port = int_field(*body, "port", 0);
+    const int timeout_ms = int_field(*body, "connectTimeoutMs", 15000);
+    if (host.empty() || port <= 0 || port > 65535) {
+      send_error(resp, 400, "host and port are required", "bad_request");
+      return;
+    }
+    std::string error;
+    const auto result = transport_->create_tcp_session(host, port, timeout_ms, &error);
+    if (!result.value("ok", false)) {
+      send_error(resp, 400, error.empty() ? "could not create session" : error,
+                 "session_failed");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/tcp/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                       uvcpp::uvcpp_web_response& resp,
+                                       uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    if (!transport_ || !transport_->available()) {
+      send_error(resp, 503, "transport sessions are unavailable", "unavailable");
+      return;
+    }
+    send_json(resp, 200, transport_->tcp_sessions());
+  });
+
+  app_.get("/api/tcp/sessions/:id", [this](uvcpp::uvcpp_web_request& req,
+                                           uvcpp::uvcpp_web_response& resp,
+                                           uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_ || !transport_->available()) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    const auto result = transport_->tcp_session(*id);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("session not found")),
+                 "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/tcp/sessions/:id/events", [this](uvcpp::uvcpp_web_request& req,
+                                                  uvcpp::uvcpp_web_response& resp,
+                                                  uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_ || !transport_->available()) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    std::uint64_t after = 0;
+    if (const std::string* value = req.query("after")) {
+      after = std::strtoull(value->c_str(), nullptr, 10);
+    }
+    int limit = 200;
+    if (const std::string* value = req.query("limit")) {
+      limit = std::atoi(value->c_str());
+    }
+    const auto result = transport_->tcp_session_events(*id, after, limit);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("session not found")),
+                 "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.post("/api/tcp/sessions/:id/send", [this](uvcpp::uvcpp_web_request& req,
+                                                 uvcpp::uvcpp_web_response& resp,
+                                                 uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_ || !transport_->available()) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    std::string error;
+    if (!transport_->tcp_send(*id, string_field(*body, "payload"),
+                              string_field(*body, "encoding", "text"), &error)) {
+      send_error(resp, 400, error, "send_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.del("/api/tcp/sessions/:id", [this](uvcpp::uvcpp_web_request& req,
+                                           uvcpp::uvcpp_web_response& resp,
+                                           uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_ || !transport_->available()) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    std::string error;
+    if (!transport_->tcp_close(*id, &error)) {
+      send_error(resp, error == "session not found" ? 404 : 400, error,
+                 error == "session not found" ? "not_found" : "close_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
   });
 
   app_.post("/api/tls/inspect", [this](uvcpp::uvcpp_web_request& req,

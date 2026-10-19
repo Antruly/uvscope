@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import Icon from '../components/Icon.vue'
+import TcpSessionPanel from '../components/TcpSessionPanel.vue'
 import { errorMessage, post } from '../api'
 import { useUiStore } from '../stores/ui'
 import { useI18nStore } from '../stores/i18n'
@@ -10,7 +11,7 @@ defineOptions({ name: 'TransportView' })
 const ui = useUiStore()
 const i18n = useI18nStore()
 const t = i18n.t
-const mode = ref<'tcp' | 'udp'>('tcp')
+const mode = ref<'tcp' | 'session' | 'udp'>('tcp')
 const host = ref('example.com')
 const port = ref(80)
 const payload = ref('HEAD / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n')
@@ -23,14 +24,16 @@ const result = ref<Record<string, unknown> | null>(null)
 const error = ref('')
 
 const isTcp = computed(() => mode.value === 'tcp')
+const isSessionMode = computed(() => mode.value === 'session')
 const sent = computed(() => (result.value?.sent as Record<string, unknown>) || null)
 const received = computed(() => (result.value?.received as Record<string, unknown>) || null)
 const timing = computed(() => (result.value?.timing as Record<string, unknown>) || {})
 
-function switchMode(next: 'tcp' | 'udp') {
+function switchMode(next: 'tcp' | 'session' | 'udp') {
   mode.value = next
   result.value = null
   error.value = ''
+  if (next === 'session') return
   if (next === 'tcp') {
     host.value = 'example.com'
     port.value = 80
@@ -90,17 +93,20 @@ function displayPayload(value: Record<string, unknown> | null) {
       <div>
         <span class="eyebrow">{{ t('transport.header.eyebrow') }}</span>
         <h2>{{ t('transport.header.title') }}</h2>
-        <p>{{ t('transport.header.lead') }}</p>
+        <p>{{ isSessionMode ? t('transport.header.leadSession') : t('transport.header.lead') }}</p>
       </div>
       <div class="page-head__actions">
         <div class="segmented">
           <button :class="{ active: mode === 'tcp' }" @click="switchMode('tcp')">TCP</button>
+          <button :class="{ active: mode === 'session' }" @click="switchMode('session')">{{ t('transport.mode.session') }}</button>
           <button :class="{ active: mode === 'udp' }" @click="switchMode('udp')">UDP</button>
         </div>
       </div>
     </header>
 
-    <div class="transport-grid">
+    <TcpSessionPanel v-if="isSessionMode" />
+
+    <div v-else class="transport-grid">
       <section class="card transport-form">
         <header class="card__head">
           <div><span class="eyebrow">{{ t('transport.form.client', { mode: mode.toUpperCase() }) }}</span><h3>{{ t('transport.form.title') }}</h3></div>

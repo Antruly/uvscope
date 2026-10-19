@@ -25,7 +25,7 @@ const en: Record<string, string> = {
     'Connects from the browser, so the URL must be reachable by this machine. Text and hex frames are captured in the tab while it is cached.',
   'help.modules.tcpudp.title': 'TCP / UDP bench',
   'help.modules.tcpudp.text':
-    'One-shot probes through libuvcpp. Hex mode accepts spaced, colon-separated or plain hex payloads.',
+    'One-shot probes through libuvcpp, plus persistent TCP sessions with repeated sends and a per-session event log. Hex mode accepts spaced, colon-separated or plain hex payloads.',
   'help.modules.preview.title': 'Response preview',
   'help.modules.preview.text':
     'HTML renders in a sandbox with scripts disabled. Images, audio, video and PDF load from a local Blob; remote media is opt-in.',
@@ -115,7 +115,7 @@ const zh: Record<string, string> = {
     '由浏览器发起连接，因此 URL 必须能从本机访问。标签页缓存期间会捕获文本与十六进制帧。',
   'help.modules.tcpudp.title': 'TCP / UDP 调试台',
   'help.modules.tcpudp.text':
-    '通过 libuvcpp 执行一次性探测。十六进制模式支持带空格、冒号分隔或纯十六进制负载。',
+    '通过 libuvcpp 执行一次性探测，并支持可连续发送、带逐会话事件日志的持久 TCP 会话。十六进制模式支持带空格、冒号分隔或纯十六进制负载。',
   'help.modules.preview.title': '响应预览',
   'help.modules.preview.text':
     'HTML 在禁用脚本的沙箱中渲染。图片、音频、视频与 PDF 从本地 Blob 加载；远程媒体需手动开启。',

@@ -17,12 +17,15 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 │   ├─ middleware: security headers, deny-by-default API 404          │
 │   ├─ /api/auth, /api/setup, /api/users                              │
 │   ├─ /api/http, /api/tcp, /api/udp, /api/tls                         │
+│   ├─ /api/tcp/sessions (persistent transport sessions)               │
 │   ├─ /api/proxies, /api/history, /api/settings                      │
 │   └─ static SPA (web/ dist)                                         │
 │                                                                     │
 │  Auth(Store)              Store (SQLite, single writer)             │
 │  ProxyManager             libuv thread pool for short probes        │
 │   └─ one uvcpp_web_app per proxy (dedicated event loop)             │
+│  TransportManager                                                   │
+│   └─ one libuv loop thread; TCP sessions + command queue            │
 │                                                                     │
 │  libuvcpp 1.8.0 + patch (TLS SNI)                                   │
 └───────────────────────────────┬─────────────────────────────────────┘
@@ -39,6 +42,9 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
   thread. Requests use a synchronous libuvcpp HTTP client on that proxy loop. This keeps proxy
   blocking isolated from the control plane, at the cost of per-instance serialization for slow
   upstreams.
+- **Persistent transport sessions**: `TransportManager` owns one dedicated libuv loop on its own
+  thread. Web handlers enqueue commands and read mutex-protected snapshots; sessions never run on
+  the control-plane loop. A 500 ms sweep enforces connect timeouts and retires closed clients.
 - **Static assets**: served by the same `uvcpp_web_app`; SPA fallback is enabled so deep links work.
 
 The roadmap moves persistent proxy/transport services into explicit child processes with a
@@ -90,6 +96,18 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
 - History is pruned to the latest 5,000 rows on insert.
 - Deleting the database (or the factory reset action) reopens a fresh file and returns to first-run
   setup.
+
+## Persistent TCP sessions
+
+- `POST /api/tcp/sessions` allocates an id and returns `connecting` immediately; the connect runs
+  on the transport loop.
+- Each session has a single async write in flight. `send` requests are queued (1 MiB per session)
+  and a `send` event is appended only when libuv reports the write complete.
+- `recv`, `peer-closed`, `closed` and `error` events are appended to a bounded per-session log
+  (2,000 events / 512 KiB, payloads clipped at 64 KiB).
+- A 500 ms sweep enforces the connect timeout and deletes retired client wrappers after their close
+  callbacks have run.
+- Session state is plain data guarded by a mutex; libuv objects stay on the transport thread.
 
 ## Response preview safety
 
@@ -146,7 +164,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 
 - HTTP/2 and HTTP/3 remain opt-in and experimental; the libuvcpp async TLS/h2 path works in local
   Linux testing but still needs the full Windows/macOS matrix.
-- Persistent TCP/UDP listeners and SOCKS5 client/server are planned for 0.3.
+- Persistent TCP sessions are implemented; TCP/UDP listeners and SOCKS5 client/server are next.
 - Preview cannot execute scripts and does not stream bodies larger than the probe cap.
 - Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
 - No WebSocket upgrade pass-through in the proxy.

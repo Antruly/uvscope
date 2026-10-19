@@ -92,6 +92,16 @@ if(NOT UVCPP_LIBUV_INCLUDE_DIRS)
   message(FATAL_ERROR "libuv headers (uv.h) were not found; install libuv development files")
 endif()
 
+# The transport manager uses libuv timers directly. Link the same libuv that
+# libuvcpp was built against; it is also the event loop shared by the daemon.
+find_library(UVSCOPE_LIBUV_LIBRARY
+  NAMES uv libuv
+  HINTS ${CMAKE_PREFIX_PATH}/lib /opt/homebrew/lib /usr/local/lib
+  DOC "libuv runtime library")
+if(NOT UVSCOPE_LIBUV_LIBRARY)
+  message(FATAL_ERROR "libuv library was not found; install libuv development files")
+endif()
+
 # ---------------------------------------------------------------------------
 # Version / build information
 # ---------------------------------------------------------------------------
@@ -112,6 +122,7 @@ set(UVSCOPE_SOURCES
   src/net_probe.cpp
   src/proxy_manager.cpp
   src/store.cpp
+  src/transport_manager.cpp
   src/util.cpp)
 
 add_executable(uvscope ${UVSCOPE_SOURCES})
@@ -122,6 +133,7 @@ target_include_directories(uvscope PRIVATE
   ${UVCPP_LIBUV_INCLUDE_DIRS})
 target_link_libraries(uvscope PRIVATE
   "${UVCPP_LIBRARY}"
+  "${UVSCOPE_LIBUV_LIBRARY}"
   OpenSSL::SSL
   OpenSSL::Crypto
   Threads::Threads
