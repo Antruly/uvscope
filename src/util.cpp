@@ -13,15 +13,23 @@
 #include <stdexcept>
 
 #if defined(_WIN32)
-#include <windows.h>
-#include <knownfolders.h>
-#include <shlobj.h>
-#else
-#include <unistd.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #endif
 
 #include <uv.h>
 #include <openssl/rand.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 #if defined(_WIN32)
 #include <psapi.h>
