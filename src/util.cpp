@@ -388,6 +388,7 @@ std::filesystem::path default_web_root(const std::filesystem::path& exe_dir) {
   const std::vector<std::filesystem::path> candidates = {
       env_root.empty() ? std::filesystem::path() : std::filesystem::path(env_root),
       exe_dir / "web",
+      exe_dir / ".." / "web",
       exe_dir / ".." / "share" / "uvscope" / "web",
       exe_dir / ".." / "share" / "uvscope",
       std::filesystem::current_path() / "web" / "dist",
