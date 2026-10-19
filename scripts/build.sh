@@ -6,6 +6,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build}"
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 
+if [[ "$(uname -s)" == "Darwin" && -z "${OPENSSL_ROOT_DIR:-}" ]] && command -v brew >/dev/null 2>&1; then
+  export OPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+  export CMAKE_PREFIX_PATH="${OPENSSL_ROOT_DIR}"
+fi
+
 if [[ -z "${UVCPP_ROOT:-}" ]]; then
   UVCPP_ROOT="${ROOT_DIR}/.deps/libuvcpp"
 fi

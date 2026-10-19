@@ -104,7 +104,13 @@ jobs:
           cp -f "$MINGW_PREFIX/bin/"*.dll build-mingw/ 2>/dev/null || true
           echo "--- uvscope dependencies ---"
           ldd build-mingw/uvscope.exe || true
+          set +e
           ./build-mingw/uvscope.exe --version
+          echo "bash version rc=$?"
+          powershell.exe -NoProfile -Command "& '.\build-mingw\uvscope.exe' --version; Write-Host ('powershell rc=' + \$LASTEXITCODE)"
+          cmd //c "build-mingw\\uvscope.exe --version"
+          echo "cmd version rc=$?"
+          set -e
           timeout 90 ./build-mingw/uvscope.exe --self-check
 
   macos:

@@ -151,6 +151,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the data model and reques
 - [HTTP API](docs/API.md)
 - [Building and packaging](docs/BUILDING.md)
 - [Roadmap](ROADMAP.md)
+- [Agent guide](AGENTS.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

@@ -121,7 +121,8 @@ jobs:
               "$MINGW_PREFIX"/*|"$PWD/build-mingw"/*) cp -f "$dep" stage/bin/ ;;
             esac
           done
-          curl -fsSL https://curl.se/ca/cacert.pem -o stage/bin/cacert.pem
+          curl -fsSL https://curl.se/ca/cacert.pem -o stage/bin/cacert.pem || \
+            cp "$MINGW_PREFIX/ssl/certs/ca-bundle.crt" stage/bin/cacert.pem || true
       - name: Create zip
         shell: pwsh
         run: |
