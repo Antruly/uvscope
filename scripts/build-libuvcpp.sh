@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build the patched libuvcpp runtime used by uvscope.
 #
-# The only source change is TLS SNI support (patches/libuvcpp-1.8.0-sni.patch).
-# Without SNI, HTTPS requests to modern virtual hosts fail during the handshake.
+# Applies patches/upstream/*.patch in name order. They cover TLS SNI, POSIX
+# blocking-I/O timeouts and a complete `cmake --install` tree; see
+# docs/LIBUVCPP_UPSTREAM.zh-CN.md.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,7 +11,7 @@ SRC_DIR="${1:-${ROOT_DIR}/.deps/libuvcpp-src}"
 PREFIX="${2:-${ROOT_DIR}/.deps/libuvcpp}"
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 LIBUVCPP_TAG="${LIBUVCPP_TAG:-v1.8.0}"
-PATCH_FILE="${ROOT_DIR}/patches/libuvcpp-1.8.0-sni.patch"
+PATCH_DIR="${ROOT_DIR}/patches/upstream"
 
 mkdir -p "$(dirname "${PREFIX}")"
 PREFIX="$(cd "$(dirname "${PREFIX}")" && pwd)/$(basename "${PREFIX}")"
@@ -31,16 +32,29 @@ fi
 
 git -C "${SRC_DIR}" config core.autocrlf false >/dev/null 2>&1 || true
 
-if git -C "${SRC_DIR}" apply --check "${PATCH_FILE}" >/dev/null 2>&1; then
-  git -C "${SRC_DIR}" apply "${PATCH_FILE}"
-  echo "Applied TLS SNI patch."
-elif git -C "${SRC_DIR}" apply --reverse --check "${PATCH_FILE}" >/dev/null 2>&1; then
-  echo "TLS SNI patch already present."
-else
-  echo "warning: could not apply or detect the SNI patch; building as-is" >&2
+shopt -s nullglob
+patches=("${PATCH_DIR}"/*.patch)
+shopt -u nullglob
+if (( ${#patches[@]} == 0 )); then
+  echo "error: no upstream patches found in ${PATCH_DIR}." >&2
+  echo "       The unpatched runtime is missing required fixes; refusing to build it." >&2
+  exit 1
 fi
+for patch in "${patches[@]}"; do
+  name="$(basename "${patch}")"
+  if git -C "${SRC_DIR}" apply --check "${patch}" >/dev/null 2>&1; then
+    git -C "${SRC_DIR}" apply "${patch}"
+    echo "Applied ${name}."
+  elif git -C "${SRC_DIR}" apply --reverse --check "${patch}" >/dev/null 2>&1; then
+    echo "${name} already present."
+  else
+    echo "error: ${name} does not apply and is not already present in ${SRC_DIR}." >&2
+    echo "       Remove the cached source tree and rerun, or update the patch." >&2
+    exit 1
+  fi
+done
 
-# v0.1.0 uses reliable HTTP/1.1 transport. The HTTP/2 and HTTP/3 preferences in
+# The release build uses reliable HTTP/1.1 transport. The HTTP/2 and HTTP/3 preferences in
 # the UI remain experimental; enable their libuvcpp switches once upstream async
 # TLS/h2/h3 paths are validated on every target.
 extra_cmake=()
