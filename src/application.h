@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include <nlohmann/json.hpp>
 #include <webapp/uvcpp_web_app.h>
@@ -87,6 +88,7 @@ class Application {
   nlohmann::json update_cache_ = nlohmann::json::object();
   std::int64_t update_checked_at_ = 0;
   nlohmann::json repo_cache_ = nlohmann::json::object();
+  std::thread update_thread_;
 };
 
 }  // namespace uvscope

@@ -259,12 +259,30 @@ int Application::run() {
   if (options_.open_browser) open_browser(url);
 
   // The app runs its loop on a background thread. Wake periodically to notice
-  // a signal and to flush any background update that has completed.
+  // a signal and to run the optional GitHub release check without blocking the
+  // control plane.
+  auto next_update = std::chrono::steady_clock::now() + std::chrono::seconds(20);
   while (app_.running() && g_signal_stop == 0) {
+    if (std::chrono::steady_clock::now() >= next_update) {
+      const bool auto_update = store_.setting("update.auto", "1") == "1";
+      if (auto_update) {
+        if (update_thread_.joinable()) update_thread_.join();
+        update_thread_ = std::thread([this] {
+          try {
+            update_payload();
+          } catch (...) {
+            // A release check is best-effort; never terminate the daemon.
+          }
+        });
+      }
+      const int hours = std::max(1, std::atoi(store_.setting("update.interval", "24").c_str()));
+      next_update = std::chrono::steady_clock::now() + std::chrono::hours(hours);
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
   app_.stop();
   app_.join();
+  if (update_thread_.joinable()) update_thread_.join();
   if (proxies_) proxies_->stop_all();
   store_.close();
   return 0;
@@ -680,7 +698,15 @@ void Application::register_debug_routes() {
     if (!principal) return;
     const auto body = parse_json(req, resp);
     if (!body) return;
-    const std::string pem = string_field(*body, "pem");
+    std::string pem = string_field(*body, "pem");
+    if (string_field(*body, "encoding", "text") == "base64") {
+      const auto decoded = base64_decode(pem);
+      if (!decoded) {
+        send_error(resp, 400, "certificate is not valid base64", "invalid_certificate");
+        return;
+      }
+      pem = *decoded;
+    }
     std::string error;
     nlohmann::json info = inspect_certificate(pem, &error);
     if (!info.is_object()) {

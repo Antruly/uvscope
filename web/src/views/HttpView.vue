@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import { del, errorMessage, get, post } from '../api'
 import type { HistoryEntry, HttpHeader, HttpResult } from '../types'
@@ -205,6 +205,10 @@ onMounted(() => {
   void loadHistory()
 })
 onActivated(() => void loadHistory())
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  if (ticker) window.clearInterval(ticker)
+})
 </script>
 
 <template>

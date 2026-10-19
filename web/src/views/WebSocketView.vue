@@ -77,7 +77,6 @@ function connect() {
         append('in', text, 'text')
       } else if (event.data instanceof ArrayBuffer) {
         const bytes = new Uint8Array(event.data)
-        received.value++
         append('in', [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' '), 'binary')
       }
     }

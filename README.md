@@ -145,6 +145,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the data model and reques
 
 - [Development plan (中文)](docs/DEVELOPMENT_PLAN.zh-CN.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [HTTP API](docs/API.md)
 - [Building and packaging](docs/BUILDING.md)
 - [Roadmap](ROADMAP.md)
 - [Changelog](CHANGELOG.md)

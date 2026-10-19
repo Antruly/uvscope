@@ -13,6 +13,7 @@ const info = ref<CertificateInfo | null>(null)
 const error = ref('')
 const parsing = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const inputEncoding = ref<'text' | 'base64'>('text')
 
 const validityPercent = computed(() => {
   if (!info.value || !info.value.notBeforeEpoch || !info.value.notAfterEpoch) return 0
@@ -37,8 +38,9 @@ async function parse() {
   parsing.value = true
   error.value = ''
   info.value = null
+  if (pem.value.includes('-----BEGIN CERTIFICATE-----')) inputEncoding.value = 'text'
   try {
-    info.value = await post<CertificateInfo>('/api/tls/inspect', { pem: pem.value })
+    info.value = await post<CertificateInfo>('/api/tls/inspect', { pem: pem.value, encoding: inputEncoding.value })
     ui.notify('success', 'Certificate decoded')
   } catch (err) {
     error.value = errorMessage(err)
@@ -56,7 +58,17 @@ async function loadFile(event: Event) {
     ui.notify('warning', 'Certificate file is larger than 1 MiB')
     return
   }
-  pem.value = await file.text()
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+  if (text.includes('-----BEGIN CERTIFICATE-----')) {
+    pem.value = text
+    inputEncoding.value = 'text'
+  } else {
+    let binary = ''
+    for (const byte of bytes) binary += String.fromCharCode(byte)
+    pem.value = btoa(binary)
+    inputEncoding.value = 'base64'
+  }
   await parse()
   target.value = ''
 }
@@ -71,10 +83,9 @@ async function copy(text: string) {
 }
 
 function loadExample() {
-  pem.value = `-----BEGIN CERTIFICATE-----
-MIIB...paste a real certificate here...
------END CERTIFICATE-----`
-  ui.notify('info', 'Paste or upload a real PEM/DER certificate to decode it')
+  pem.value = ''
+  inputEncoding.value = 'text'
+  ui.notify('info', 'Paste PEM text or upload a PEM/DER file to decode it')
 }
 </script>
 

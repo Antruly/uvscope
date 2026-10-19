@@ -67,6 +67,26 @@ endif()
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
+# libuv headers are needed by libuvcpp's inline/public headers. Link libuvcpp,
+# not a second libuv: the daemon must use exactly the event loop the framework
+# was built against.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(UVCPP_LIBUV QUIET libuv)
+endif()
+if(NOT UVCPP_LIBUV_INCLUDE_DIRS)
+  find_path(UVCPP_LIBUV_INCLUDE_DIR uv.h
+    HINTS ${CMAKE_PREFIX_PATH}/include ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}
+          /opt/homebrew/include /usr/local/include /usr/include
+    DOC "libuv public headers")
+  if(UVCPP_LIBUV_INCLUDE_DIR)
+    set(UVCPP_LIBUV_INCLUDE_DIRS "${UVCPP_LIBUV_INCLUDE_DIR}")
+  endif()
+endif()
+if(NOT UVCPP_LIBUV_INCLUDE_DIRS)
+  message(FATAL_ERROR "libuv headers (uv.h) were not found; install libuv development files")
+endif()
+
 # ---------------------------------------------------------------------------
 # Version / build information
 # ---------------------------------------------------------------------------
@@ -93,7 +113,8 @@ add_executable(uvscope ${UVSCOPE_SOURCES})
 target_include_directories(uvscope PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
   "${CMAKE_CURRENT_BINARY_DIR}/generated"
-  "${UVCPP_INCLUDE_DIR}")
+  "${UVCPP_INCLUDE_DIR}"
+  ${UVCPP_LIBUV_INCLUDE_DIRS})
 target_link_libraries(uvscope PRIVATE
   "${UVCPP_LIBRARY}"
   OpenSSL::SSL
