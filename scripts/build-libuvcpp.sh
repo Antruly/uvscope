@@ -25,8 +25,11 @@ fi
 
 if [[ ! -f "${SRC_DIR}/CMakeLists.txt" ]]; then
   mkdir -p "$(dirname "${SRC_DIR}")"
-  git clone --depth 1 --branch "${LIBUVCPP_TAG}" https://github.com/Antruly/libuvcpp.git "${SRC_DIR}"
+  git -c core.autocrlf=false clone --depth 1 --branch "${LIBUVCPP_TAG}" \
+    https://github.com/Antruly/libuvcpp.git "${SRC_DIR}"
 fi
+
+git -C "${SRC_DIR}" config core.autocrlf false >/dev/null 2>&1 || true
 
 if git -C "${SRC_DIR}" apply --check "${PATCH_FILE}" >/dev/null 2>&1; then
   git -C "${SRC_DIR}" apply "${PATCH_FILE}"

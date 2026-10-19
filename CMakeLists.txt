@@ -151,12 +151,15 @@ install(DIRECTORY "${UVSCOPE_WEB_SOURCE}/"
 if(UVSCOPE_PACKAGE_RUNTIME)
   if(WIN32 AND UVCPP_RUNTIME_DLL)
     install(FILES "${UVCPP_RUNTIME_DLL}" DESTINATION "${CMAKE_INSTALL_BINDIR}")
-  elseif(UNIX AND NOT APPLE)
+  elseif(UNIX)
     install(FILES "${UVCPP_LIBRARY}" DESTINATION "${CMAKE_INSTALL_LIBDIR}/uvscope")
     file(GLOB _uvcpp_runtime_libs
       "${UVCPP_LIBRARY_DIR}/libllhttp.so*"
+      "${UVCPP_LIBRARY_DIR}/libllhttp*.dylib"
       "${UVCPP_LIBRARY_DIR}/libuv.so*"
-      "${UVCPP_LIBRARY_DIR}/libz.so*")
+      "${UVCPP_LIBRARY_DIR}/libuv*.dylib"
+      "${UVCPP_LIBRARY_DIR}/libz.so*"
+      "${UVCPP_LIBRARY_DIR}/libz*.dylib")
     if(_uvcpp_runtime_libs)
       install(FILES ${_uvcpp_runtime_libs} DESTINATION "${CMAKE_INSTALL_LIBDIR}/uvscope")
     endif()
