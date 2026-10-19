@@ -55,6 +55,14 @@ upstream validation on every target. Use HTTP/1.1 for production debugging today
 | --- | --- |
 | ![reverse proxy](docs/screenshots/reverse-proxy.png) | ![login](docs/screenshots/login.png) |
 
+## Download
+
+Prebuilt **v0.1.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.1.0):
+
+- Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.1.0-setup.exe`
+- macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
+
 ## Quick start
 
 ### Requirements
