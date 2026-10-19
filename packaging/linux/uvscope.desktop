@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=uvscope
+Comment=Multi-protocol web debugging workbench and gateway
+Exec=uvscope --open
+Terminal=false
+Categories=Development;Network;
+Keywords=http;websocket;tcp;udp;tls;soap;proxy;
+StartupNotify=false

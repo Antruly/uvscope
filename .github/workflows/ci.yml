@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --prefix web --no-audit --no-fund
+      - run: npm --prefix web run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-22.04
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git curl \
+            libuv1-dev zlib1g-dev libssl-dev libsqlite3-dev
+      - name: Build patched libuvcpp
+        run: ./scripts/build-libuvcpp.sh .deps/libuvcpp-src .deps/libuvcpp
+      - name: Configure uvscope
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DUVCPP_ROOT="$PWD/.deps/libuvcpp"
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+      - name: Unit checks
+        run: ctest --test-dir build --output-on-failure
+      - name: End-to-end smoke test
+        run: ./scripts/smoke-test.sh ./build/uvscope 18787 18788
+
+  windows:
+    name: Windows x64 (MinGW)
+    runs-on: windows-latest
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-libuv
+            mingw-w64-x86_64-sqlite3
+            mingw-w64-x86_64-zlib
+      - name: Build libuvcpp and uvscope
+        shell: msys2 {0}
+        run: |
+          set -e
+          ./scripts/build-libuvcpp.sh .deps/libuvcpp-src .deps/libuvcpp
+          UVCPP_DIR="$(cygpath -m "$PWD/.deps/libuvcpp")"
+          OPENSSL_DIR="$(cygpath -m "$MINGW_PREFIX")"
+          cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DUVCPP_ROOT="$UVCPP_DIR" \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_DIR"
+          cmake --build build-mingw -j"$(nproc)"
+          ./build-mingw/uvscope.exe --version
+          ./build-mingw/uvscope.exe --self-check
+
+  macos:
+    name: macOS arm64
+    runs-on: macos-14
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - name: Install build dependencies
+        run: brew install cmake ninja libuv openssl@3 sqlite
+      - name: Build patched libuvcpp
+        run: |
+          export OPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          export CMAKE_PREFIX_PATH="$OPENSSL_ROOT_DIR"
+          ./scripts/build-libuvcpp.sh .deps/libuvcpp-src .deps/libuvcpp
+      - name: Configure and build
+        run: |
+          export OPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+          export CMAKE_PREFIX_PATH="$OPENSSL_ROOT_DIR"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DUVCPP_ROOT="$PWD/.deps/libuvcpp" \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR" \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+          ./build/uvscope --version
+          ./build/uvscope --self-check

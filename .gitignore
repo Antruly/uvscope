@@ -1,0 +1,52 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+out/
+dist/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.so.*
+*.dylib
+*.a
+*.lib
+*.pdb
+
+# Frontend
+web/node_modules/
+web/dist/
+web/.vite/
+npm-debug.log*
+yarn-error.log*
+
+# Runtime data
+uvscope.db
+uvscope.db-wal
+uvscope.db-shm
+data/
+*.log
+
+# Dependencies and SDKs
+.deps/
+_sdk/
+libuvcpp-*/
+libuvcpp.zip
+cacert.pem
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Packaging staging
+stage/
+packages/
+*.deb
+*.rpm
+*.zip
+*.tar.gz

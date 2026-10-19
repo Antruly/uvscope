@@ -1,0 +1,61 @@
+diff --git a/src/net/uvcpp_tcp_client.cpp b/src/net/uvcpp_tcp_client.cpp
+index b6f254c..ba59ca8 100644
+--- a/src/net/uvcpp_tcp_client.cpp
++++ b/src/net/uvcpp_tcp_client.cpp
+@@ -3269,6 +3269,10 @@ void uvcpp_tcp_client::apply_tls_hostname() {
+   // 从没承诺过的校验（名字对不上的对端从此连不上），`NONE` 则什么都不会发生 ——
+   // 两种都是"悄悄改掉既有行为"。本档位的定义就是"校验对端 **+ 主机名**"，所以
+   // 钉与不钉**只**看这一个档位。
++  // SNI is not optional: every modern virtual host needs it, and without it the
++  // server either aborts the handshake or serves an unrelated default certificate.
++  tls_ssl_->set_server_name(tls_host_want_.c_str(), tls_host_want_.size());
++
+   uvcpp_ssl_context* ctx = tls_ssl_->context();
+   if (ctx == nullptr || ctx->verify_mode() != tls_verify_mode::PEER_STRICT) return;
+ 
+diff --git a/src/ssl/uvcpp_ssl.cpp b/src/ssl/uvcpp_ssl.cpp
+index be6eaa8..08d3801 100644
+--- a/src/ssl/uvcpp_ssl.cpp
++++ b/src/ssl/uvcpp_ssl.cpp
+@@ -189,6 +189,15 @@ bool uvcpp_ssl::set_alpn_protos(const std::vector<std::string>& protos) {
+   return true;
+ }
+ 
++bool uvcpp_ssl::set_server_name(const char* host, size_t len) {
++  if (!ssl_ || host == nullptr || len == 0) return false;
++  if (SSL_set_tlsext_host_name(ssl_, std::string(host, len).c_str()) != 1) {
++    clear_error();
++    return false;
++  }
++  return true;
++}
++
+ bool uvcpp_ssl::set_verify_hostname(const char* host, size_t len) {
+   if (!ssl_ || host == nullptr || len == 0) return false;
+   X509_VERIFY_PARAM* param = SSL_get0_param(ssl_);
+diff --git a/src/ssl/uvcpp_ssl.h b/src/ssl/uvcpp_ssl.h
+index fa857fe..7e105c8 100644
+--- a/src/ssl/uvcpp_ssl.h
++++ b/src/ssl/uvcpp_ssl.h
+@@ -158,6 +158,9 @@ class UVCPP_API uvcpp_ssl {
+    */
+   bool set_verify_hostname(const char* host, size_t len);
+ 
++  /** @brief Set the TLS SNI server name (must be called before the handshake). */
++  bool set_server_name(const char* host, size_t len);
++
+   /**
+    * @brief 本连接所属的上下文；没有返回 nullptr。
+    *
+diff --git a/src/web/uvcpp_http_client.cpp b/src/web/uvcpp_http_client.cpp
+index d82f701..2305ce0 100644
+--- a/src/web/uvcpp_http_client.cpp
++++ b/src/web/uvcpp_http_client.cpp
+@@ -1099,6 +1099,7 @@ int uvcpp_http_client::do_ssl_handshake(int fd) {
+   // h2 的 TLS 层必须走内存 BIO（`uvcpp_tcp_client` 那条），两者不能混。
+   // 写出来之后，将来往 ctx 上加了客户端 ALPN 也不会意外把这条路径带进 h2。
+   ssl_->set_alpn_protos({"http/1.1"});
++  ssl_->set_server_name(host_.c_str(), host_.size());
+ 
+   // 主机名校验**必须在这里单独接一次**。这条路是 `*_wait` 系列专用的：它自己
+   // `new uvcpp_ssl(ssl_ctx_, fd)`，**根本不经过 `uvcpp_tcp_client::connect()`**，

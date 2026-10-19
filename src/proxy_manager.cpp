@@ -1,0 +1,397 @@
+#include "proxy_manager.h"
+
+#include <algorithm>
+#include <chrono>
+#include <ctime>
+#include <memory>
+#include <sstream>
+
+#include <uv.h>
+#include <ssl/uvcpp_ssl_context.h>
+#include <web/uvcpp_http_client.h>
+#include <web/uvcpp_http_request.h>
+#include <web/uvcpp_http_response.h>
+#include <webapp/uvcpp_web_app.h>
+
+#include "util.h"
+
+namespace uvscope {
+namespace {
+
+bool hop_by_hop(const std::string& name) {
+  static const char* const names[] = {
+      "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+      "te", "trailer", "transfer-encoding", "upgrade", "content-length"};
+  const std::string lowered = lower(name);
+  for (const char* candidate : names) {
+    if (lowered == candidate) return true;
+  }
+  return false;
+}
+
+std::string iso_time() { return now_iso8601(); }
+
+}  // namespace
+
+struct ProxyManager::Runtime {
+  ProxyConfig config;
+  std::unique_ptr<uvcpp::uvcpp_web_app> app;
+  std::atomic<bool> running{false};
+  std::string last_error;
+  std::string started_at;
+  std::atomic<std::uint64_t> requests{0};
+  std::atomic<std::uint64_t> errors{0};
+  std::atomic<std::uint64_t> bytes{0};
+  std::uint64_t next_log_seq = 1;
+  std::deque<nlohmann::json> log_entries;
+  mutable std::mutex log_mutex;
+
+  void add_log(const nlohmann::json& entry) {
+    std::lock_guard<std::mutex> lock(log_mutex);
+    nlohmann::json copy = entry;
+    copy["seq"] = next_log_seq++;
+    copy["time"] = iso_time();
+    log_entries.push_back(copy);
+    while (log_entries.size() > 500) log_entries.pop_front();
+  }
+
+  void forward(uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp) {
+    const auto started = std::chrono::steady_clock::now();
+    requests.fetch_add(1);
+    const ParsedUrl target = parse_url(config.target);
+    if (!target.valid) {
+      errors.fetch_add(1);
+      resp.status(502).json_str("{\"error\":\"invalid proxy target\"}");
+      resp.end();
+      add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
+               {"error", "invalid proxy target"}, {"latencyMs", 0}});
+      return;
+    }
+
+    uvcpp::uvcpp_http_request upstream;
+    upstream.method = req.method();
+    std::string path = req.raw_path();
+    if (path.empty()) path = "/";
+    if (target.path != "/" && !target.path.empty()) {
+      path = join_path(target.path, path);
+    }
+    if (!req.query_string().empty()) path += "?" + req.query_string();
+    upstream.url = path;
+
+    bool has_host = false;
+    for (const auto& header : req.headers()) {
+      if (hop_by_hop(header.name)) continue;
+      if (lower(header.name) == "host") {
+        has_host = true;
+        continue;
+      }
+      upstream.set_header(header.name, header.value);
+    }
+    if (!has_host) {
+      upstream.set_header("host", target.port == 443 ? target.host : target.host + ":" + std::to_string(target.port));
+    }
+    if (req.peer_ip().size() > 0) upstream.set_header("x-forwarded-for", req.peer_ip());
+    upstream.set_header("x-forwarded-host", req.host());
+    upstream.set_header("x-forwarded-proto", config.tls ? "https" : "http");
+    upstream.set_header("x-uvscope-proxy", config.id);
+    upstream.body.clone_data(req.body_data(), req.body_size());
+
+    std::unique_ptr<uvcpp::uvcpp_ssl_context> ssl;
+    const bool tls_upstream = target.scheme == "https";
+    if (tls_upstream) {
+      ssl.reset(new uvcpp::uvcpp_ssl_context(uvcpp::tls_mode::CLIENT,
+                                             uvcpp::tls_version::TLS_1_2));
+      const std::string ca = find_ca_bundle(executable_dir(nullptr));
+      if (!ca.empty()) ssl->load_ca_file(ca);
+      ssl->set_verify_mode(uvcpp::tls_verify_mode::PEER_STRICT);
+    }
+
+    uvcpp::uvcpp_http_client client;
+    if (ssl) client.set_ssl_context(ssl.get());
+    int rc = client.connect_wait(target.host.c_str(), target.port, 15000);
+    uvcpp::uvcpp_http_response response;
+    if (rc == 0) {
+      rc = ssl ? client.send_wait_ssl(upstream, response, 30000)
+               : client.send_wait_plain(upstream, response, 30000);
+    }
+
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - started)
+                             .count();
+    if (rc != 0) {
+      errors.fetch_add(1);
+      const std::string message = rc == 0 ? std::string("upstream failed")
+                                          : uv_error_string(rc);
+      resp.status(502).set_header("content-type", "application/json")
+          .json_str(nlohmann::json({{"error", "upstream request failed"},
+                                    {"detail", message},
+                                    {"proxy", config.name}})
+                        .dump());
+      resp.end();
+      add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
+               {"error", message}, {"latencyMs", elapsed}, {"bytes", 0}});
+      return;
+    }
+
+    resp.status(static_cast<int>(response.status_code));
+    for (const auto& header : response.headers) {
+      if (hop_by_hop(header.name)) continue;
+      if (lower(header.name) == "set-cookie") {
+        resp.add_header(header.name, header.value);
+      } else {
+        resp.set_header(header.name, header.value);
+      }
+    }
+    const std::string body = response.body.to_string();
+    bytes.fetch_add(body.size());
+    if (!body.empty()) {
+      const std::string ct = response.get_header("content-type");
+      if (!ct.empty()) {
+        resp.body(body, ct);
+      } else {
+        resp.body(body);
+      }
+    }
+    resp.set_header("x-uvscope-proxy", config.id);
+    resp.end();
+    add_log({{"method", req.method_name()}, {"path", req.raw_url()},
+             {"status", static_cast<int>(response.status_code)}, {"latencyMs", elapsed},
+             {"bytes", body.size()}});
+  }
+
+  ~Runtime() {
+    if (app) {
+      app->stop();
+      app->join();
+    }
+  }
+};
+
+ProxyManager::ProxyManager(Store& store) : store_(store) { auto_start(); }
+
+ProxyManager::~ProxyManager() { stop_all(); }
+
+void ProxyManager::auto_start() {
+  for (const auto& config : store_.proxies()) {
+    if (!config.auto_start) continue;
+    std::string error;
+    if (!start(config.id, &error)) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (auto& runtime : runtimes_) {
+        if (runtime->config.id == config.id) {
+          runtime->last_error = error;
+          runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
+                            {"error", "auto-start failed: " + error}, {"latencyMs", 0}});
+        }
+      }
+    }
+  }
+}
+
+std::shared_ptr<ProxyManager::Runtime> ProxyManager::find(const std::string& id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto& runtime : runtimes_) {
+    if (runtime->config.id == id) return runtime;
+  }
+  return nullptr;
+}
+
+bool ProxyManager::start(const std::string& id, std::string* error) {
+  const auto config = store_.proxy(id);
+  if (!config) {
+    if (error) *error = "proxy not found";
+    return false;
+  }
+  std::shared_ptr<Runtime> runtime;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& existing : runtimes_) {
+      if (existing->config.id == id) {
+        runtime = existing;
+        break;
+      }
+    }
+    if (!runtime) {
+      runtime = std::make_shared<Runtime>();
+      runtime->config = *config;
+      runtimes_.push_back(runtime);
+    } else if (runtime->running.load()) {
+      if (error) *error = "proxy is already running";
+      return false;
+    } else {
+      runtime->config = *config;
+      runtime->last_error.clear();
+    }
+  }
+
+  if (runtime->app) {
+    runtime->app->stop();
+    runtime->app->join();
+    runtime->app.reset();
+  }
+
+  auto app = std::unique_ptr<uvcpp::uvcpp_web_app>(new uvcpp::uvcpp_web_app());
+  app->set_host(config->listen_host)
+      .set_port(config->listen_port)
+      .set_access_log(false)
+      .set_shutdown_grace_ms(500)
+      .set_http2_enabled(false);
+  if (config->tls) {
+    if (config->cert_path.empty() || config->key_path.empty()) {
+      if (error) *error = "TLS proxy requires a certificate and private key path";
+      return false;
+    }
+    app->enable_ssl(config->cert_path, config->key_path);
+    if (!app->ssl_error().empty()) {
+      if (error) *error = "failed to load TLS certificate: " + app->ssl_error();
+      return false;
+    }
+  }
+  Runtime* raw = runtime.get();
+  const auto handler = [raw](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                             uvcpp::uvcpp_web_next) { raw->forward(req, resp); };
+  app->any("/", handler);
+  app->any("/*path", handler);
+  const int rc = app->start();
+  if (rc != 0) {
+    const std::string detail = "bind/listen failed (" + uv_error_string(rc) + ") on " +
+                               config->listen_host + ":" + std::to_string(config->listen_port);
+    runtime->last_error = detail;
+    if (error) *error = detail;
+    runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
+                      {"error", detail}, {"latencyMs", 0}});
+    return false;
+  }
+
+  runtime->app = std::move(app);
+  runtime->running.store(true);
+  runtime->started_at = now_iso8601();
+  runtime->last_error.clear();
+  runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
+                    {"message", "proxy started on " + config->listen_host + ":" +
+                                    std::to_string(config->listen_port)},
+                    {"latencyMs", 0}});
+  return true;
+}
+
+bool ProxyManager::stop(const std::string& id, std::string* error) {
+  const auto runtime = find(id);
+  if (!runtime) {
+    if (error) *error = "proxy not found";
+    return false;
+  }
+  if (runtime->app) {
+    runtime->app->stop();
+    runtime->app->join();
+    runtime->app.reset();
+  }
+  runtime->running.store(false);
+  runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
+                    {"message", "proxy stopped"}, {"latencyMs", 0}});
+  return true;
+}
+
+void ProxyManager::stop_all() {
+  std::vector<std::shared_ptr<Runtime>> runtimes;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    runtimes = runtimes_;
+  }
+  for (const auto& runtime : runtimes) {
+    if (runtime->app) {
+      runtime->app->stop();
+      runtime->app->join();
+      runtime->app.reset();
+    }
+    runtime->running.store(false);
+  }
+}
+
+bool ProxyManager::reload(const ProxyConfig& config, std::string* error) {
+  if (config.id.empty()) {
+    if (error) *error = "proxy id is required";
+    return false;
+  }
+  if (!store_.save_proxy(config, error)) return false;
+  if (config.listen_port < 1 || config.listen_port > 65535) {
+    if (error) *error = "listen port must be between 1 and 65535";
+    return false;
+  }
+  if (!parse_url(config.target).valid) {
+    if (error) *error = "target must be a valid http(s) URL";
+    return false;
+  }
+  const auto runtime = find(config.id);
+  if (runtime && runtime->running.load()) {
+    if (!stop(config.id, error)) return false;
+    return start(config.id, error);
+  }
+  return true;
+}
+
+nlohmann::json ProxyManager::snapshot() const {
+  nlohmann::json out = nlohmann::json::array();
+  std::vector<std::shared_ptr<Runtime>> runtimes;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    runtimes = runtimes_;
+  }
+  for (const auto& runtime : runtimes) {
+    out.push_back({{"id", runtime->config.id},
+                   {"name", runtime->config.name},
+                   {"listenHost", runtime->config.listen_host},
+                   {"listenPort", runtime->config.listen_port},
+                   {"target", runtime->config.target},
+                   {"autoStart", runtime->config.auto_start},
+                   {"tls", runtime->config.tls},
+                   {"running", runtime->running.load()},
+                   {"startedAt", runtime->started_at},
+                   {"lastError", runtime->last_error},
+                   {"requests", runtime->requests.load()},
+                   {"errors", runtime->errors.load()},
+                   {"bytes", runtime->bytes.load()}});
+  }
+  return out;
+}
+
+nlohmann::json ProxyManager::logs(const std::string& id, std::uint64_t after, int limit) const {
+  const auto runtime = find(id);
+  nlohmann::json out = nlohmann::json::array();
+  if (!runtime) return out;
+  const int safe_limit = std::max(1, std::min(limit, 500));
+  std::lock_guard<std::mutex> lock(runtime->log_mutex);
+  int emitted = 0;
+  for (auto it = runtime->log_entries.rbegin();
+       it != runtime->log_entries.rend() && emitted < safe_limit; ++it) {
+    if (it->value("seq", std::uint64_t(0)) <= after) continue;
+    out.push_back(*it);
+    ++emitted;
+  }
+  std::reverse(out.begin(), out.end());
+  return out;
+}
+
+std::uint64_t ProxyManager::total_requests() const {
+  std::uint64_t total = 0;
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto& runtime : runtimes_) total += runtime->requests.load();
+  return total;
+}
+
+std::uint64_t ProxyManager::total_errors() const {
+  std::uint64_t total = 0;
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto& runtime : runtimes_) total += runtime->errors.load();
+  return total;
+}
+
+std::size_t ProxyManager::active_count() const {
+  std::size_t count = 0;
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto& runtime : runtimes_) {
+    if (runtime->running.load()) ++count;
+  }
+  return count;
+}
+
+}  // namespace uvscope
