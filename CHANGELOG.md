@@ -12,6 +12,11 @@ All notable changes to uvscope are documented here. The format is based on
   the build enables HTTP/2. The timing panel shows both; HTTP/1.1 reports 0 / false.
 - TLS Inspector decodes every certificate in a PEM bundle (up to 32 displayed) and lists the
   chain in input order with per-certificate validity and fingerprints.
+- TLS Inspector can fetch a live `https://` URL and show the peer chain, ALPN, verification
+  result/error and handshake error. Invalid certificates are still displayed with the OpenSSL
+  reason. Requires libuvcpp 1.8.2; older SDKs disable the action at build time.
+- SOCKS5 server sessions now show per-session bytes, UDP datagram counts and duration when the
+  build uses libuvcpp 1.8.2 (`bytesAvailable: true`); older SDKs keep the previous limitation.
 - HTML preview has an opt-in “Run scripts (unsafe)” mode backed by short-lived `/preview/:id`
   documents with `CSP: sandbox allow-scripts`. It renders JS-driven pages and remote CSS/JS on an
   opaque origin without uvscope cookies; the default sandbox still blocks scripts.

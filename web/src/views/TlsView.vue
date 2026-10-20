@@ -17,6 +17,9 @@ const error = ref('')
 const parsing = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const inputEncoding = ref<'text' | 'base64'>('text')
+const liveUrl = ref('https://')
+const liveLoading = ref(false)
+const liveError = ref('')
 
 const validityPercent = computed(() => {
   if (!info.value || !info.value.notBeforeEpoch || !info.value.notAfterEpoch) return 0
@@ -40,6 +43,7 @@ async function parse() {
   }
   parsing.value = true
   error.value = ''
+  liveError.value = ''
   info.value = null
   if (pem.value.includes('-----BEGIN CERTIFICATE-----')) inputEncoding.value = 'text'
   try {
@@ -50,6 +54,37 @@ async function parse() {
     ui.toastError(err, t('tls.msg.parseFailed'))
   } finally {
     parsing.value = false
+  }
+}
+
+async function fetchLive() {
+  const url = liveUrl.value.trim()
+  if (!url || url === 'https://') {
+    ui.notify('warning', t('tls.live.urlRequired'))
+    return
+  }
+  liveLoading.value = true
+  liveError.value = ''
+  try {
+    const response = await post<CertificateInfo>('/api/tls/probe', { url, timeoutMs: 10000 })
+    if (!response.ok) {
+      liveError.value = response.error || t('tls.live.failed')
+      if (!response.certificates?.length) {
+        info.value = null
+      }
+      return
+    }
+    info.value = response
+    ui.notify(
+      'success',
+      response.live?.verified ? t('tls.live.verified') : t('tls.live.unverified'),
+      `${response.host}:${response.port}`,
+    )
+  } catch (err) {
+    liveError.value = errorMessage(err)
+    ui.toastError(err, t('tls.live.failed'))
+  } finally {
+    liveLoading.value = false
   }
 }
 
@@ -112,6 +147,17 @@ function loadExample() {
           <div><span class="eyebrow">{{ t('tls.input.eyebrow') }}</span><h3>{{ t('tls.input.title') }}</h3></div>
           <span class="chip mono">PEM / DER</span>
         </header>
+        <div class="live-probe">
+          <label class="field field--grow">
+            <span>{{ t('tls.live.label') }}</span>
+            <input v-model="liveUrl" class="mono" spellcheck="false" placeholder="https://example.com/" @keydown.enter.prevent="fetchLive" />
+          </label>
+          <button class="button button--primary" :disabled="liveLoading" @click="fetchLive">
+            <span v-if="liveLoading" class="spinner" /><Icon v-else name="download" :size="16" />{{ liveLoading ? t('tls.live.fetching') : t('tls.live.action') }}
+          </button>
+        </div>
+        <div v-if="liveError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ liveError }}</div>
+        <div class="field-divider"><span>{{ t('tls.live.orPaste') }}</span></div>
         <textarea v-model="pem" class="code-input code-input--cert" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----&#10;…&#10;-----END CERTIFICATE-----" />
         <div class="form-actions">
           <button class="link-button" @click="loadExample">{{ t('tls.input.placeholderButton') }}</button>
@@ -130,12 +176,25 @@ function loadExample() {
         <header class="card__head">
           <div><span class="eyebrow">{{ t('tls.result.eyebrow') }}</span><h3>{{ t('tls.result.title') }}</h3></div>
           <div v-if="info" class="card__tools">
+            <span v-if="info.live" class="status-pill" :class="info.live.verified ? 'status-pill--ok' : 'status-pill--bad'">
+              {{ info.live.verified ? t('tls.live.verified') : t('tls.live.unverified') }}
+            </span>
             <span class="status-pill" :class="`status-pill--${info.expired ? 'bad' : info.daysRemaining < 30 ? 'warn' : 'ok'}`">
               {{ info.expired ? t('tls.result.expired') : t('tls.result.daysLeft', { count: info.daysRemaining }) }}
             </span>
             <button class="icon-button icon-button--sm" :title="t('tls.result.copyJson')" @click="copy(JSON.stringify(info, null, 2))"><Icon name="copy" :size="15" /></button>
           </div>
         </header>
+
+        <div v-if="info?.live" class="inline-alert" :class="info.live.verified ? 'inline-alert--info' : 'inline-alert--danger'">
+          <Icon name="shield" :size="16" />
+          <span>
+            {{ info.live.verified ? t('tls.live.verifiedBody') : t('tls.live.unverifiedBody', { error: info.live.verifyError }) }}
+          </span>
+          <span v-if="info.host" class="chip mono">{{ info.host }}:{{ info.port }}</span>
+          <span v-if="info.live.alpn" class="chip mono">ALPN {{ info.live.alpn }}</span>
+          <span class="chip mono">{{ t('tls.live.chainCount', { count: info.live.certificateCount ?? info.certificateCount }) }}</span>
+        </div>
 
         <div v-if="!info" class="tls-empty">
           <div class="cert-art">

@@ -60,6 +60,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 | GET | `/api/socks5/servers/:id/events?after=&limit=` | Server event log |
 | GET | `/api/socks5/servers/:id/sessions` | CONNECT / BIND / UDP ASSOCIATE attempts |
 | POST | `/api/tls/inspect` | `{pem, encoding}` → certificate profile; PEM bundles return `certificates[]` |
+| POST | `/api/tls/probe` | `{url, timeoutMs, insecure}` → live peer chain + verification (libuvcpp 1.8.2+) |
 | POST | `/api/preview` | `{html, baseUrl, mode: safe\|scripts}` → `{id, url}` preview token (8 MiB, 120 s) |
 | DELETE | `/api/preview/:id` | Drop a preview token |
 | GET | `/preview/:id` | Token-based HTML with `CSP: sandbox allow-scripts` (no auth) |
@@ -142,12 +143,31 @@ retained per session. Closed sessions remain visible until the retained list exc
   (libuv) and `proxy.error` (the proxy's own message).
 - HTTP/3 and SOCKS5 cannot be combined; that combination is rejected explicitly.
 
+### Live TLS certificate probe
+
+`POST /api/tls/probe` accepts `{url, timeoutMs, insecure}` and connects to an `https://` URL without
+sending an HTTP request. It returns the captured certificate profile (`certificates[]`, leaf fields
+at the top level) plus `live`:
+
+```json
+{"verified": true, "verifyResult": 0, "verifyError": "ok", "alpn": "", "insecure": false,
+ "handshakeError": "", "certificateCount": 4}
+```
+
+- The chain is returned even when verification fails (self-signed, expired, wrong host), so the
+  UI can inspect the certificate; `verified` is false and `verifyError` carries the OpenSSL text.
+- `insecure: true` disables verification for the handshake itself.
+- Requires libuvcpp 1.8.2 (`peer_cert_chain_der`); older builds return
+  `{ok: false, code: "unsupported"}`.
+- HTTP/3 is not supported by this probe; ALPN is reported when the build enables HTTP/2.
+
 `POST /api/socks5/servers` binds a local SOCKS5 port. Leaving `username` and `password` empty
 enables no-auth; providing both enables RFC 1929 username/password authentication. The password is
 stored as a PBKDF2 hash and is never returned. SOCKS5 servers default to `127.0.0.1` and must be
 moved to a LAN address explicitly. Sessions report the requested command, target, peer, status and
-error; the runtime does not expose per-session byte counters or close events, so those fields are
-omitted (`bytesAvailable` is `false`) rather than reported as zero.
+error. With libuvcpp 1.8.2 the session-end callback adds `bytesClientToTarget`,
+`bytesTargetToClient`, `udpDatagrams`, `udpBytes`, `durationMs`, `endedAt` and `endStatus`; older
+SDKs omit them and report `bytesAvailable: false`.
 
 `POST /api/transport/listeners` binds a local port; `transport` is `tcp` or `udp`. TCP listeners
 produce accepted-session records with `peer`, `state`, byte counters and a per-session event log.

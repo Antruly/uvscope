@@ -28,6 +28,7 @@
 #include "crypto.h"
 #include "http_probe.h"
 #include "net_probe.h"
+#include "tls_probe.h"
 #include "util.h"
 #include "version.h"
 
@@ -1213,6 +1214,32 @@ void Application::register_debug_routes() {
     add_history(*principal, "tls", "Certificate " + info.value("subject", std::string()), info);
     info["ok"] = true;
     send_json(resp, 200, info);
+  });
+
+  app_.post("/api/tls/probe", [this](uvcpp::uvcpp_web_request& req,
+                                     uvcpp::uvcpp_web_response& resp,
+                                     uvcpp::uvcpp_web_next next) {
+    const auto principal = auth_.require_module(req, resp, "tls", "debug");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    TlsProbeInput input;
+    input.url = string_field(*body, "url");
+    input.timeout_ms = int_field(*body, "timeoutMs", 10000);
+    input.insecure = bool_field(*body, "insecure", false);
+    if (input.url.empty()) {
+      send_error(resp, 400, "url is required", "bad_request");
+      return;
+    }
+    post_job(
+        [input] { return JobResult{200, run_tls_probe(input)}; }, &resp, next,
+        [this, principal](JobResult& result) {
+          metrics_.tls_inspections.fetch_add(1);
+          const std::string summary =
+              "Live " + result.body.value("host", std::string()) + ":" +
+              std::to_string(result.body.value("port", 0));
+          add_history(*principal, "tls", summary, result.body);
+        });
   });
 
   // Full-render preview: the SPA posts the captured HTML and receives a

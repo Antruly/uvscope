@@ -200,11 +200,25 @@ export interface CertificateEntry {
 
 export interface CertificateInfo extends CertificateEntry {
   ok: boolean
+  error?: string
+  code?: string
   sha256?: string
+  url?: string
+  host?: string
+  port?: number
   certificates: CertificateEntry[]
   certificateCount: number
   chainTruncated: boolean
   chainNotice: string
+  live?: {
+    verified: boolean
+    verifyResult: number
+    verifyError: string
+    alpn: string
+    insecure: boolean
+    handshakeError?: string
+    certificateCount?: number
+  }
 }
 
 export interface UpdateInfo {

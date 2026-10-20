@@ -72,9 +72,11 @@ const en: Record<string, string> = {
   'socks5.sessions.title': 'Connection attempts',
   'socks5.sessions.empty': 'No connection attempts yet.',
   'socks5.sessions.activeHint':
-    'The SOCKS5 runtime reports session establishment, not byte counters or close events. Established sessions may already be closed.',
+    'Byte and duration statistics arrive when a session closes. The runtime reports them on the session-end callback; active sessions show establishment only.',
   'socks5.session.established': 'established',
   'socks5.session.failed': 'failed',
+  'socks5.session.closed': 'closed',
+  'socks5.session.error': 'error',
 
   'socks5.notify.created': 'SOCKS5 server created',
   'socks5.notify.createFailed': 'Could not create the SOCKS5 server',
@@ -159,9 +161,11 @@ const zh: Record<string, string> = {
   'socks5.sessions.title': '连接尝试',
   'socks5.sessions.empty': '还没有连接尝试。',
   'socks5.sessions.activeHint':
-    'SOCKS5 运行时只报告会话是否建立，不提供字节计数或关闭事件；已建立的会话可能已经关闭。',
+    '字节数与时长在会话结束时到达；运行时通过 session-end 回调上报，活动会话只显示建立状态。',
   'socks5.session.established': '已建立',
   'socks5.session.failed': '失败',
+  'socks5.session.closed': '已关闭',
+  'socks5.session.error': '错误',
 
   'socks5.notify.created': 'SOCKS5 服务端已创建',
   'socks5.notify.createFailed': '无法创建 SOCKS5 服务端',

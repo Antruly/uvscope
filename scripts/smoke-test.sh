@@ -219,6 +219,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -434,8 +435,25 @@ if socks5_server:
         check(False, f"SOCKS5 tunnel failed: {error}")
     status, sessions = call("GET", f"/api/socks5/servers/{socks5_server}/sessions")
     established = [item for item in sessions.get("sessions", [])
-                   if item.get("state") == "established"]
-    check(bool(established), "SOCKS5 server did not record the established session")
+                   if item.get("state") in ("established", "closed")]
+    check(bool(established), "SOCKS5 server did not record the session")
+    if established and established[0].get("bytesAvailable"):
+        session_id = established[0]["id"]
+        closed = None
+        for _ in range(20):
+            status, sessions = call("GET", f"/api/socks5/servers/{socks5_server}/sessions")
+            closed = next((item for item in sessions.get("sessions", [])
+                           if item.get("id") == session_id), None)
+            if closed and closed.get("state") == "closed":
+                break
+            time.sleep(0.1)
+        check(closed is not None and closed.get("state") == "closed",
+              f"SOCKS5 session did not close: {closed}")
+        if closed:
+            check(closed.get("bytesClientToTarget") == len("through-socks5"),
+                  f"SOCKS5 client bytes mismatch: {closed.get('bytesClientToTarget')}")
+            check(closed.get("bytesTargetToClient") == len("echo:through-socks5"),
+                  f"SOCKS5 target bytes mismatch: {closed.get('bytesTargetToClient')}")
     curl = subprocess.run(
         ["curl", "-fsS", "--max-time", "5", "--socks5-hostname",
          f"127.0.0.1:{os.environ['SOCKS5_PORT']}", f"{base}/api/health"],

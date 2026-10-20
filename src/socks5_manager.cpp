@@ -75,6 +75,10 @@ struct Socks5Manager::Impl {
     std::uint64_t next_seq = 1;
     std::deque<StoredEvent> events;
     std::deque<nlohmann::json> sessions;
+#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
+    // peer endpoint -> session id, used to attach the end callback's stats.
+    std::map<std::string, std::string> session_by_peer;
+#endif
 
     std::thread thread;
     std::atomic<bool> stop_requested{false};
@@ -108,7 +112,7 @@ struct Socks5Manager::Impl {
     const auto* runtime = server.runtime.load();
     const std::uint64_t active =
         runtime != nullptr ? static_cast<std::uint64_t>(runtime->connection_count()) : 0;
-    return {{"id", server.config.id},
+    nlohmann::json out = {{"id", server.config.id},
             {"name", server.config.name},
             {"host", server.config.host},
             {"port", server.config.port},
@@ -124,10 +128,15 @@ struct Socks5Manager::Impl {
             {"sessionCount", server.sessions.size()},
             {"totalSessions", server.total_sessions},
             {"rejectedSessions", server.rejected_sessions},
-            {"nextSeq", server.next_seq - 1},
-            // Per-session byte counters are not exposed by the SOCKS5 runtime
-            // yet; omitted rather than reported as zero.
-            {"bytesAvailable", false}};
+            {"nextSeq", server.next_seq - 1}};
+#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
+    // Counters arrive with the session-end callback; active sessions
+    // legitimately have no numbers yet.
+    out["bytesAvailable"] = true;
+#else
+    out["bytesAvailable"] = false;
+#endif
+    return out;
   }
 
   static void set_ready(Server& server, const std::string& state,
@@ -148,12 +157,14 @@ struct Socks5Manager::Impl {
                          const uvcpp::uvcpp_socks5_session_info& info) {
     std::lock_guard<std::mutex> lock(server->mutex);
     const bool established = info.status == 0;
+    const std::string peer = endpoint_text(info.peer);
+    const std::string session_id = make_id();
     nlohmann::json session;
-    session["id"] = make_id();
+    session["id"] = session_id;
     session["serverId"] = server->config.id;
     session["command"] = command_name(info.command);
     session["target"] = endpoint_text(info.target);
-    session["peer"] = endpoint_text(info.peer);
+    session["peer"] = peer;
     session["state"] = established ? "established" : "failed";
     session["status"] = info.status;
     session["error"] = established ? std::string() : uv_error_string(info.status);
@@ -178,7 +189,86 @@ struct Socks5Manager::Impl {
     while (server->sessions.size() > kMaxRetainedSessions) {
       server->sessions.pop_front();
     }
+#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
+    if (!peer.empty()) server->session_by_peer[peer] = session_id;
+#endif
   }
+
+#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
+  static void on_session_end(const std::shared_ptr<Server>& server,
+                             const uvcpp::uvcpp_socks5_session_info& info,
+                             const uvcpp::uvcpp_socks5_session_stats& stats) {
+    std::lock_guard<std::mutex> lock(server->mutex);
+    const std::string peer = endpoint_text(info.peer);
+    std::string id;
+    const auto known = server->session_by_peer.find(peer);
+    if (known != server->session_by_peer.end()) {
+      id = known->second;
+      server->session_by_peer.erase(known);
+    }
+
+    nlohmann::json* session = nullptr;
+    if (!id.empty()) {
+      for (auto& item : server->sessions) {
+        if (item.value("id", std::string()) == id) {
+          session = &item;
+          break;
+        }
+      }
+    }
+    if (session == nullptr) {
+      // Handshakes that failed before a command result never reached
+      // on_session; record the attempt with whatever the callback knows.
+      id = make_id();
+      nlohmann::json created;
+      created["id"] = id;
+      created["serverId"] = server->config.id;
+      created["command"] = command_name(info.command);
+      created["target"] = endpoint_text(info.target);
+      created["peer"] = peer;
+      created["state"] = stats.end_status == 0 ? "closed" : "error";
+      created["status"] = info.status;
+      created["error"] = stats.end_status == 0 ? std::string()
+                                                : uv_error_string(stats.end_status);
+      created["at"] = now_iso8601();
+      server->sessions.push_back(std::move(created));
+      while (server->sessions.size() > kMaxRetainedSessions) {
+        server->sessions.pop_front();
+      }
+      for (auto& item : server->sessions) {
+        if (item.value("id", std::string()) == id) {
+          session = &item;
+          break;
+        }
+      }
+    }
+    if (session == nullptr) return;
+
+    (*session)["state"] = stats.end_status == 0 ? "closed" : "error";
+    (*session)["endedAt"] = now_iso8601();
+    (*session)["durationMs"] = stats.duration_ms;
+    (*session)["bytesClientToTarget"] = stats.bytes_client_to_target;
+    (*session)["bytesTargetToClient"] = stats.bytes_target_to_client;
+    (*session)["udpDatagrams"] = stats.udp_datagrams;
+    (*session)["udpBytes"] = stats.udp_bytes;
+    (*session)["endStatus"] = stats.end_status;
+    (*session)["bytesAvailable"] = true;
+    if (stats.end_status != 0) {
+      (*session)["error"] = uv_error_string(stats.end_status);
+    }
+    add_event(*server, {{"type", "session-end"},
+                        {"sessionId", (*session)["id"]},
+                        {"command", (*session)["command"]},
+                        {"target", (*session)["target"]},
+                        {"peer", (*session)["peer"]},
+                        {"endStatus", stats.end_status},
+                        {"durationMs", stats.duration_ms},
+                        {"bytesClientToTarget", stats.bytes_client_to_target},
+                        {"bytesTargetToClient", stats.bytes_target_to_client},
+                        {"udpDatagrams", stats.udp_datagrams},
+                        {"udpBytes", stats.udp_bytes}});
+  }
+#endif
 
   static void run_server(const std::shared_ptr<Server>& server) {
     auto runtime = std::make_unique<uvcpp::uvcpp_socks5_server>();
@@ -248,6 +338,13 @@ struct Socks5Manager::Impl {
       return;
     }
 
+#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
+    runtime->set_session_end_callback(
+        [server](const uvcpp::uvcpp_socks5_session_info& info,
+                 const uvcpp::uvcpp_socks5_session_stats& stats) {
+          on_session_end(server, info, stats);
+        });
+#endif
     const int listen_rc = runtime->listen(
         [server](const uvcpp::uvcpp_socks5_session_info& info) {
           on_session(server, info);

@@ -3970,6 +3970,35 @@ button.nav-item {
 /* --------------------------------------------------------------------------
    TLS
    -------------------------------------------------------------------------- */
+.live-probe {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 12px 18px 0;
+}
+.live-probe .field {
+  margin: 0;
+}
+.live-probe .button {
+  flex: none;
+}
+.field-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 18px;
+  color: var(--faint);
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.field-divider::before,
+.field-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
 .tls-grid {
   display: grid;
   grid-template-columns: minmax(360px, 0.8fr) minmax(0, 1.2fr);

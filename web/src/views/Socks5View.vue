@@ -46,10 +46,18 @@ interface Socks5Session {
   command: string
   target: string
   peer: string
-  state: 'established' | 'failed'
+  state: 'established' | 'failed' | 'closed' | 'error'
   status: number
   error?: string
   at: string
+  endedAt?: string
+  durationMs?: number
+  bytesClientToTarget?: number
+  bytesTargetToClient?: number
+  udpDatagrams?: number
+  udpBytes?: number
+  endStatus?: number
+  bytesAvailable?: boolean
 }
 
 const i18n = useI18nStore()
@@ -90,6 +98,30 @@ function eventLabel(type: string) {
 
 function sessionStateLabel(state: string) {
   return t(`socks5.session.${state}`)
+}
+
+function formatBytes(bytes = 0) {
+  if (!bytes) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
+function sessionDetail(session: Socks5Session) {
+  const parts = [session.peer, sessionStateLabel(session.state)]
+  if (session.state === 'closed' || session.state === 'error') {
+    if (session.udpDatagrams) {
+      parts.push(`${session.udpDatagrams} datagrams · ${formatBytes(session.udpBytes)}`)
+    } else {
+      parts.push(
+        `↑ ${formatBytes(session.bytesClientToTarget)} / ↓ ${formatBytes(session.bytesTargetToClient)}`,
+      )
+    }
+    if (session.durationMs != null) parts.push(`${session.durationMs} ms`)
+  }
+  if (session.error) parts.push(session.error)
+  parts.push(formatTime(session.at))
+  return parts.join(' · ')
 }
 
 function formatTime(value?: string) {
@@ -443,10 +475,10 @@ onBeforeUnmount(stopPolling)
             </div>
             <div v-if="sessions.length" class="listener-session-list">
               <div v-for="session in sessions" :key="session.id" class="listener-session">
-                <span class="session-card__dot" :class="`session-card__dot--${session.state === 'established' ? 'connected' : 'error'}`" />
+                <span class="session-card__dot" :class="`session-card__dot--${session.state === 'established' ? 'connected' : session.state === 'closed' ? 'closed' : 'error'}`" />
                 <span class="chip mono">{{ session.command }}</span>
                 <span class="mono">{{ session.target || '—' }}</span>
-                <span class="muted">{{ session.peer }} · {{ sessionStateLabel(session.state) }}<template v-if="session.error"> · {{ session.error }}</template> · {{ formatTime(session.at) }}</span>
+                <span class="muted">{{ sessionDetail(session) }}</span>
               </div>
             </div>
             <div v-else class="session-empty"><span>{{ t('socks5.sessions.empty') }}</span></div>
