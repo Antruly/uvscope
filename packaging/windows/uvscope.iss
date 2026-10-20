@@ -22,12 +22,13 @@ DefaultGroupName={#MyAppName}
 LicenseFile=..\..\LICENSE
 OutputDir=..\..\packages
 OutputBaseFilename=uvscope-{#MyAppVersion}-setup
+SetupIconFile=..\..\packaging\icons\uvscope.ico
+UninstallDisplayIcon={app}\bin\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayIcon={app}\bin\{#MyAppExeName}
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
 DisableProgramGroupPage=yes
@@ -48,9 +49,9 @@ Source: "..\..\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "cacert.pem"; DestDir: "{app}\bin"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
-Name: "{group}\uvscope"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "--open"
-Name: "{group}\Uninstall uvscope"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\uvscope"; Filename: "{app}\bin\{#MyAppExeName}"; Parameters: "--open"; Tasks: desktopicon
+Name: "{group}\uvscope"; Filename: "{app}\bin\{#MyAppExeName}"; IconFilename: "{app}\bin\{#MyAppExeName}"; Parameters: "--open"
+Name: "{group}\Uninstall uvscope"; Filename: "{uninstallexe}"; IconFilename: "{app}\bin\{#MyAppExeName}"
+Name: "{autodesktop}\uvscope"; Filename: "{app}\bin\{#MyAppExeName}"; IconFilename: "{app}\bin\{#MyAppExeName}"; Parameters: "--open"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; Tasks: addtopath; Check: NeedsAddPath('{app}\bin')

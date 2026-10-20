@@ -35,6 +35,9 @@ All notable changes to uvscope are documented here. The format is based on
   [#42](https://github.com/Antruly/libuvcpp/pull/42)).
 - Smoke coverage for TCP, HTTP and UDP through a local SOCKS5 server plus error classification and
   no-direct-fallback assertions.
+- Application icon derived from the web favicon: embedded in `uvscope.exe`, used by the Windows
+  installer and shortcuts, and installed into the Linux hicolor theme with `Icon=uvscope` in the
+  desktop entry. macOS ships `uvscope.icns` in the install tree.
 
 ### Changed
 

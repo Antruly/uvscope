@@ -90,6 +90,9 @@ The CPack install rules include:
 
 - `/usr/bin/uvscope`
 - `/usr/share/uvscope/web`
+- `/usr/share/applications/uvscope.desktop` (`Icon=uvscope`)
+- `/usr/share/icons/hicolor/{16..512}x{...}/apps/uvscope.png` and
+  `/usr/share/icons/hicolor/scalable/apps/uvscope.svg`
 - `/usr/lib/<arch>/uvscope/libuvcpp.so` (and `libllhttp.so*` when present)
 
 Runtime dependencies: `libc6`, `libstdc++6`, `libssl3`, `libuv1`, `zlib1g`, `libsqlite3-0`.
@@ -124,6 +127,10 @@ stage/web/index.html
 The CI workflow copies the MinGW runtime DLLs from the MSYS2 prefix. The Inno Setup script is
 [`packaging/windows/uvscope.iss`](../packaging/windows/uvscope.iss).
 
+`packaging/windows/uvscope.rc.in` embeds `packaging/icons/uvscope.ico` into `uvscope.exe`, and the
+installer uses the same file for `SetupIconFile` and its shortcuts. The `.ico`, `.icns`, PNG sizes
+and SVG all derive from the web favicon (`web/public/favicon.svg`).
+
 Build the installer:
 
 ```bat
@@ -140,7 +147,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-macOS builds are source-oriented in 0.3.0. A signed/notarized `.app` is later work.
+macOS builds are source-oriented in 0.3.0. The install tree carries `share/uvscope/uvscope.icns`,
+but a Finder-visible icon needs a signed/notarized `.app`, which is later work.
 
 ## CI
 

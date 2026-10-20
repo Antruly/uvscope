@@ -128,6 +128,19 @@ set(UVSCOPE_SOURCES
   src/util.cpp)
 
 add_executable(uvscope ${UVSCOPE_SOURCES})
+
+if(WIN32)
+  # Embed the same mark used by the browser favicon into uvscope.exe so the
+  # installer, shortcuts and the executable share one icon.
+  enable_language(RC)
+  set(UVSCOPE_ICON_ICO "${CMAKE_CURRENT_SOURCE_DIR}/packaging/icons/uvscope.ico")
+  configure_file(
+    packaging/windows/uvscope.rc.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/uvscope.rc"
+    @ONLY)
+  target_sources(uvscope PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/uvscope.rc")
+endif()
 target_include_directories(uvscope PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/src"
   "${CMAKE_CURRENT_BINARY_DIR}/generated"
@@ -239,6 +252,24 @@ install(FILES
 if(UNIX AND NOT APPLE)
   install(FILES packaging/linux/uvscope.desktop
     DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+endif()
+
+# Desktop icons. Linux desktops find them through the hicolor theme
+# (`Icon=uvscope` in the desktop entry); macOS keeps the .icns in the share
+# tree for future .app bundling.
+if(UNIX)
+  install(FILES packaging/icons/uvscope.svg
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+    RENAME uvscope.svg OPTIONAL)
+  foreach(_size 16 24 32 48 64 128 256 512)
+    install(FILES "packaging/icons/uvscope-${_size}.png"
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}x${_size}/apps"
+      RENAME uvscope.png OPTIONAL)
+  endforeach()
+endif()
+if(APPLE)
+  install(FILES packaging/icons/uvscope.icns
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/uvscope" OPTIONAL)
 endif()
 
 # ---------------------------------------------------------------------------
