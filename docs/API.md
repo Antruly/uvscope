@@ -230,7 +230,7 @@ wins. A rule is:
 
 ## Virtual terminals
 
-The `terminal` module is disabled by default; enable it in Settings. Routes require the `terminal`
+The `terminal` module (Unix PTY or Windows ConPTY) is disabled by default; enable it in Settings. Routes require the `terminal`
 permission (admin and operator) and an enabled module. Sessions are owned by the creating user and
 survive browser disconnects for the lifetime of the daemon.
 

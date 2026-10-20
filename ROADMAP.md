@@ -78,5 +78,5 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Live TLS peer-chain probe and managed certificate vault (generate/import/delete)
 - [x] Unix virtual terminal with WebSocket, xterm.js, persistent sessions and admin control
 - [x] Seeded SQLite command library with quick bar, search, custom snippets and quick pins
-- [ ] Windows ConPTY terminal backend
+- [x] Windows ConPTY terminal backend
 - [ ] Local CA hierarchy and certificate renewal

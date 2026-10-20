@@ -31,6 +31,15 @@
 
 #include "util.h"
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <signal.h>
@@ -52,9 +61,61 @@ constexpr std::size_t kMaxScrollback = 256 * 1024;
 constexpr std::size_t kMaxInput = 64 * 1024;
 constexpr int kSweepIntervalMs = 200;
 
+#if defined(_WIN32)
+// ConPTY is available on Windows 10 1809+, but MinGW headers do not always
+// declare it. Resolve the three entry points dynamically.
+constexpr DWORD kProcThreadAttributePseudoConsole = 0x00020016;
+
+struct ConPtyApi {
+  HRESULT(WINAPI* create)(COORD, HANDLE, HANDLE, DWORD, void**);
+  HRESULT(WINAPI* resize)(void*, COORD);
+  void(WINAPI* close)(void*);
+  bool ok = false;
+};
+
+ConPtyApi& conpty_api() {
+  static ConPtyApi api = [] {
+    ConPtyApi result{};
+    const HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    if (kernel == nullptr) return result;
+    result.create = reinterpret_cast<decltype(result.create)>(
+        GetProcAddress(kernel, "CreatePseudoConsole"));
+    result.resize = reinterpret_cast<decltype(result.resize)>(
+        GetProcAddress(kernel, "ResizePseudoConsole"));
+    result.close = reinterpret_cast<decltype(result.close)>(
+        GetProcAddress(kernel, "ClosePseudoConsole"));
+    result.ok = result.create != nullptr && result.resize != nullptr &&
+                result.close != nullptr;
+    return result;
+  }();
+  return api;
+}
+
+std::wstring widen(const std::string& value) {
+  if (value.empty()) return {};
+  const int needed = MultiByteToWideChar(CP_UTF8, 0, value.data(),
+                                         static_cast<int>(value.size()), nullptr, 0);
+  if (needed <= 0) return {};
+  std::wstring out(static_cast<std::size_t>(needed), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+                      out.data(), needed);
+  return out;
+}
+#endif
+
 std::string default_shell() {
 #if defined(_WIN32)
-  return std::string();
+  // The command library is PowerShell-oriented; cmd.exe users can enter an
+  // absolute shell path in the new-terminal dialog. Resolve the standard
+  // PowerShell path first because MSYS2 PATHs do not always include it.
+  const std::string root = env_string("SystemRoot", "C:\\Windows");
+  const std::string powershell =
+      root + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const DWORD attrs = GetFileAttributesW(widen(powershell).c_str());
+  if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+    return powershell;
+  }
+  return "powershell.exe";
 #else
   const std::string env = env_string("SHELL");
   if (!env.empty() && env.front() == '/' && access(env.c_str(), X_OK) == 0) return env;
@@ -68,8 +129,13 @@ std::string default_shell() {
 
 bool valid_shell(const std::string& shell) {
 #if defined(_WIN32)
-  (void)shell;
-  return false;
+  if (shell.empty()) return false;
+  const bool has_separator = shell.find('\\') != std::string::npos ||
+                             shell.find('/') != std::string::npos ||
+                             shell.find(':') != std::string::npos;
+  if (!has_separator) return true;  // resolved through PATH by CreateProcess.
+  const DWORD attrs = GetFileAttributesW(widen(shell).c_str());
+  return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
 #else
   if (shell.empty() || shell.front() != '/') return false;
   return access(shell.c_str(), X_OK) == 0;
@@ -78,8 +144,9 @@ bool valid_shell(const std::string& shell) {
 
 bool valid_cwd(const std::string& cwd) {
 #if defined(_WIN32)
-  (void)cwd;
-  return false;
+  if (cwd.empty()) return false;
+  const DWORD attrs = GetFileAttributesW(widen(cwd).c_str());
+  return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
 #else
   if (cwd.empty() || cwd.front() != '/') return false;
   struct stat st;
@@ -89,7 +156,9 @@ bool valid_cwd(const std::string& cwd) {
 
 std::string default_cwd() {
 #if defined(_WIN32)
-  return std::string();
+  const std::string profile = env_string("USERPROFILE");
+  if (valid_cwd(profile)) return profile;
+  return "C:\\";
 #else
   const std::string home = env_string("HOME");
   if (valid_cwd(home)) return home;
@@ -132,6 +201,14 @@ struct TerminalManager::Impl {
     uv_poll_t* poll = nullptr;
     bool polling = false;
     std::string pending_input;
+    std::mutex* state_mutex = nullptr;
+#if defined(_WIN32)
+    void* hpc = nullptr;
+    void* process = nullptr;
+    uv_pipe_t* out_pipe = nullptr;
+    uv_pipe_t* in_pipe = nullptr;
+    bool write_in_flight = false;
+#endif
   };
 
   static nlohmann::json snapshot_locked(const Session& session);
@@ -187,6 +264,8 @@ struct TerminalManager::Impl {
 
   static void append_output(Session& session, const char* data, std::size_t len) {
     if (len == 0) return;
+    std::unique_lock<std::mutex> lock;
+    if (session.state_mutex != nullptr) lock = std::unique_lock<std::mutex>(*session.state_mutex);
     session.chunks.push_back({session.next_seq++, std::string(data, len)});
     session.buffered_bytes += len;
     while (session.buffered_bytes > kMaxScrollback) {
@@ -214,6 +293,252 @@ struct TerminalManager::Impl {
     uv_close(reinterpret_cast<uv_handle_t*>(handle),
              [](uv_handle_t* raw) { delete reinterpret_cast<uv_poll_t*>(raw); });
   }
+
+
+#if defined(_WIN32)
+  struct WriteContext {
+    Session* session = nullptr;
+    std::string data;
+    uv_write_t request{};
+  };
+
+  static void close_pipe(uv_pipe_t*& pipe) {
+    if (pipe == nullptr) return;
+    uv_pipe_t* handle = pipe;
+    pipe = nullptr;
+    handle->data = nullptr;
+    uv_read_stop(reinterpret_cast<uv_stream_t*>(handle));
+    uv_close(reinterpret_cast<uv_handle_t*>(handle),
+             [](uv_handle_t* raw) { delete reinterpret_cast<uv_pipe_t*>(raw); });
+  }
+
+  static void conpty_alloc(uv_handle_t*, size_t suggested, uv_buf_t* buf) {
+    const size_t size = suggested > 0 ? suggested : 16384;
+    buf->base = new char[size];
+    buf->len = size;
+  }
+
+  static void conpty_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
+    auto* session = static_cast<Session*>(stream->data);
+    if (buf != nullptr && buf->base != nullptr) {
+      if (nread > 0 && session != nullptr) {
+        append_output(*session, buf->base, static_cast<std::size_t>(nread));
+      }
+      delete[] buf->base;
+    }
+    if (nread < 0 && session != nullptr) {
+      close_pipe(session->out_pipe);
+      if (session->process != nullptr) {
+        DWORD code = 0;
+        if (WaitForSingleObject(session->process, 0) != WAIT_OBJECT_0 &&
+            session->state == "running") {
+          std::lock_guard<std::mutex> lock(*session->state_mutex);
+          session->state = "error";
+          session->error = "console output closed";
+          session->exited_at = now_iso8601();
+        }
+      }
+    }
+  }
+
+  static void on_input_written(uv_write_t* request, int status) {
+    auto* context = static_cast<WriteContext*>(request->data);
+    Session* session = context != nullptr ? context->session : nullptr;
+    delete context;
+    if (session == nullptr) return;
+    session->write_in_flight = false;
+    if (status == 0) pump_input(*session);
+  }
+
+  static void pump_input(Session& session) {
+    if (session.write_in_flight || session.pending_input.empty() ||
+        session.in_pipe == nullptr) {
+      return;
+    }
+    auto* context = new WriteContext();
+    context->session = &session;
+    context->data.swap(session.pending_input);
+    context->request.data = context;
+    session.write_in_flight = true;
+    uv_buf_t buffer = uv_buf_init(context->data.data(),
+                                  static_cast<unsigned int>(context->data.size()));
+    const int rc = uv_write(&context->request,
+                            reinterpret_cast<uv_stream_t*>(session.in_pipe), &buffer, 1,
+                            on_input_written);
+    if (rc != 0) {
+      session.write_in_flight = false;
+      delete context;
+    }
+  }
+
+  static void close_windows_session(Session& session) {
+    if (session.process != nullptr) {
+      TerminateProcess(session.process, 1);
+      CloseHandle(session.process);
+      session.process = nullptr;
+    }
+    close_pipe(session.in_pipe);
+    close_pipe(session.out_pipe);
+    if (session.hpc != nullptr) {
+      if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
+      session.hpc = nullptr;
+    }
+  }
+
+  static void spawn_conpty(const std::shared_ptr<Session>& session,
+                           const std::shared_ptr<CreateState>& state) {
+    auto fail = [&state](const std::string& message) {
+      {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->error = message;
+        state->done = true;
+      }
+      state->cv.notify_all();
+    };
+    if (!conpty_api().ok || current_loop == nullptr) {
+      fail("ConPTY is not available on this Windows version");
+      return;
+    }
+
+    HANDLE input_read = nullptr;
+    HANDLE input_write = nullptr;
+    HANDLE output_read = nullptr;
+    HANDLE output_write = nullptr;
+    if (!CreatePipe(&input_read, &input_write, nullptr, 0) ||
+        !CreatePipe(&output_read, &output_write, nullptr, 0)) {
+      if (input_read) CloseHandle(input_read);
+      if (input_write) CloseHandle(input_write);
+      if (output_read) CloseHandle(output_read);
+      if (output_write) CloseHandle(output_write);
+      fail("CreatePipe failed: " + std::to_string(GetLastError()));
+      return;
+    }
+
+    void* hpc = nullptr;
+    COORD size;
+    size.X = static_cast<SHORT>(session->cols);
+    size.Y = static_cast<SHORT>(session->rows);
+    const HRESULT created =
+        conpty_api().create(size, input_read, output_write, 0, &hpc);
+    CloseHandle(input_read);
+    CloseHandle(output_write);
+    if (FAILED(created) || hpc == nullptr) {
+      CloseHandle(input_write);
+      CloseHandle(output_read);
+      fail("CreatePseudoConsole failed: " + std::to_string(created));
+      return;
+    }
+
+    SIZE_T attr_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
+    auto* attr = static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(
+        HeapAlloc(GetProcessHeap(), 0, attr_size));
+    const bool attr_initialized =
+        attr != nullptr &&
+        InitializeProcThreadAttributeList(attr, 1, 0, &attr_size) != 0;
+    const bool attr_ok =
+        attr_initialized &&
+        UpdateProcThreadAttribute(attr, 0, kProcThreadAttributePseudoConsole, hpc,
+                                  sizeof(hpc), nullptr, nullptr) != 0;
+    if (!attr_ok) {
+      if (attr_initialized) DeleteProcThreadAttributeList(attr);
+      if (attr) HeapFree(GetProcessHeap(), 0, attr);
+      CloseHandle(input_write);
+      CloseHandle(output_read);
+      conpty_api().close(hpc);
+      fail("cannot attach the ConPTY attribute list");
+      return;
+    }
+
+    STARTUPINFOEXW startup;
+    std::memset(&startup, 0, sizeof(startup));
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.lpAttributeList = attr;
+    PROCESS_INFORMATION process_info;
+    std::memset(&process_info, 0, sizeof(process_info));
+    const std::wstring shell = widen(session->shell);
+    const std::wstring cwd = widen(session->cwd);
+    const bool has_path = session->shell.find('\\') != std::string::npos ||
+                          session->shell.find('/') != std::string::npos ||
+                          session->shell.find(':') != std::string::npos;
+    std::wstring command_line = L"\"" + shell + L"\"";
+    std::vector<wchar_t> command(command_line.begin(), command_line.end());
+    command.push_back(L'\0');
+    const BOOL launched = CreateProcessW(
+        has_path ? shell.c_str() : nullptr, command.data(), nullptr, nullptr, FALSE,
+        EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, nullptr,
+        cwd.empty() ? nullptr : cwd.c_str(), &startup.StartupInfo, &process_info);
+    DeleteProcThreadAttributeList(attr);
+    HeapFree(GetProcessHeap(), 0, attr);
+    if (!launched) {
+      CloseHandle(input_write);
+      CloseHandle(output_read);
+      conpty_api().close(hpc);
+      fail("CreateProcess failed: " + std::to_string(GetLastError()));
+      return;
+    }
+    CloseHandle(process_info.hThread);
+
+    const int out_fd = _open_osfhandle(
+        reinterpret_cast<intptr_t>(output_read), _O_RDONLY | _O_BINARY);
+    const int in_fd = _open_osfhandle(
+        reinterpret_cast<intptr_t>(input_write), _O_WRONLY | _O_BINARY);
+    if (out_fd < 0 || in_fd < 0) {
+      if (out_fd >= 0) _close(out_fd);
+      else CloseHandle(output_read);
+      if (in_fd >= 0) _close(in_fd);
+      else CloseHandle(input_write);
+      TerminateProcess(process_info.hProcess, 1);
+      CloseHandle(process_info.hProcess);
+      conpty_api().close(hpc);
+      fail("cannot adapt the ConPTY pipes");
+      return;
+    }
+
+    auto* out_pipe = new uv_pipe_t();
+    out_pipe->data = session.get();
+    if (uv_pipe_init(reinterpret_cast<uv_loop_t*>(current_loop->get_handle()),
+                     out_pipe, 0) != 0 ||
+        uv_pipe_open(out_pipe, out_fd) != 0) {
+      delete out_pipe;
+      _close(out_fd);
+      _close(in_fd);
+      TerminateProcess(process_info.hProcess, 1);
+      CloseHandle(process_info.hProcess);
+      conpty_api().close(hpc);
+      fail("cannot open the ConPTY output pipe");
+      return;
+    }
+    auto* in_pipe = new uv_pipe_t();
+    in_pipe->data = session.get();
+    if (uv_pipe_init(reinterpret_cast<uv_loop_t*>(current_loop->get_handle()),
+                     in_pipe, 0) != 0 ||
+        uv_pipe_open(in_pipe, in_fd) != 0) {
+      delete in_pipe;
+      _close(in_fd);
+      close_pipe(out_pipe);
+      TerminateProcess(process_info.hProcess, 1);
+      CloseHandle(process_info.hProcess);
+      conpty_api().close(hpc);
+      fail("cannot open the ConPTY input pipe");
+      return;
+    }
+    uv_read_start(reinterpret_cast<uv_stream_t*>(out_pipe), conpty_alloc, conpty_read);
+
+    session->hpc = hpc;
+    session->process = process_info.hProcess;
+    session->out_pipe = out_pipe;
+    session->in_pipe = in_pipe;
+    session->state = "running";
+    session->created_at = now_iso8601();
+    session->last_activity = session->created_at;
+    {
+      std::lock_guard<std::mutex> lock(state->mutex);
+      state->done = true;
+    }
+    state->cv.notify_all();
+  }
+#endif
 
   static void read_output(Session& session) {
 #if defined(_WIN32)
@@ -287,7 +612,24 @@ struct TerminalManager::Impl {
   static thread_local uvcpp::uvcpp_loop* current_loop;
 
   static void reap(Session& session) {
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    if (session.process == nullptr) return;
+    if (WaitForSingleObject(session.process, 0) != WAIT_OBJECT_0) return;
+    DWORD code = 0;
+    GetExitCodeProcess(session.process, &code);
+    if (session.state != "exited") {
+      session.state = "exited";
+      session.exited_at = now_iso8601();
+      session.exit_code = static_cast<int>(code);
+    }
+    CloseHandle(session.process);
+    session.process = nullptr;
+    close_pipe(session.in_pipe);
+    if (session.hpc != nullptr) {
+      if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
+      session.hpc = nullptr;
+    }
+#else
     if (session.pid <= 0) return;
     int status = 0;
     const pid_t pid = waitpid(session.pid, &status, WNOHANG);
@@ -330,12 +672,8 @@ struct TerminalManager::Impl {
   static void fork_session(const std::shared_ptr<Session>& session,
                            const std::shared_ptr<CreateState>& state) {
 #if defined(_WIN32)
-    {
-      std::lock_guard<std::mutex> lock(state->mutex);
-      state->error = "terminal PTY is not available on Windows yet";
-      state->done = true;
-    }
-    state->cv.notify_all();
+    spawn_conpty(session, state);
+    return;
 #else
     struct winsize ws;
     std::memset(&ws, 0, sizeof(ws));
@@ -490,7 +828,9 @@ struct TerminalManager::Impl {
         Session& session = *item.second;
         close_poll(session);
         close_fd(session.fd);
-#if !defined(_WIN32)
+#if defined(_WIN32)
+        close_windows_session(session);
+#else
         if (session.pid > 0) {
           kill(session.pid, SIGHUP);
           int status = 0;
@@ -520,14 +860,15 @@ thread_local uvcpp::uvcpp_loop* TerminalManager::Impl::current_loop = nullptr;
 
 TerminalManager::TerminalManager() : impl_(new Impl()) {
 #if defined(_WIN32)
-  impl_->start_error = "terminal PTY is not available on Windows yet";
-  return;
-#else
+  if (!conpty_api().ok) {
+    impl_->start_error = "ConPTY is not available on this Windows version";
+    return;
+  }
+#endif
   impl_->thread = std::thread([this] { impl_->run_loop(); });
   std::unique_lock<std::mutex> lock(impl_->ready_mutex);
   impl_->ready_cv.wait(lock, [this] { return impl_->ready; });
   if (!impl_->start_error.empty()) impl_->available = false;
-#endif
 }
 
 TerminalManager::~TerminalManager() {
@@ -542,7 +883,9 @@ TerminalManager::~TerminalManager() {
           Impl::Session& session = *item.second;
           Impl::close_poll(session);
           Impl::close_fd(session.fd);
-#if !defined(_WIN32)
+#if defined(_WIN32)
+          Impl::close_windows_session(session);
+#else
           if (session.pid > 0) {
             kill(session.pid, SIGHUP);
             int status = 0;
@@ -574,7 +917,7 @@ nlohmann::json TerminalManager::create(std::int64_t owner_id,
   TerminalConfig options = config;
   if (options.shell.empty()) options.shell = default_shell();
   if (!valid_shell(options.shell)) {
-    if (error) *error = "shell must be an absolute executable path";
+    if (error) *error = "shell must be an executable path or command name";
     return nullptr;
   }
   if (options.cwd.empty()) options.cwd = default_cwd();
@@ -596,6 +939,7 @@ nlohmann::json TerminalManager::create(std::int64_t owner_id,
   session->cwd = options.cwd;
   session->cols = options.cols;
   session->rows = options.rows;
+  session->state_mutex = &impl_->state_mutex;
   session->created_at = now_iso8601();
 
   {
@@ -722,7 +1066,16 @@ bool TerminalManager::close(const std::string& id, std::string* error) {
         }
         Impl::close_poll(*session);
         Impl::close_fd(session->fd);
-#if !defined(_WIN32)
+#if defined(_WIN32)
+        if (session->process != nullptr) {
+          TerminateProcess(session->process, 1);
+        }
+        Impl::close_pipe(session->in_pipe);
+        if (session->hpc != nullptr) {
+          if (conpty_api().close != nullptr) conpty_api().close(session->hpc);
+          session->hpc = nullptr;
+        }
+#else
         if (session->pid > 0) {
           kill(session->pid, SIGHUP);
         }
@@ -756,10 +1109,18 @@ bool TerminalManager::input(const std::string& id, const std::string& bytes,
   }
   return impl_->post([this, session, bytes] {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
+#if defined(_WIN32)
+    if (session->state != "running" || session->in_pipe == nullptr) return;
+#else
     if (session->state != "running" || session->poll == nullptr) return;
+#endif
     if (session->pending_input.size() + bytes.size() > kMaxInput) return;
     session->pending_input += bytes;
+#if defined(_WIN32)
+    Impl::pump_input(*session);
+#else
     uv_poll_start(session->poll, UV_READABLE | UV_WRITABLE, Impl::on_poll);
+#endif
   });
 }
 
@@ -788,6 +1149,13 @@ bool TerminalManager::resize(const std::string& id, int cols, int rows,
       ws.ws_row = static_cast<unsigned short>(safe_rows);
       ioctl(session->fd, TIOCSWINSZ, &ws);
     }
+#else
+    if (session->hpc != nullptr && conpty_api().resize != nullptr) {
+      COORD size;
+      size.X = static_cast<SHORT>(safe_cols);
+      size.Y = static_cast<SHORT>(safe_rows);
+      conpty_api().resize(session->hpc, size);
+    }
 #endif
   });
 }
@@ -807,6 +1175,16 @@ bool TerminalManager::redraw(const std::string& id, std::string* error) {
 #if !defined(_WIN32)
     if (session->pid > 0 && session->state == "running") {
       kill(session->pid, SIGWINCH);
+    }
+#else
+    if (session->hpc != nullptr && conpty_api().resize != nullptr &&
+        session->state == "running") {
+      COORD size;
+      size.X = static_cast<SHORT>(session->cols);
+      size.Y = static_cast<SHORT>(session->rows + 1);
+      conpty_api().resize(session->hpc, size);
+      size.Y = static_cast<SHORT>(session->rows);
+      conpty_api().resize(session->hpc, size);
     }
 #endif
   });
@@ -848,7 +1226,17 @@ void TerminalManager::close_all() {
     for (const auto& session : all) {
       Impl::close_poll(*session);
       Impl::close_fd(session->fd);
-#if !defined(_WIN32)
+#if defined(_WIN32)
+      if (session->process != nullptr) {
+        TerminateProcess(session->process, 1);
+        session->state = "closing";
+      }
+      Impl::close_pipe(session->in_pipe);
+      if (session->hpc != nullptr) {
+        if (conpty_api().close != nullptr) conpty_api().close(session->hpc);
+        session->hpc = nullptr;
+      }
+#else
       if (session->pid > 0) {
         kill(session->pid, SIGHUP);
         session->state = "closing";

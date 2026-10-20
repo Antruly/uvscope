@@ -164,8 +164,12 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
 - Output is appended to a 256 KiB per-session ring of sequenced chunks; sessions persist while
   the daemon runs, so browser refresh/reconnect only changes subscribers.
 - A 200 ms sweep reaps children, records exit codes and prunes exited sessions.
+- Windows uses `CreatePseudoConsole` + `CreateProcessW` with a pseudoconsole attribute list,
+  loaded dynamically because MinGW headers do not always declare ConPTY. Console output/input
+  pipes are wrapped as libuv pipes; the default shell is `powershell.exe`, and resize goes through
+  `ResizePseudoConsole`.
 - The module is off by default; enabling it grants shell access on the daemon host to admin and
-  operator roles. Windows ConPTY is a follow-up slice.
+  operator roles.
 
 ## SOCKS5 outbound proxy
 
