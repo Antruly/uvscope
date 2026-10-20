@@ -4214,6 +4214,58 @@ button.nav-item {
 .cert-columns .cert-section {
   margin-bottom: 13px;
 }
+.chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 260px;
+  overflow: auto;
+}
+.chain-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-soft);
+}
+.chain-item--leaf {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel-soft));
+}
+.chain-item--expired {
+  border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+}
+.chain-item__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.chain-item__body strong {
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chain-item__body small {
+  color: var(--faint);
+  font-size: 8.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chain-item__days {
+  color: var(--muted);
+  font-size: 9px;
+}
+.chain-hint {
+  margin-top: 7px;
+  font-size: 8.5px;
+  line-height: 1.5;
+}
 .cert-note {
   margin: 0 19px;
   padding-top: 11px;

@@ -10,6 +10,8 @@ All notable changes to uvscope are documented here. The format is based on
 
 - HTTP probe results now expose the negotiated stream ID and `retryable`, plus GOAWAY state when
   the build enables HTTP/2. The timing panel shows both; HTTP/1.1 reports 0 / false.
+- TLS Inspector decodes every certificate in a PEM bundle (up to 32 displayed) and lists the
+  chain in input order with per-certificate validity and fingerprints.
 
 ## [0.3.0] - 2026-10-20
 

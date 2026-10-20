@@ -59,7 +59,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 | DELETE | `/api/socks5/servers/:id` | Stop and delete a SOCKS5 server |
 | GET | `/api/socks5/servers/:id/events?after=&limit=` | Server event log |
 | GET | `/api/socks5/servers/:id/sessions` | CONNECT / BIND / UDP ASSOCIATE attempts |
-| POST | `/api/tls/inspect` | `{pem}` → certificate profile |
+| POST | `/api/tls/inspect` | `{pem, encoding}` → certificate profile; PEM bundles return `certificates[]` |
 | POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, autoStart, tls, certPath, keyPath, start}` |
 | POST | `/api/proxies/:id/start` | Start a proxy |
 | POST | `/api/proxies/:id/stop` | Stop a proxy |

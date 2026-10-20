@@ -40,7 +40,7 @@ const en: Record<string, string> = {
     'Fetch a WSDL through the daemon, pick an operation, edit the generated SOAP 1.1 envelope, then invoke it like any HTTP request.',
   'help.modules.tls.title': 'TLS Inspector',
   'help.modules.tls.text':
-    'Decodes the first PEM or DER certificate in the input. Use the fingerprint, SAN and validity data to verify what a service presents.',
+    'Decodes a PEM bundle certificate by certificate, or one DER certificate. Use the chain list, fingerprints, SAN and validity data to verify what a service presents; chain trust is not checked.',
   'help.modules.proxy.title': 'Reverse proxy',
   'help.modules.proxy.text':
     'Each listener owns a host:port and forwards HTTP/1.1 requests to one upstream. Logs stream into the gateway panel every few seconds.',
@@ -136,7 +136,7 @@ const zh: Record<string, string> = {
     '通过守护进程获取 WSDL，选择操作，编辑生成的 SOAP 1.1 信封，然后像普通 HTTP 请求一样调用。',
   'help.modules.tls.title': 'TLS 检查器',
   'help.modules.tls.text':
-    '解码输入中的第一个 PEM 或 DER 证书。用指纹、SAN 与有效期数据核验服务实际提供的证书。',
+    '逐张解析 PEM 证书包，或解析单张 DER 证书。用证书链列表、指纹、SAN 与有效期数据核验服务实际提供的证书；不校验链信任。',
   'help.modules.proxy.title': '反向代理',
   'help.modules.proxy.text':
     '每个监听器占用一个 host:port，并将 HTTP/1.1 请求转发到一个上游。日志每隔几秒流入网关面板。',

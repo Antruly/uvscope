@@ -1,10 +1,12 @@
 #include "certificate.h"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <memory>
+#include <vector>
 
 #if defined(_WIN32)
 #include <winsock2.h>
@@ -196,50 +198,33 @@ nlohmann::json ext_key_usage(X509* cert) {
   return out;
 }
 
-}  // namespace
+std::string der_sha256(X509* cert) {
+  unsigned char* der = nullptr;
+  const int len = i2d_X509(cert, &der);
+  if (len <= 0 || der == nullptr) return {};
+  const std::string bytes(reinterpret_cast<const char*>(der),
+                          static_cast<std::size_t>(len));
+  OPENSSL_free(der);
+  return sha256_hex(bytes);
+}
 
-nlohmann::json inspect_certificate(const std::string& input, std::string* error) {
-  if (trim(input).empty()) {
-    if (error) *error = "certificate input is empty";
-    return nullptr;
-  }
-  X509Ptr cert(nullptr, &X509_free);
-  if (input.find("BEGIN CERTIFICATE") != std::string::npos) {
-    BioPtr bio(BIO_new_mem_buf(input.data(), static_cast<int>(input.size())), &BIO_free);
-    if (!bio) {
-      if (error) *error = "failed to allocate certificate reader";
-      return nullptr;
-    }
-    cert.reset(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
-  } else {
-    BioPtr bio(BIO_new_mem_buf(input.data(), static_cast<int>(input.size())), &BIO_free);
-    if (!bio) {
-      if (error) *error = "failed to allocate certificate reader";
-      return nullptr;
-    }
-    cert.reset(d2i_X509_bio(bio.get(), nullptr));
-  }
-  if (!cert) {
-    if (error) *error = "not a valid PEM or DER X.509 certificate";
-    return nullptr;
-  }
-
-  const int version = static_cast<int>(X509_get_version(cert.get())) + 1;
-  const ASN1_TIME* not_before = X509_get0_notBefore(cert.get());
-  const ASN1_TIME* not_after = X509_get0_notAfter(cert.get());
+nlohmann::json certificate_json(X509* cert) {
+  const int version = static_cast<int>(X509_get_version(cert)) + 1;
+  const ASN1_TIME* not_before = X509_get0_notBefore(cert);
+  const ASN1_TIME* not_after = X509_get0_notAfter(cert);
   const std::int64_t not_before_epoch = time_to_epoch(not_before);
   const std::int64_t not_after_epoch = time_to_epoch(not_after);
   const std::int64_t now = now_unix();
-  const bool self_signed = X509_NAME_cmp(X509_get_subject_name(cert.get()),
-                                         X509_get_issuer_name(cert.get())) == 0;
-  const int signature_nid = X509_get_signature_nid(cert.get());
+  const bool self_signed = X509_NAME_cmp(X509_get_subject_name(cert),
+                                         X509_get_issuer_name(cert)) == 0;
+  const int signature_nid = X509_get_signature_nid(cert);
   const char* signature_name = OBJ_nid2ln(signature_nid);
 
   nlohmann::json out;
   out["version"] = version;
-  out["serial"] = serial_text(cert.get());
-  out["subject"] = print_name(X509_get_subject_name(cert.get()));
-  out["issuer"] = print_name(X509_get_issuer_name(cert.get()));
+  out["serial"] = serial_text(cert);
+  out["subject"] = print_name(X509_get_subject_name(cert));
+  out["issuer"] = print_name(X509_get_issuer_name(cert));
   out["notBefore"] = print_time(not_before);
   out["notAfter"] = print_time(not_after);
   out["notBeforeEpoch"] = not_before_epoch;
@@ -248,14 +233,73 @@ nlohmann::json inspect_certificate(const std::string& input, std::string* error)
   out["expired"] = not_after_epoch > 0 && now > not_after_epoch;
   out["notYetValid"] = not_before_epoch > 0 && now < not_before_epoch;
   out["selfSigned"] = self_signed;
-  out["fingerprintSha256"] = fingerprint(cert.get());
+  out["fingerprintSha256"] = fingerprint(cert);
   out["signatureAlgorithm"] = signature_name != nullptr ? signature_name : "unknown";
-  out["publicKey"] = public_key(cert.get());
-  out["san"] = san_list(cert.get());
-  out["keyUsage"] = key_usage(cert.get());
-  out["extendedKeyUsage"] = ext_key_usage(cert.get());
+  out["publicKey"] = public_key(cert);
+  out["san"] = san_list(cert);
+  out["keyUsage"] = key_usage(cert);
+  out["extendedKeyUsage"] = ext_key_usage(cert);
+  out["derSha256"] = der_sha256(cert);
+  return out;
+}
+
+}  // namespace
+
+nlohmann::json inspect_certificate(const std::string& input, std::string* error) {
+  if (trim(input).empty()) {
+    if (error) *error = "certificate input is empty";
+    return nullptr;
+  }
+
+  // A PEM bundle is decoded certificate by certificate; DER always yields one.
+  // Cap the parsed prefix so a pasted system CA bundle cannot dominate a request.
+  constexpr std::size_t kMaxCertificates = 64;
+  std::vector<X509Ptr> certificates;
+  if (input.find("BEGIN CERTIFICATE") != std::string::npos) {
+    BioPtr bio(BIO_new_mem_buf(input.data(), static_cast<int>(input.size())), &BIO_free);
+    if (!bio) {
+      if (error) *error = "failed to allocate certificate reader";
+      return nullptr;
+    }
+    while (certificates.size() < kMaxCertificates) {
+      X509* raw = PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr);
+      if (raw == nullptr) break;
+      certificates.emplace_back(raw, &X509_free);
+    }
+  } else {
+    BioPtr bio(BIO_new_mem_buf(input.data(), static_cast<int>(input.size())), &BIO_free);
+    if (!bio) {
+      if (error) *error = "failed to allocate certificate reader";
+      return nullptr;
+    }
+    X509* raw = d2i_X509_bio(bio.get(), nullptr);
+    if (raw != nullptr) certificates.emplace_back(raw, &X509_free);
+  }
+  if (certificates.empty()) {
+    if (error) *error = "not a valid PEM or DER X.509 certificate";
+    return nullptr;
+  }
+
+  const std::size_t limit = std::min<std::size_t>(certificates.size(), 32);
+  nlohmann::json entries = nlohmann::json::array();
+  for (std::size_t i = 0; i < limit; ++i) {
+    nlohmann::json item = certificate_json(certificates[i].get());
+    item["index"] = i;
+    item["leaf"] = i == 0;
+    entries.push_back(std::move(item));
+  }
+
+  nlohmann::json out = entries.front();
+  out["certificates"] = entries;
+  out["certificateCount"] = certificates.size();
+  out["chainTruncated"] = certificates.size() > limit ||
+                          certificates.size() >= kMaxCertificates;
   out["sha256"] = sha256_hex(input);
-  out["chainNotice"] = "v0.3.0 decodes the first certificate in the input. Paste the full chain to inspect the leaf first.";
+  out["chainNotice"] =
+      certificates.size() == 1
+          ? "Decoded 1 certificate."
+          : "Decoded " + std::to_string(certificates.size()) +
+                " certificates in input order. Chain validity is not verified.";
   return out;
 }
 

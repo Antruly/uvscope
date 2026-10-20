@@ -176,6 +176,29 @@ function loadExample() {
             <div class="cert-field cert-field--wide"><span>{{ t('tls.field.fingerprint') }}</span><code class="mono">{{ info.fingerprintSha256 }}</code></div>
           </div>
 
+          <div v-if="info.certificates.length > 1" class="cert-section">
+            <div class="cert-section__head">
+              <span>{{ t('tls.chain.title') }}</span>
+              <span class="mono">{{ info.certificateCount }}<template v-if="info.chainTruncated">+</template></span>
+            </div>
+            <div class="chain-list">
+              <div
+                v-for="cert in info.certificates"
+                :key="cert.derSha256"
+                class="chain-item"
+                :class="{ 'chain-item--leaf': cert.leaf, 'chain-item--expired': cert.expired }"
+              >
+                <span class="chip mono">#{{ cert.index + 1 }}</span>
+                <div class="chain-item__body">
+                  <strong>{{ cert.subject }}</strong>
+                  <small>{{ cert.issuer }}</small>
+                </div>
+                <span class="mono chain-item__days">{{ cert.daysRemaining }}d</span>
+              </div>
+            </div>
+            <p class="muted chain-hint">{{ t('tls.chain.hint') }}</p>
+          </div>
+
           <div class="cert-section">
             <div class="cert-section__head"><span>{{ t('tls.field.san') }}</span><span class="mono">{{ info.san.length }}</span></div>
             <div v-if="info.san.length" class="san-list">
@@ -202,7 +225,7 @@ function loadExample() {
               </div>
             </div>
           </div>
-          <p class="cert-note">{{ info.chainNotice }}</p>
+          <p class="cert-note">{{ t('tls.chain.summary', { count: info.certificateCount }) }}</p>
         </template>
       </section>
     </div>

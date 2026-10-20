@@ -161,8 +161,9 @@ export interface ProxyLog {
   message?: string
 }
 
-export interface CertificateInfo {
-  ok: boolean
+export interface CertificateEntry {
+  index: number
+  leaf: boolean
   version: number
   serial: string
   subject: string
@@ -181,6 +182,15 @@ export interface CertificateInfo {
   san: Array<{ type: string; value: string }>
   keyUsage: string[]
   extendedKeyUsage: string[]
+  derSha256: string
+}
+
+export interface CertificateInfo extends CertificateEntry {
+  ok: boolean
+  sha256?: string
+  certificates: CertificateEntry[]
+  certificateCount: number
+  chainTruncated: boolean
   chainNotice: string
 }
 
