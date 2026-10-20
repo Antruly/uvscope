@@ -24,7 +24,7 @@ const en: Record<string, string> = {
   'transport.form.openTcp': 'Open TCP connection',
   'transport.form.sendDatagram': 'Send datagram',
   'transport.form.info':
-    'Persistent TCP sessions are available in this build. TCP/UDP listeners and raw QUIC streams are planned for 0.3.',
+    'Persistent TCP sessions and TCP/UDP server listeners are available in this build. Raw QUIC streams are on the roadmap.',
 
   'transport.result.eyebrow': 'Result',
   'transport.result.title': 'Wire transcript',
@@ -149,7 +149,7 @@ const zh: Record<string, string> = {
 
   'transport.hex.noBytes': '无字节可显示。',
   'transport.mode.session': 'TCP 会话',
-  'transport.form.info': '当前构建已支持持久 TCP 会话；TCP/UDP 服务端与原始 QUIC 流计划在 0.3。',
+  'transport.form.info': '当前构建已支持持久 TCP 会话与 TCP/UDP 服务端；原始 QUIC 流仍在路线图中。',
 
   'transport.session.eyebrow': '持久连接',
   'transport.session.title': '保持 TCP 会话',

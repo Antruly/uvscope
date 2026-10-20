@@ -139,7 +139,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-macOS builds are source-oriented in 0.3.0. The install tree carries `share/uvscope/uvscope.icns`,
+macOS builds are source-oriented in 0.4.0. The install tree carries `share/uvscope/uvscope.icns`,
 but a Finder-visible icon needs a signed/notarized `.app`, which is later work.
 
 ## CI

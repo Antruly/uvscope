@@ -1,6 +1,6 @@
 # uvscope 开发计划
 
-> 版本：0.3.0 发布收尾
+> 版本：0.4.0 发布
 > 技术底座：libuvcpp 1.8.2 + Vue 3 + SQLite + libuvcpp WSDL/SOAP  
 > 目标：做一款覆盖 Web 调试、协议探测与可编程反向代理的本地瑞士军刀，并保持单机、可审计、可离线部署。
 
@@ -457,23 +457,23 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 - libuvcpp 1.8.2 是发布版 SDK，uvscope 不再携带本地补丁；低于 1.8.2 的 SDK 在 configure
   阶段被拒绝。1.8.2 已包含 AF_UNSPEC、TLS 证书链、SOCKS5 会话统计、总 deadline、WebSocket
   逐帧、HTTP 流式响应与 h2/h3 事件，是 0.4 协议深度切片的上游基础。
-- 0.3.0 发布构建默认关闭 libuvcpp 的 QUIC、HTTP/3 选项，避免发布“能选但不可用”的协议路径；
-  HTTP/2 自 1.8.2 起默认启用，`UVCPP_ENABLE_NGHTTP2=OFF` 可构建精简版。
+- 0.3.0 发布构建默认关闭 libuvcpp 的 QUIC、HTTP/3 选项；0.4.0 起 HTTP/2 默认启用
+  （`UVCPP_ENABLE_NGHTTP2=OFF` 可构建精简版），QUIC/HTTP/3 继续关闭。
 - 本地开发可以打开这些选项做实验，但不应把它们写进稳定版发行说明。
 - Windows 使用 MinGW-w64，不使用 MSVC 作为默认工具链。
 
 ### 发布产物
 
 ```text
-uvscope-0.3.0-linux-x64.tar.gz
-uvscope-0.3.0-linux-arm64.tar.gz
-uvscope_0.3.0_amd64.deb
-uvscope_0.3.0_arm64.deb
-uvscope-0.3.0-1.x86_64.rpm
-uvscope-0.3.0-1.aarch64.rpm
-uvscope-0.3.0-mingw-x64.zip
-uvscope-0.3.0-setup.exe
-uvscope-0.3.0-macos-arm64.zip
+uvscope-0.4.0-linux-x64.tar.gz
+uvscope-0.4.0-linux-arm64.tar.gz
+uvscope_0.4.0_amd64.deb
+uvscope_0.4.0_arm64.deb
+uvscope-0.4.0-1.x86_64.rpm
+uvscope-0.4.0-1.aarch64.rpm
+uvscope-0.4.0-mingw-x64.zip
+uvscope-0.4.0-setup.exe
+uvscope-0.4.0-macos-arm64.zip
 ```
 
 ---

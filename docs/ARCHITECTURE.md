@@ -37,7 +37,7 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
                      HTTP(S) / TCP / UDP / TLS targets
 ```
 
-## Process model in 0.3.0
+## Process model in 0.4.0
 
 - **Main daemon**: the only process. It owns the UI server, SQLite, auth and all protocol clients.
 - **Short-lived work**: HTTP/TCP/UDP/TLS probes run on the libuv thread pool through `uvcpp_work`; the
@@ -257,14 +257,15 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 - **Vue 3 / Vite / Pinia / Vue Router** — SPA.
 - **Inno Setup** — Windows installer.
 
-## Known architectural gaps (0.3.0)
+## Known architectural gaps (0.4.0)
 
-- HTTP/2 and HTTP/3 remain opt-in and experimental; the libuvcpp async TLS/h2 path works in local
-  Linux testing but still needs the full Windows/macOS matrix.
-- Persistent TCP sessions and TCP/UDP listeners are implemented; SOCKS5 client/server is next.
-- Preview cannot execute scripts and does not stream bodies larger than the probe cap.
+- HTTP/2 works over TLS (ALPN `h2`, stream IDs, GOAWAY and frame summaries); the runtime matrix
+  still needs Windows and macOS coverage. HTTP/3/QUIC stay closed in release builds.
+- Preview can run scripts in an opt-in opaque-origin sandbox, but bodies are still capped at the
+  probe limit rather than streamed.
 - Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
 - No WebSocket upgrade pass-through in the proxy.
-- No per-path/Host routing rules; one upstream per listener.
+- Routing supports ordered exact / prefix / regex rules for redirects and path rewrites, but not
+  header/method matching or multiple weighted upstreams.
 - The `history` table stores summaries, not full bodies.
 - No IPC supervisor yet; all long-lived services are threads in the daemon.

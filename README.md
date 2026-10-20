@@ -29,31 +29,35 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 
 ![HTTP Studio](docs/screenshots/http-studio.png)
 
-## What is in 0.3.0
+## What is in 0.4.0
 
 | Area | Status |
 | --- | --- |
 | HTTP/1.1 request debugger with headers, body, timing and history | ✅ Stable |
-| Response preview: sandboxed HTML, images, audio, video and PDF | ✅ New in 0.2.0 |
-| Chinese / English UI with browser-language detection and manual switch | ✅ New in 0.2.0 |
-| Dark / light / follow-system theme | ✅ New in 0.2.0 |
+| HTTP/2 over TLS with ALPN, stream IDs, GOAWAY and frame summary | ✅ New in 0.4.0 |
+| Response preview: sandboxed HTML, images, audio, video and PDF | ✅ Stable (opt-in scripts) |
+| Chinese / English UI with browser-language detection and manual switch | ✅ Stable |
+| Dark / light / follow-system theme | ✅ Stable |
 | HTTPS with system CA bundle / explicit insecure mode | ✅ Stable |
 | WebSocket console (browser-native, text + binary) | ✅ Stable |
 | TCP and UDP one-shot probes (text / hex) | ✅ Stable |
-| Persistent TCP sessions with repeated sends and event logs | ✅ New in 0.3.0 |
-| TCP / UDP server listeners with sessions, datagrams and replies | ✅ New in 0.3.0 |
-| SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) and outbound proxy | ✅ New in 0.3.0 |
-| TLS certificate decoder (PEM / DER) | ✅ Stable |
+| Persistent TCP sessions with repeated sends and event logs | ✅ Stable |
+| TCP / UDP server listeners with sessions, datagrams and replies | ✅ Stable |
+| SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) and outbound proxy | ✅ Stable |
+| SOCKS5 per-session bytes, datagrams and duration | ✅ New in 0.4.0 |
+| TLS certificate decoder (PEM / DER) and live peer-chain probe | ✅ New in 0.4.0 |
+| TLS certificate vault: generate, import, inspect, download, delete | ✅ New in 0.4.0 |
+| Virtual terminal (Unix PTY / Windows ConPTY) with command library | ✅ New in 0.4.0, off by default |
 | SOAP 1.1 + WSDL operation discovery | ✅ Stable |
-| Managed HTTP reverse proxy with live logs | ✅ Stable |
+| Managed HTTP reverse proxy with live logs and routing rules | ✅ Stable (rules new in 0.4.0) |
 | SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
 | Module toggles, factory reset, update check, about/help | ✅ Stable |
-| HTTP/2 and HTTP/3 wire transports | 🧪 Experimental protocol preference (HTTP/1.1 is the reliable path in 0.3.0) |
-| Raw QUIC streams and HTTP/3 server | 🗺️ Roadmap |
+| HTTP/3 and QUIC transports | 🗺️ Roadmap |
 
-The UI exposes HTTP/2 and HTTP/3 as protocol preferences so the protocol plumbing can be tested.
-They are intentionally labelled experimental: the libuvcpp async TLS/h2/h3 path still needs
-upstream validation on every target. Use HTTP/1.1 for production debugging today.
+HTTP/2 is the supported alternate transport: selecting H2 negotiates ALPN `h2` and returns the
+stream ID, GOAWAY state and the first 200 received frames. HTTP/3 and raw QUIC remain closed in
+release builds until the cross-platform matrix exists. The virtual terminal module is disabled by
+default and limited to admin/operator roles because it grants shell access on the daemon host.
 
 SOCKS5 outbound proxying is mandatory when configured: a failed handshake fails the request rather
 than falling back to a direct connection.
@@ -66,10 +70,10 @@ than falling back to a direct connection.
 
 ## Download
 
-Prebuilt **v0.3.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.3.0):
+Prebuilt **v0.4.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.4.0):
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.3.0-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.4.0-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 The Windows executable and installer share the uvscope icon; Linux packages install the hicolor

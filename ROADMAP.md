@@ -39,7 +39,9 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) with authentication and session logs
 - [x] No silent direct fallback when a proxy is configured
 
-## 0.4 — protocol depth
+## 0.4 — protocol depth (0.4.0)
+
+0.4.0 ships HTTP/2 and the live certificate chain; the remaining items continue in 0.4.x.
 
 - [x] HTTP/2 over libuvcpp 1.8.2 (ALPN, stream IDs, GOAWAY, frame summary; Linux smoke)
 - [ ] HTTP/2 runtime validation on the Windows and macOS CI jobs
@@ -47,16 +49,16 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [ ] Raw QUIC stream and datagram debugging
 - [ ] Compression decoding and streaming large bodies
 - [ ] Multipart upload and Range download
-- [ ] Live peer certificate chain inspection
+- [x] Live peer certificate chain inspection
 - [ ] WebSocket ping/pong, close-code and backend relay mode
 
 ## 0.5 — gateway and team workflow
 
-- [ ] Host/path/header/method routing rules
+- [x] Exact / prefix / regex routing with redirects and path rewrites
+- [ ] Header / method routing rules and multiple weighted upstreams
 - [ ] WebSocket pass-through
-- [ ] Header and path rewrites
-- [ ] Multiple upstreams and retry policy
-- [ ] Certificate import / self-sign / selection
+- [ ] Retry policy and upstream health
+- [x] Certificate import / self-sign / selection
 - [ ] Per-instance QPS, latency and traffic metrics
 - [ ] Collections, environments and variable substitution
 - [ ] Pre-request / post-response scripts
