@@ -82,11 +82,13 @@ supervisor and IPC so the main daemon remains responsive under many long-lived s
 1. The SPA creates a proxy config through `/api/proxies`.
 2. `Store` persists it. `ProxyManager` starts a `uvcpp_web_app` on the requested `host:port`.
 3. Incoming requests hit the catch-all handler, which:
+   - evaluates the ordered routing rules (exact/prefix/regex; redirect or path rewrite) and
+     returns the redirect or rewrites the upstream path on the first match;
    - strips hop-by-hop headers;
    - appends `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-uvscope-Proxy`;
    - performs a synchronous HTTP/1.1 request to the upstream;
    - copies status, headers and body back;
-   - records a log entry.
+   - records a log entry (including the matched rule for redirects).
 4. The SPA polls `/api/proxies/:id/logs?after=<seq>` while the log panel is open.
 
 ## SQLite schema
@@ -97,7 +99,7 @@ sessions(token_hash PK, user_id, created_at, expires_at)
 settings(key PK, value, updated_at)
 history(id, user_id, kind, summary, status, http_status, latency_ms, size_bytes, detail, created_at)
 proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_path, key_path,
-        created_at, updated_at)
+        rules_json, created_at, updated_at)
 ```
 
 - WAL mode, `busy_timeout=5000`.

@@ -71,6 +71,18 @@ export interface Dashboard {
   recent: ActivityItem[]
 }
 
+export interface ProxyRule {
+  id: string
+  name: string
+  enabled: boolean
+  matchType: 'exact' | 'prefix' | 'regex'
+  pattern: string
+  action: 'redirect' | 'rewrite'
+  status: number
+  destination: string
+  preserveQuery: boolean
+}
+
 export interface ProxyInfo {
   id: string
   name: string
@@ -82,6 +94,7 @@ export interface ProxyInfo {
   certConfigured?: boolean
   certPath?: string
   keyPath?: string
+  rules?: ProxyRule[]
   running: boolean
   startedAt?: string
   lastError?: string
@@ -95,7 +108,7 @@ export interface HttpHeader {
   value: string
 }
 
-export interface ProxyInfo {
+export interface Socks5ProxyInfo {
   enabled?: boolean
   host?: string
   port?: number
@@ -109,7 +122,7 @@ export interface ProxyInfo {
 export interface HttpResult {
   ok: boolean
   error?: string
-  proxy?: ProxyInfo | null
+  proxy?: Socks5ProxyInfo | null
   request?: {
     method: string
     url: string

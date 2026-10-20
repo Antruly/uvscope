@@ -15,6 +15,10 @@ All notable changes to uvscope are documented here. The format is based on
 - HTML preview has an opt-in “Run scripts (unsafe)” mode backed by short-lived `/preview/:id`
   documents with `CSP: sandbox allow-scripts`. It renders JS-driven pages and remote CSS/JS on an
   opaque origin without uvscope cookies; the default sandbox still blocks scripts.
+- Reverse proxy routing rules: ordered exact / prefix / regex matches with HTTP redirects
+  (301/302/307/308) or upstream path rewrites. Destinations support `$uri`, `$args`,
+  `$request_uri`, `$rest`, `$1`–`$9`, `$host` and `$scheme`, plus optional query preservation.
+  Rules are edited in the proxy modal and persisted in `proxies.rules_json`.
 - Reverse proxy start failures now show the real reason in the UI: bind errors map to
   "address already in use", TLS/certificate failures populate `lastError`, and create/edit reports
   the start warning instead of a success toast.

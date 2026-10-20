@@ -114,10 +114,12 @@ HTTP_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/ap
 
 PROXY_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/proxies" \
   -H 'content-type: application/json' \
-  -d "{\"name\":\"smoke\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${PROXY_PORT},\"target\":\"http://127.0.0.1:${PORT}\",\"start\":true}")"
+  -d "{\"name\":\"smoke\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${PROXY_PORT},\"target\":\"http://127.0.0.1:${PORT}\",\"start\":true,\"rules\":[{\"name\":\"redirect\",\"matchType\":\"exact\",\"pattern\":\"/smoke-redirect\",\"action\":\"redirect\",\"status\":301,\"destination\":\"/api/health\",\"preserveQuery\":true},{\"name\":\"rewrite\",\"matchType\":\"prefix\",\"pattern\":\"/smoke-rewrite\",\"action\":\"rewrite\",\"destination\":\"/api\$rest\",\"preserveQuery\":true}]}")"
 
 sleep 0.3
 PROXIED="$(curl -fsS --max-time 5 "http://127.0.0.1:${PROXY_PORT}/api/health")"
+REDIRECT_HEADERS="$(curl -sS -D - -o /dev/null --max-time 5 "http://127.0.0.1:${PROXY_PORT}/smoke-redirect?x=1")"
+REWRITTEN="$(curl -fsS --max-time 5 "http://127.0.0.1:${PROXY_PORT}/smoke-rewrite/health?x=1")"
 
 SESSION_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/tcp/sessions" \
   -H 'content-type: application/json' \
@@ -148,6 +150,7 @@ EVENTS_RESULT="$(curl -fsS -b "${COOKIE_JAR}" \
 curl -fsS -b "${COOKIE_JAR}" -X DELETE "http://127.0.0.1:${PORT}/api/tcp/sessions/${SESSION_ID}" >/dev/null
 
 HTTP_RESULT="${HTTP_RESULT}" PROXY_RESULT="${PROXY_RESULT}" PROXIED="${PROXIED}" \
+REDIRECT_HEADERS="${REDIRECT_HEADERS}" REWRITTEN="${REWRITTEN}" \
 SESSION_RESULT="${SESSION_RESULT}" SEND_ONE="${SEND_ONE}" SEND_TWO="${SEND_TWO}" \
 EVENTS_RESULT="${EVENTS_RESULT}" python3 - <<'PY'
 import json
@@ -171,6 +174,15 @@ check(http.get("retryable") is False, f"HTTP/1.1 retryable should be false: {htt
 proxy = json.loads(os.environ["PROXY_RESULT"])
 check(proxy.get("ok") is True, f"proxy creation failed: {proxy.get('error')}")
 check(any(p.get("running") for p in proxy.get("proxies", [])), "proxy is not running")
+check(any(len(p.get("rules", [])) == 2 for p in proxy.get("proxies", [])),
+      f"proxy rules were not persisted: {proxy.get('proxies')}")
+redirect = os.environ["REDIRECT_HEADERS"].lower()
+check("301" in redirect, f"proxy redirect status missing: {redirect[:120]}")
+check("location: /api/health?x=1" in redirect,
+      f"proxy redirect lost the query: {redirect[:200]}")
+rewritten = json.loads(os.environ["REWRITTEN"])
+check(rewritten.get("name") == "uvscope",
+      f"proxy rewrite did not reach /api/health: {rewritten}")
 
 proxied = json.loads(os.environ["PROXIED"])
 check(proxied.get("ok") is True, "proxied health endpoint failed")

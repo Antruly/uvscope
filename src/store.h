@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <db/uvcpp_db.h>
+#include <nlohmann/json.hpp>
 
 namespace uvscope {
 
@@ -65,6 +66,20 @@ struct Socks5ServerConfig {
   std::string updated_at;
 };
 
+struct ProxyRule {
+  std::string id;
+  std::string name;
+  bool enabled = true;
+  std::string match_type = "prefix";  // exact | prefix | regex
+  std::string pattern;
+  std::string action = "redirect";    // redirect | rewrite
+  int status = 302;
+  std::string destination;
+  bool preserve_query = true;
+};
+
+nlohmann::json proxy_rules_json(const std::vector<ProxyRule>& rules);
+
 struct ProxyConfig {
   std::string id;
   std::string name;
@@ -75,6 +90,7 @@ struct ProxyConfig {
   bool tls = false;
   std::string cert_path;
   std::string key_path;
+  std::vector<ProxyRule> rules;
   std::string created_at;
   std::string updated_at;
 };

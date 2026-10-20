@@ -4378,6 +4378,66 @@ button.nav-item {
   display: flex;
   gap: 2px;
 }
+.proxy-rules-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.proxy-rules-editor__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.proxy-rules-editor__head strong {
+  font-size: 11px;
+}
+.proxy-rules-editor__head .link-button {
+  flex: none;
+  white-space: nowrap;
+}
+.proxy-rules-editor__head p {
+  margin: 4px 0 0;
+  font-size: 8.5px;
+  line-height: 1.5;
+}
+.proxy-rules-empty {
+  padding: 9px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  color: var(--faint);
+  font-size: 9px;
+}
+.proxy-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+.proxy-rule__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.proxy-rule__name {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 9.5px;
+}
+.form-grid--tight {
+  margin-top: 0;
+  gap: 8px;
+}
 .proxy-card__title {
   display: flex;
   align-items: center;
@@ -5315,6 +5375,9 @@ button.nav-item {
 }
 .modal-card--sm {
   width: min(100%, 430px);
+}
+.modal-card--wide {
+  width: min(100%, 680px);
 }
 .modal-head {
   display: flex;

@@ -133,6 +133,77 @@ Socks5Proxy proxy_field(const nlohmann::json& body) {
   return proxy;
 }
 
+std::vector<ProxyRule> proxy_rules_field(const nlohmann::json& body, std::string* error) {
+  std::vector<ProxyRule> rules;
+  if (!body.contains("rules")) return rules;
+  if (!body["rules"].is_array()) {
+    if (error) *error = "rules must be an array";
+    return {};
+  }
+  if (body["rules"].size() > 64) {
+    if (error) *error = "at most 64 routing rules are allowed";
+    return {};
+  }
+  std::size_t index = 0;
+  for (const auto& item : body["rules"]) {
+    ++index;
+    const std::string label = "rule " + std::to_string(index);
+    if (!item.is_object()) {
+      if (error) *error = label + " must be an object";
+      return {};
+    }
+    ProxyRule rule;
+    rule.id = string_field(item, "id");
+    if (rule.id.empty()) rule.id = make_id();
+    rule.name = string_field(item, "name");
+    rule.enabled = bool_field(item, "enabled", true);
+    rule.match_type = lower(string_field(item, "matchType", "prefix"));
+    rule.pattern = string_field(item, "pattern");
+    rule.action = lower(string_field(item, "action", "redirect"));
+    rule.status = int_field(item, "status", 302);
+    rule.destination = string_field(item, "destination");
+    rule.preserve_query = bool_field(item, "preserveQuery", true);
+    if (rule.match_type != "exact" && rule.match_type != "prefix" &&
+        rule.match_type != "regex") {
+      if (error) *error = label + ": matchType must be exact, prefix or regex";
+      return {};
+    }
+    if (rule.pattern.empty() || rule.pattern.size() > 512) {
+      if (error) *error = label + ": pattern must be 1-512 characters";
+      return {};
+    }
+    if (rule.match_type == "regex") {
+      try {
+        std::regex compiled(rule.pattern);
+        (void)compiled;
+      } catch (const std::regex_error& err) {
+        if (error) *error = label + ": invalid regex (" + err.what() + ")";
+        return {};
+      }
+    }
+    if (rule.action != "redirect" && rule.action != "rewrite") {
+      if (error) *error = label + ": action must be redirect or rewrite";
+      return {};
+    }
+    if (rule.status != 301 && rule.status != 302 && rule.status != 303 &&
+        rule.status != 307 && rule.status != 308) {
+      if (error) *error = label + ": status must be 301, 302, 303, 307 or 308";
+      return {};
+    }
+    if (rule.destination.empty() || rule.destination.size() > 2048) {
+      if (error) *error = label + ": destination must be 1-2048 characters";
+      return {};
+    }
+    if (rule.action == "rewrite" && rule.destination.front() != '/' &&
+        rule.destination.front() != '$') {
+      if (error) *error = label + ": rewrite destinations must start with / or a variable";
+      return {};
+    }
+    rules.push_back(std::move(rule));
+  }
+  return rules;
+}
+
 std::vector<HttpHeaderInput> header_fields(const nlohmann::json& body) {
   std::vector<HttpHeaderInput> headers;
   if (!body.contains("headers") || !body["headers"].is_array()) return headers;
@@ -1430,6 +1501,7 @@ nlohmann::json Application::proxy_view() const {
                            {"certConfigured", !config.cert_path.empty()},
                            {"certPath", config.cert_path},
                            {"keyPath", config.key_path},
+                           {"rules", proxy_rules_json(config.rules)},
                            {"running", false},
                            {"requests", 0},
                            {"errors", 0},
@@ -1477,6 +1549,16 @@ void Application::register_proxy_routes() {
       return;
     }
     const auto existing = store_.proxy(config.id);
+    if (body->contains("rules")) {
+      std::string rules_error;
+      config.rules = proxy_rules_field(*body, &rules_error);
+      if (!rules_error.empty()) {
+        send_error(resp, 400, rules_error, "bad_request");
+        return;
+      }
+    } else if (existing) {
+      config.rules = existing->rules;
+    }
     if (existing) config.created_at = existing->created_at;
     // Refuse accidental duplicate listeners.
     for (const auto& other : store_.proxies()) {

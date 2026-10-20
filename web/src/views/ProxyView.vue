@@ -2,7 +2,7 @@
 import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import { del, errorMessage, get, post } from '../api'
-import type { ProxyInfo, ProxyLog } from '../types'
+import type { ProxyInfo, ProxyLog, ProxyRule } from '../types'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
 import { useI18nStore } from '../stores/i18n'
@@ -25,6 +25,20 @@ const logEl = ref<HTMLElement | null>(null)
 let logsTimer: number | undefined
 let lastSeq = 0
 
+function blankRule(): ProxyRule {
+  return {
+    id: '',
+    name: '',
+    enabled: true,
+    matchType: 'prefix',
+    pattern: '',
+    action: 'redirect',
+    status: 302,
+    destination: '',
+    preserveQuery: true,
+  }
+}
+
 const blank = () => ({
   id: '',
   name: '',
@@ -35,6 +49,7 @@ const blank = () => ({
   tls: false,
   certPath: '',
   keyPath: '',
+  rules: [] as ProxyRule[],
 })
 const form = ref(blank())
 
@@ -73,9 +88,18 @@ function openEdit(proxy: ProxyInfo) {
     tls: proxy.tls,
     certPath: proxy.certPath || '',
     keyPath: proxy.keyPath || '',
+    rules: (proxy.rules || []).map((rule) => ({ ...rule })),
   }
   formError.value = ''
   editorOpen.value = true
+}
+
+function addRule() {
+  form.value.rules.push(blankRule())
+}
+
+function removeRule(index: number) {
+  form.value.rules.splice(index, 1)
 }
 
 async function save(start = false) {
@@ -95,6 +119,12 @@ async function save(start = false) {
   if (form.value.tls && (!form.value.certPath || !form.value.keyPath)) {
     formError.value = t('proxy.error.tlsPaths')
     return
+  }
+  for (const [index, rule] of form.value.rules.entries()) {
+    if (!rule.pattern.trim() || !rule.destination.trim()) {
+      formError.value = t('proxy.rules.incomplete', { index: index + 1 })
+      return
+    }
   }
   saving.value = true
   try {
@@ -247,6 +277,7 @@ onBeforeUnmount(stopLogPolling)
           <h3>{{ proxy.name }}</h3>
           <span v-if="proxy.tls" class="chip chip--accent"><Icon name="lock" :size="12" />TLS</span>
           <span v-if="proxy.autoStart" class="chip">{{ t('proxy.card.auto') }}</span>
+          <span v-if="proxy.rules?.length" class="chip">{{ t('proxy.card.rules', { count: proxy.rules.length }) }}</span>
         </div>
         <div class="proxy-route">
           <div><span>{{ t('proxy.card.listen') }}</span><code class="mono">{{ proxy.listenHost }}:{{ proxy.listenPort }}</code></div>
@@ -296,7 +327,7 @@ onBeforeUnmount(stopLogPolling)
     <Teleport to="body">
       <Transition name="modal">
         <div v-if="editorOpen" class="modal-scrim" @click.self="editorOpen = false">
-          <form class="modal-card" @submit.prevent="save(true)">
+          <form class="modal-card modal-card--wide" @submit.prevent="save(true)">
             <header class="modal-head">
               <div><span class="eyebrow">{{ t('proxy.editor.eyebrow') }}</span><h3>{{ form.id ? t('proxy.editor.editTitle') : t('proxy.editor.newTitle') }}</h3></div>
               <button type="button" class="icon-button" @click="editorOpen = false"><Icon name="close" :size="18" /></button>
@@ -316,6 +347,70 @@ onBeforeUnmount(stopLogPolling)
                 <label class="field"><span>{{ t('proxy.editor.certPath') }}</span><input v-model="form.certPath" class="mono" placeholder="/etc/ssl/certs/site.pem" /></label>
                 <label class="field"><span>{{ t('proxy.editor.keyPath') }}</span><input v-model="form.keyPath" class="mono" placeholder="/etc/ssl/private/site.key" /></label>
               </div>
+
+              <div class="proxy-rules-editor">
+                <div class="proxy-rules-editor__head">
+                  <div>
+                    <strong>{{ t('proxy.rules.title') }}</strong>
+                    <p class="muted">{{ t('proxy.rules.hint') }}</p>
+                  </div>
+                  <button type="button" class="link-button" @click="addRule">
+                    <Icon name="plus" :size="14" />{{ t('proxy.rules.add') }}
+                  </button>
+                </div>
+                <div v-if="!form.rules.length" class="proxy-rules-empty">{{ t('proxy.rules.empty') }}</div>
+                <div v-for="(rule, index) in form.rules" :key="index" class="proxy-rule">
+                  <div class="proxy-rule__head">
+                    <label class="listener-check">
+                      <input v-model="rule.enabled" type="checkbox" />{{ t('proxy.rules.enabled') }}
+                    </label>
+                    <input v-model="rule.name" class="proxy-rule__name" :placeholder="t('proxy.rules.namePlaceholder')" />
+                    <button type="button" class="icon-button icon-button--sm icon-button--danger" :title="t('proxy.rules.remove')" @click="removeRule(index)">
+                      <Icon name="trash" :size="14" />
+                    </button>
+                  </div>
+                  <div class="form-grid form-grid--tight">
+                    <label class="field">
+                      <span>{{ t('proxy.rules.match') }}</span>
+                      <select v-model="rule.matchType" class="select">
+                        <option value="exact">{{ t('proxy.rules.match.exact') }}</option>
+                        <option value="prefix">{{ t('proxy.rules.match.prefix') }}</option>
+                        <option value="regex">{{ t('proxy.rules.match.regex') }}</option>
+                      </select>
+                    </label>
+                    <label class="field field--grow">
+                      <span>{{ t('proxy.rules.pattern') }}</span>
+                      <input v-model="rule.pattern" class="mono" :placeholder="t('proxy.rules.patternPlaceholder')" spellcheck="false" />
+                    </label>
+                  </div>
+                  <div class="form-grid form-grid--tight">
+                    <label class="field">
+                      <span>{{ t('proxy.rules.action') }}</span>
+                      <select v-model="rule.action" class="select">
+                        <option value="redirect">{{ t('proxy.rules.action.redirect') }}</option>
+                        <option value="rewrite">{{ t('proxy.rules.action.rewrite') }}</option>
+                      </select>
+                    </label>
+                    <label v-if="rule.action === 'redirect'" class="field">
+                      <span>{{ t('proxy.rules.status') }}</span>
+                      <select v-model.number="rule.status" class="select">
+                        <option :value="301">301</option>
+                        <option :value="302">302</option>
+                        <option :value="307">307</option>
+                        <option :value="308">308</option>
+                      </select>
+                    </label>
+                    <label class="field field--grow">
+                      <span>{{ t('proxy.rules.destination') }}</span>
+                      <input v-model="rule.destination" class="mono" :placeholder="t('proxy.rules.destinationPlaceholder')" spellcheck="false" />
+                    </label>
+                  </div>
+                  <label class="listener-check">
+                    <input v-model="rule.preserveQuery" type="checkbox" />{{ t('proxy.rules.preserveQuery') }}
+                  </label>
+                </div>
+              </div>
+
               <div v-if="formError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ formError }}</div>
               <p class="modal-hint">{{ t('proxy.editor.hint') }}</p>
             </div>

@@ -63,7 +63,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 | POST | `/api/preview` | `{html, baseUrl, mode: safe\|scripts}` → `{id, url}` preview token (8 MiB, 120 s) |
 | DELETE | `/api/preview/:id` | Drop a preview token |
 | GET | `/preview/:id` | Token-based HTML with `CSP: sandbox allow-scripts` (no auth) |
-| POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, autoStart, tls, certPath, keyPath, start}` |
+| POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, autoStart, tls, certPath, keyPath, rules[], start}` |
 | POST | `/api/proxies/:id/start` | Start a proxy |
 | POST | `/api/proxies/:id/stop` | Stop a proxy |
 | DELETE | `/api/proxies/:id` | Stop and delete a proxy |
@@ -158,6 +158,38 @@ Listener states are `stopped`, `starting`, `listening`, `stopping` and `error`. 
 keeps the config; fix the port and start it again. Listener configs are stored in SQLite settings
 and auto-started when `autoStart` is true. Limits mirror the TCP session limits; accepted sessions
 are retained up to 128 per listener.
+
+## Reverse proxy routing rules
+
+`POST /api/proxies` accepts an ordered `rules` array (max 64). The first enabled matching rule
+wins. A rule is:
+
+```json
+{
+  "id": "optional; generated when empty",
+  "name": "old docs",
+  "enabled": true,
+  "matchType": "exact | prefix | regex",
+  "pattern": "/old",
+  "action": "redirect | rewrite",
+  "status": 301,
+  "destination": "/new",
+  "preserveQuery": true
+}
+```
+
+- Matching uses the raw request path (without the query). `exact` compares the whole path,
+  `prefix` is a byte-prefix match, `regex` uses ECMAScript `std::regex_search`.
+- `redirect` answers with `status` (301, 302, 303, 307 or 308) and a `Location` header without
+  contacting the upstream. `rewrite` replaces the upstream path and continues proxying; the configured target
+  path is not prepended for a rewritten request.
+- Destination variables: `$uri` (path), `$args` (query), `$request_uri` (path + query),
+  `$rest` (remainder after a prefix match), `$1`–`$9` (regex captures), `$host` (request Host),
+  `$scheme` (`http`/`https`). Unknown variables are left literal.
+- With `preserveQuery: true`, the original query is appended unless the destination already
+  contains `?`; destinations using `$args` or `$request_uri` are not appended twice.
+- Invalid regexes, rewrite destinations that do not start with `/` or `$`, empty patterns or more
+  than 64 rules are rejected with `400 bad_request`.
 
 ## Administration
 

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <ctime>
 #include <memory>
+#include <regex>
 #include <sstream>
 
 #include <uv.h>
@@ -30,6 +31,49 @@ bool hop_by_hop(const std::string& name) {
 }
 
 std::string iso_time() { return now_iso8601(); }
+
+std::string replace_all(std::string value, const std::string& needle,
+                        const std::string& replacement) {
+  if (needle.empty()) return value;
+  std::size_t pos = 0;
+  while ((pos = value.find(needle, pos)) != std::string::npos) {
+    value.replace(pos, needle.size(), replacement);
+    pos += replacement.size();
+  }
+  return value;
+}
+
+std::string expand_destination(const ProxyRule& rule, const std::string& path,
+                               const std::string& query, const std::string& host,
+                               const std::string& scheme, const std::string& rest,
+                               const std::smatch& match) {
+  std::string out = rule.destination;
+  out = replace_all(out, "$request_uri", query.empty() ? path : path + "?" + query);
+  out = replace_all(out, "$uri", path);
+  out = replace_all(out, "$args", query);
+  out = replace_all(out, "$host", host);
+  out = replace_all(out, "$scheme", scheme);
+  out = replace_all(out, "$rest", rest);
+  for (int i = 1; i <= 9; ++i) {
+    const std::string token = "$" + std::to_string(i);
+    const std::string value =
+        static_cast<std::size_t>(i) < match.size() ? match[i].str() : std::string();
+    out = replace_all(out, token, value);
+  }
+  // `$args` / `$request_uri` already carry the query; don't append it twice.
+  const bool query_in_template = rule.destination.find("$args") != std::string::npos ||
+                                 rule.destination.find("$request_uri") != std::string::npos;
+  if (rule.preserve_query && !query_in_template && !query.empty()) {
+    if (out.find('?') == std::string::npos) {
+      out += "?" + query;
+    } else if (!out.empty() && out.back() != '?' && out.back() != '&') {
+      out += "&" + query;
+    } else {
+      out += query;
+    }
+  }
+  return out;
+}
 
 }  // namespace
 
@@ -72,10 +116,60 @@ struct ProxyManager::Runtime {
     upstream.method = req.method();
     std::string path = req.raw_path();
     if (path.empty()) path = "/";
-    if (target.path != "/" && !target.path.empty()) {
+    std::string query = req.query_string();
+    bool rewritten = false;
+
+    // First enabled matching rule wins. Redirects answer immediately; rewrites
+    // replace the upstream path (the target base path then does not apply).
+    for (const auto& rule : config.rules) {
+      if (!rule.enabled) continue;
+      bool matched = false;
+      std::string rest;
+      std::smatch capture;
+      if (rule.match_type == "exact") {
+        matched = path == rule.pattern;
+      } else if (rule.match_type == "prefix") {
+        matched = path.rfind(rule.pattern, 0) == 0;
+        if (matched) rest = path.substr(rule.pattern.size());
+      } else if (rule.match_type == "regex") {
+        try {
+          matched = std::regex_search(path, capture, std::regex(rule.pattern));
+        } catch (const std::regex_error&) {
+          matched = false;
+        }
+      }
+      if (!matched) continue;
+
+      const std::string location = expand_destination(
+          rule, path, query, req.host(), config.tls ? "https" : "http", rest, capture);
+      if (rule.action == "redirect") {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - started)
+                                 .count();
+        resp.status(rule.status)
+            .set_header("location", location)
+            .set_header("cache-control", "no-store")
+            .set_header("x-uvscope-proxy", config.id);
+        resp.end();
+        add_log({{"method", req.method_name()}, {"path", req.raw_url()},
+                 {"status", rule.status}, {"rule", rule.name.empty() ? rule.id : rule.name},
+                 {"action", "redirect"}, {"location", location}, {"latencyMs", elapsed},
+                 {"bytes", 0}});
+        return;
+      }
+      // rewrite
+      const std::size_t split = location.find('?');
+      path = split == std::string::npos ? location : location.substr(0, split);
+      query = split == std::string::npos ? std::string() : location.substr(split + 1);
+      if (path.empty()) path = "/";
+      rewritten = true;
+      break;
+    }
+
+    if (!rewritten && target.path != "/" && !target.path.empty()) {
       path = join_path(target.path, path);
     }
-    if (!req.query_string().empty()) path += "?" + req.query_string();
+    if (!query.empty()) path += "?" + query;
     upstream.url = path;
 
     bool has_host = false;

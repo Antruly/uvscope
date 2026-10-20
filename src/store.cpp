@@ -32,6 +32,44 @@ std::string feature_defaults() {
   return R"({"http":true,"websocket":true,"tcpudp":true,"soap":true,"tls":true,"proxy":true})";
 }
 
+nlohmann::json proxy_rules_to_json(const std::vector<ProxyRule>& rules) {
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& rule : rules) {
+    out.push_back({{"id", rule.id},
+                   {"name", rule.name},
+                   {"enabled", rule.enabled},
+                   {"matchType", rule.match_type},
+                   {"pattern", rule.pattern},
+                   {"action", rule.action},
+                   {"status", rule.status},
+                   {"destination", rule.destination},
+                   {"preserveQuery", rule.preserve_query}});
+  }
+  return out;
+}
+
+std::vector<ProxyRule> proxy_rules_from_json(const std::string& text) {
+  std::vector<ProxyRule> rules;
+  const auto parsed = nlohmann::json::parse(text, nullptr, false);
+  if (!parsed.is_array()) return rules;
+  for (const auto& item : parsed) {
+    if (!item.is_object()) continue;
+    ProxyRule rule;
+    rule.id = item.value("id", std::string());
+    rule.name = item.value("name", std::string());
+    rule.enabled = item.value("enabled", true);
+    rule.match_type = item.value("matchType", std::string("prefix"));
+    rule.pattern = item.value("pattern", std::string());
+    rule.action = item.value("action", std::string("redirect"));
+    rule.status = item.value("status", 302);
+    rule.destination = item.value("destination", std::string());
+    rule.preserve_query = item.value("preserveQuery", true);
+    if (rule.id.empty() || rule.pattern.empty()) continue;
+    rules.push_back(std::move(rule));
+  }
+  return rules;
+}
+
 }  // namespace
 
 Store::~Store() { close(); }
@@ -156,6 +194,7 @@ bool Store::migrate(std::string* error) {
            tls INTEGER NOT NULL DEFAULT 0,
            cert_path TEXT NOT NULL DEFAULT '',
            key_path TEXT NOT NULL DEFAULT '',
+           rules_json TEXT NOT NULL DEFAULT '[]',
            created_at TEXT NOT NULL,
            updated_at TEXT NOT NULL
          ))",
@@ -164,6 +203,22 @@ bool Store::migrate(std::string* error) {
          ))"};
   for (const char* sql : statements) {
     if (!exec(sql, error)) return false;
+  }
+  // 0.3.x stores proxy routing rules in the proxy row. Older databases get the
+  // column lazily; CREATE TABLE above already includes it for new files.
+  bool has_rules_column = false;
+  if (const auto columns = query("PRAGMA table_info(proxies)")) {
+    for (const auto& row : columns->rows()) {
+      if (row["name"].to_text() == "rules_json") {
+        has_rules_column = true;
+        break;
+      }
+    }
+  }
+  if (!has_rules_column) {
+    if (!exec("ALTER TABLE proxies ADD COLUMN rules_json TEXT NOT NULL DEFAULT '[]'", error)) {
+      return false;
+    }
   }
   exec("INSERT INTO meta(key, value) VALUES('feature.defaults', ?) ON CONFLICT(key) DO NOTHING",
        {feature_defaults()}, nullptr);
@@ -637,7 +692,8 @@ bool Store::delete_socks5_server(const std::string& id, std::string* error) {
 std::vector<ProxyConfig> Store::proxies() const {
   std::vector<ProxyConfig> out;
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"
-                           "cert_path,key_path,created_at,updated_at FROM proxies ORDER BY name");
+                           "cert_path,key_path,rules_json,created_at,updated_at "
+                           "FROM proxies ORDER BY name");
   if (!table) return out;
   for (const auto& row : table->rows()) out.push_back(row_to_proxy(row));
   return out;
@@ -645,7 +701,8 @@ std::vector<ProxyConfig> Store::proxies() const {
 
 std::optional<ProxyConfig> Store::proxy(const std::string& id) const {
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"
-                           "cert_path,key_path,created_at,updated_at FROM proxies WHERE id = ?",
+                           "cert_path,key_path,rules_json,created_at,updated_at "
+                           "FROM proxies WHERE id = ?",
                            {id});
   if (!table || table->empty()) return std::nullopt;
   return row_to_proxy(table->rows().front());
@@ -655,13 +712,14 @@ bool Store::save_proxy(const ProxyConfig& proxy, std::string* error) {
   const std::string now = now_iso8601();
   return exec(
       "INSERT INTO proxies(id,name,listen_host,listen_port,target,auto_start,tls,cert_path,key_path,"
-      "created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+      "rules_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
       "ON CONFLICT(id) DO UPDATE SET name=excluded.name, listen_host=excluded.listen_host, "
       "listen_port=excluded.listen_port, target=excluded.target, auto_start=excluded.auto_start, "
       "tls=excluded.tls, cert_path=excluded.cert_path, key_path=excluded.key_path, "
-      "updated_at=excluded.updated_at",
+      "rules_json=excluded.rules_json, updated_at=excluded.updated_at",
       {proxy.id, proxy.name, proxy.listen_host, proxy.listen_port, proxy.target,
        proxy.auto_start ? 1 : 0, proxy.tls ? 1 : 0, proxy.cert_path, proxy.key_path,
+       proxy_rules_to_json(proxy.rules).dump(),
        proxy.created_at.empty() ? now : proxy.created_at, now},
       error);
 }
@@ -779,6 +837,10 @@ User Store::row_to_user(const uvcpp::uvcpp_db_row& row) {
   return user;
 }
 
+nlohmann::json proxy_rules_json(const std::vector<ProxyRule>& rules) {
+  return proxy_rules_to_json(rules);
+}
+
 ProxyConfig Store::row_to_proxy(const uvcpp::uvcpp_db_row& row) {
   ProxyConfig p;
   p.id = row["id"].to_text();
@@ -790,6 +852,8 @@ ProxyConfig Store::row_to_proxy(const uvcpp::uvcpp_db_row& row) {
   p.tls = row["tls"].to_bool();
   p.cert_path = row["cert_path"].to_text();
   p.key_path = row["key_path"].to_text();
+  p.rules = proxy_rules_from_json(row.has("rules_json") ? row["rules_json"].to_text()
+                                                       : std::string("[]"));
   p.created_at = row["created_at"].to_text();
   p.updated_at = row["updated_at"].to_text();
   return p;
