@@ -23,6 +23,9 @@ All notable changes to uvscope are documented here. The format is based on
 - TLS Inspector can fetch a live `https://` URL and show the peer chain, ALPN, verification
   result/error and handshake error. Invalid certificates are still displayed with the OpenSSL
   reason. Requires libuvcpp 1.8.2; older SDKs disable the action at build time.
+- TLS certificate vault: generate self-signed RSA/ECDSA server certificates with SANs, import
+  certificate/key pairs (encrypted keys supported), list/inspect/download/delete, 0600 key files
+  and in-use protection. The reverse proxy editor can select a managed certificate.
 - SOCKS5 server sessions now show per-session bytes, UDP datagram counts and duration when the
   build uses libuvcpp 1.8.2 (`bytesAvailable: true`); older SDKs keep the previous limitation.
 - HTML preview has an opt-in “Run scripts (unsafe)” mode backed by short-lived `/preview/:id`

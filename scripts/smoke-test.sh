@@ -582,6 +582,44 @@ if auth_server:
     status, deleted = call("DELETE", f"/api/socks5/servers/{auth_server}")
     check(status == 200 and deleted.get("ok") is True, f"SOCKS5 auth delete failed: {deleted}")
 
+# Managed certificates: generate, inspect, import the same pair, delete.
+status, generated = call("POST", "/api/tls/certificates/generate", {
+    "name": "smoke-cert", "commonName": "localhost",
+    "sans": ["localhost", "127.0.0.1"], "days": 2,
+    "keyType": "ec", "keyBits": 256,
+})
+cert_meta = generated.get("certificate", {})
+check(status == 200 and generated.get("ok") is True,
+      f"certificate generation failed: {generated}")
+if cert_meta:
+    check(os.path.exists(cert_meta.get("certPath", "")), "generated cert.pem is missing")
+    key_path = cert_meta.get("keyPath", "")
+    check(os.path.exists(key_path), "generated key.pem is missing")
+    if key_path and hasattr(os, "stat") and os.name == "posix":
+        import stat as stat_module
+        check(stat_module.S_IMODE(os.stat(key_path).st_mode) == 0o600,
+              "private key permissions are not 0600")
+    status, detail = call("GET", f"/api/tls/certificates/{cert_meta['id']}")
+    sans = detail.get("certificate", {}).get("certificate", {}).get("san", [])
+    check(any(item.get("value") == "127.0.0.1" for item in sans),
+          f"generated certificate is missing the IP SAN: {sans}")
+    cert_pem = open(cert_meta["certPath"], encoding="utf-8").read()
+    key_pem = open(key_path, encoding="utf-8").read()
+    status, imported = call("POST", "/api/tls/certificates/import", {
+        "name": "smoke-import", "certPem": cert_pem, "keyPem": key_pem,
+    })
+    check(status == 200 and imported.get("ok") is True,
+          f"certificate import failed: {imported}")
+    if imported.get("certificate", {}).get("id"):
+        status, deleted = call(
+            "DELETE", f"/api/tls/certificates/{imported['certificate']['id']}")
+        check(status == 200 and deleted.get("ok") is True,
+              f"imported certificate delete failed: {deleted}")
+    status, deleted = call("DELETE", f"/api/tls/certificates/{cert_meta['id']}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"generated certificate delete failed: {deleted}")
+    check(not os.path.exists(cert_meta["certPath"]), "certificate files were not removed")
+
 # Virtual terminal: the module is off by default, then a real PTY round-trip.
 status, settings = call("PUT", "/api/settings", {"modules": {"terminal": True}})
 check(status == 200 and settings.get("ok") is True,

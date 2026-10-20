@@ -43,7 +43,7 @@ const en: Record<string, string> = {
     'Fetch a WSDL through the daemon, pick an operation, edit the generated SOAP 1.1 envelope, then invoke it like any HTTP request.',
   'help.modules.tls.title': 'TLS Inspector',
   'help.modules.tls.text':
-    'Decodes a PEM bundle certificate by certificate, or one DER certificate. You can also fetch an https:// URL directly to capture the live peer chain, ALPN and verification result; invalid certificates are still shown with the OpenSSL reason.',
+    'Decodes a PEM bundle certificate by certificate, or one DER certificate. You can also fetch an https:// URL directly to capture the live peer chain, ALPN and verification result, and manage server certificates: generate self-signed RSA/ECDSA certificates with SANs or import a certificate/key pair for the reverse proxy.',
   'help.modules.proxy.title': 'Reverse proxy',
   'help.modules.proxy.text':
     'Each listener owns a host:port and forwards HTTP/1.1 requests to one upstream. Ordered exact/prefix/regex rules can redirect or rewrite paths before forwarding; logs stream into the gateway panel every few seconds.',
@@ -142,7 +142,7 @@ const zh: Record<string, string> = {
     '通过守护进程获取 WSDL，选择操作，编辑生成的 SOAP 1.1 信封，然后像普通 HTTP 请求一样调用。',
   'help.modules.tls.title': 'TLS 检查器',
   'help.modules.tls.text':
-    '逐张解析 PEM 证书包，或解析单张 DER 证书。也可以直接抓取 https:// 地址，获取实时证书链、ALPN 与校验结果；无效证书仍会显示并附带 OpenSSL 原因。',
+    '逐张解析 PEM 证书包，或解析单张 DER 证书。也可以直接抓取 https:// 地址，获取实时证书链、ALPN 与校验结果，并管理服务端证书：生成带 SAN 的自签名 RSA/ECDSA 证书，或导入证书/私钥供反向代理使用。',
   'help.modules.proxy.title': '反向代理',
   'help.modules.proxy.text':
     '每个监听器占用一个 host:port，并将 HTTP/1.1 请求转发到一个上游。按顺序执行的精确/前缀/正则规则可以在转发前跳转或改写路径；日志每隔几秒流入网关面板。',

@@ -49,6 +49,8 @@ const en: Record<string, string> = {
   'proxy.editor.target': 'Upstream target',
   'proxy.editor.autoStart': 'Start automatically',
   'proxy.editor.tls': 'HTTPS listener',
+  'proxy.editor.managedCert': 'Managed certificate',
+  'proxy.editor.customCert': 'Custom paths',
   'proxy.editor.certPath': 'Certificate path',
   'proxy.editor.keyPath': 'Private key path',
   'proxy.editor.hint':
@@ -145,6 +147,8 @@ const zh: Record<string, string> = {
   'proxy.editor.target': '上游目标',
   'proxy.editor.autoStart': '自动启动',
   'proxy.editor.tls': 'HTTPS 监听',
+  'proxy.editor.managedCert': '受管证书',
+  'proxy.editor.customCert': '自定义路径',
   'proxy.editor.certPath': '证书路径',
   'proxy.editor.keyPath': '私钥路径',
   'proxy.editor.hint': 'HTTP/1.1 转发，支持按顺序执行的跳转/改写规则。WebSocket 升级透传仍在规划中。',

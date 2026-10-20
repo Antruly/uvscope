@@ -61,6 +61,12 @@ Each module must be enabled in Settings and the role must have `debug`.
 | GET | `/api/socks5/servers/:id/sessions` | CONNECT / BIND / UDP ASSOCIATE attempts |
 | POST | `/api/tls/inspect` | `{pem, encoding}` → certificate profile; PEM bundles return `certificates[]` |
 | POST | `/api/tls/probe` | `{url, timeoutMs, insecure}` → live peer chain + verification (libuvcpp 1.8.2+) |
+| GET | `/api/tls/certificates` | Managed certificate metadata (no private keys) |
+| POST | `/api/tls/certificates/generate` | `{name, commonName, sans[], days, keyType, keyBits}` (admin) |
+| POST | `/api/tls/certificates/import` | `{name, certPem, keyPem, password}` (admin) |
+| GET | `/api/tls/certificates/:id` | Metadata plus parsed certificate chain |
+| GET | `/api/tls/certificates/:id/cert` | Download the certificate PEM |
+| DELETE | `/api/tls/certificates/:id` | Delete a managed certificate (admin) |
 | POST | `/api/preview` | `{html, baseUrl, mode: safe\|scripts}` → `{id, url}` preview token (8 MiB, 120 s) |
 | DELETE | `/api/preview/:id` | Drop a preview token |
 | GET | `/preview/:id` | Token-based HTML with `CSP: sandbox allow-scripts` (no auth) |
@@ -178,6 +184,17 @@ Listener states are `stopped`, `starting`, `listening`, `stopping` and `error`. 
 keeps the config; fix the port and start it again. Listener configs are stored in SQLite settings
 and auto-started when `autoStart` is true. Limits mirror the TCP session limits; accepted sessions
 are retained up to 128 per listener.
+
+### Managed certificates
+
+`POST /api/tls/certificates/generate` creates a self-signed server certificate (RSA 2048/3072/4096
+or ECDSA P-256/P-384) with SAN entries, `serverAuth` EKU and `CA:FALSE`. `POST .../import`
+accepts a PEM certificate (leaf first, intermediates optional) and a matching private key;
+encrypted keys are decrypted with the optional `password`. Files live under `<data>/certs/<id>/`:
+`cert.pem`, `key.pem` (0600) and `meta.json`. The API never returns key material, only local
+`certPath`/`keyPath` values that the reverse proxy editor can select.
+
+Deleting a certificate still referenced by a proxy returns `409 certificate_in_use`.
 
 ## Reverse proxy routing rules
 

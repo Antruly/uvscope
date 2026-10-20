@@ -133,6 +133,16 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
 - Stopping a listener closes the listener handle and all accepted clients; the server object is
   retired and deleted by the 500 ms sweep after its close callbacks have run.
 
+## Certificate vault
+
+- `CertificateManager` stores generated or imported server certificates under
+  `<data>/certs/<id>/` (`cert.pem`, `key.pem`, `meta.json`).
+- Self-signed generation uses OpenSSL EVP keygen and X509v3 extensions (SAN, serverAuth,
+  CA:FALSE); imports validate that the key matches the leaf and re-encode the key unencrypted.
+- POSIX permissions are 0700 for the certificate directory and 0600 for keys; the API exposes
+  only metadata and local paths. Deleting an in-use certificate is refused.
+- The reverse proxy editor can pick a managed certificate and fills its local cert/key paths.
+
 ## Virtual terminal runtime
 
 - `TerminalManager` owns one libuv loop thread for PTY masters; web handlers only enqueue

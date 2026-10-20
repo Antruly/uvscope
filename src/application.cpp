@@ -391,6 +391,7 @@ bool Application::initialize() {
     if (!socks5_->add_server(server, nullptr)) continue;
     if (server.auto_start) socks5_->start_server(server.id, nullptr);
   }
+  certificates_.reset(new CertificateManager(options_.data_dir / "certs"));
   terminal_.reset(new TerminalManager());
   if (!terminal_->available()) {
     std::fprintf(stderr, "uvscope: terminal sessions unavailable: %s\n",
@@ -428,6 +429,7 @@ bool Application::initialize() {
   register_debug_routes();
   register_socks5_routes();
   register_terminal_routes();
+  register_certificate_routes();
   register_proxy_routes();
   register_admin_routes();
   register_update_routes();
@@ -1865,6 +1867,170 @@ void Application::register_terminal_routes() {
                    const std::string hello = R"({"type":"attached","id":")" + *id + "\"}";
                    conn->send_text(hello.data(), hello.size());
                  });
+}
+
+// ---------------------------------------------------------------------------
+// Managed certificates
+// ---------------------------------------------------------------------------
+void Application::register_certificate_routes() {
+  app_.get("/api/tls/certificates", [this](uvcpp::uvcpp_web_request& req,
+                                           uvcpp::uvcpp_web_response& resp,
+                                           uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tls", "debug");
+    if (!principal) return;
+    if (!certificates_) {
+      send_error(resp, 503, "certificate store is unavailable", "unavailable");
+      return;
+    }
+    send_json(resp, 200, certificates_->list());
+  });
+
+  app_.post("/api/tls/certificates/generate",
+            [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                   uvcpp::uvcpp_web_next) {
+              const auto principal =
+                  auth_.require_module(req, resp, "tls", "admin.settings");
+              if (!principal) return;
+              if (!certificates_) {
+                send_error(resp, 503, "certificate store is unavailable", "unavailable");
+                return;
+              }
+              const auto body = parse_json(req, resp);
+              if (!body) return;
+              GenerateCertificateInput input;
+              input.name = string_field(*body, "name");
+              input.common_name = string_field(*body, "commonName");
+              input.days = int_field(*body, "days", 365);
+              input.key_type = lower(string_field(*body, "keyType", "rsa"));
+              input.key_bits = int_field(*body, "keyBits", 2048);
+              if (body->contains("sans")) {
+                if ((*body)["sans"].is_array()) {
+                  for (const auto& item : (*body)["sans"]) {
+                    if (item.is_string()) input.sans.push_back(item.get<std::string>());
+                  }
+                } else if ((*body)["sans"].is_string()) {
+                  std::string text = (*body)["sans"].get<std::string>();
+                  std::replace(text.begin(), text.end(), '\n', ',');
+                  std::string current;
+                  for (char c : text) {
+                    if (c == ',') {
+                      if (!trim(current).empty()) input.sans.push_back(trim(current));
+                      current.clear();
+                    } else {
+                      current.push_back(c);
+                    }
+                  }
+                  if (!trim(current).empty()) input.sans.push_back(trim(current));
+                }
+              }
+              std::string error;
+              auto result = certificates_->generate(input, &error);
+              if (!result.is_object()) {
+                send_error(resp, 400, error.empty() ? "could not generate certificate" : error,
+                           "certificate_failed");
+                return;
+              }
+              send_json(resp, 200, result);
+            });
+
+  app_.post("/api/tls/certificates/import",
+            [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                   uvcpp::uvcpp_web_next) {
+              const auto principal =
+                  auth_.require_module(req, resp, "tls", "admin.settings");
+              if (!principal) return;
+              if (!certificates_) {
+                send_error(resp, 503, "certificate store is unavailable", "unavailable");
+                return;
+              }
+              const auto body = parse_json(req, resp);
+              if (!body) return;
+              ImportCertificateInput input;
+              input.name = string_field(*body, "name");
+              input.cert_pem = string_field(*body, "certPem");
+              input.key_pem = string_field(*body, "keyPem");
+              input.password = string_field(*body, "password");
+              std::string error;
+              auto result = certificates_->import(input, &error);
+              if (!result.is_object()) {
+                send_error(resp, 400, error.empty() ? "could not import certificate" : error,
+                           "certificate_failed");
+                return;
+              }
+              send_json(resp, 200, result);
+            });
+
+  app_.get("/api/tls/certificates/:id", [this](uvcpp::uvcpp_web_request& req,
+                                               uvcpp::uvcpp_web_response& resp,
+                                               uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tls", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !certificates_) {
+      send_error(resp, 404, "certificate not found", "not_found");
+      return;
+    }
+    const auto result = certificates_->get(*id);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("certificate not found")),
+                 "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/tls/certificates/:id/cert",
+           [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                  uvcpp::uvcpp_web_next) {
+             const auto principal = auth_.require_module(req, resp, "tls", "debug");
+             if (!principal) return;
+             const std::string* id = req.param("id");
+             const auto path = id && certificates_ ? certificates_->cert_path(*id)
+                                                   : std::nullopt;
+             const std::string pem = path ? read_file(*path, 4 * 1024 * 1024) : std::string();
+             if (pem.empty()) {
+               send_error(resp, 404, "certificate not found", "not_found");
+               return;
+             }
+             resp.status(200)
+                 .set_header("Cache-Control", "no-store")
+                 .set_header("Content-Type", "application/x-pem-file")
+                 .set_header("Content-Disposition",
+                             "attachment; filename=\"" + (id ? *id : std::string("cert")) +
+                                 "-cert.pem\"")
+                 .body(pem);
+             resp.end();
+           });
+
+  app_.del("/api/tls/certificates/:id",
+           [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                  uvcpp::uvcpp_web_next) {
+             const auto principal =
+                 auth_.require_module(req, resp, "tls", "admin.settings");
+             if (!principal) return;
+             const std::string* id = req.param("id");
+             if (!id || !certificates_) {
+               send_error(resp, 404, "certificate not found", "not_found");
+               return;
+             }
+             const auto cert_path = certificates_->cert_path(*id);
+             const auto key_path = certificates_->key_path(*id);
+             for (const auto& proxy : store_.proxies()) {
+               if ((cert_path && proxy.cert_path == *cert_path) ||
+                   (key_path && proxy.key_path == *key_path)) {
+                 send_error(resp, 409,
+                            "certificate is used by reverse proxy: " + proxy.name,
+                            "certificate_in_use");
+                 return;
+               }
+             }
+             std::string error;
+             if (!certificates_->remove(*id, &error)) {
+               send_error(resp, 404, error, "not_found");
+               return;
+             }
+             send_json(resp, 200, {{"ok", true}});
+           });
 }
 
 // ---------------------------------------------------------------------------

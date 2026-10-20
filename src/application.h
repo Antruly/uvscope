@@ -13,6 +13,7 @@
 #include <webapp/uvcpp_web_app.h>
 
 #include "auth.h"
+#include "certificate_manager.h"
 #include "preview_store.h"
 #include "proxy_manager.h"
 #include "socks5_manager.h"
@@ -64,6 +65,7 @@ class Application {
   void register_debug_routes();
   void register_socks5_routes();
   void register_terminal_routes();
+  void register_certificate_routes();
   void register_proxy_routes();
   void register_admin_routes();
   void register_update_routes();
@@ -87,6 +89,7 @@ class Application {
   std::unique_ptr<TransportManager> transport_;
   std::unique_ptr<Socks5Manager> socks5_;
   std::unique_ptr<TerminalManager> terminal_;
+  std::unique_ptr<CertificateManager> certificates_;
   PreviewStore previews_;
   uvcpp::uvcpp_web_app app_;
   AppMetrics metrics_;

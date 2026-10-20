@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import Icon from '../components/Icon.vue'
-import { errorMessage, post } from '../api'
+import { del, errorMessage, get, post } from '../api'
 import type { CertificateInfo } from '../types'
+import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
 import { useI18nStore } from '../stores/i18n'
 
 defineOptions({ name: 'TlsView' })
 
 const ui = useUiStore()
+const auth = useAuthStore()
 const i18n = useI18nStore()
 const t = i18n.t
 const pem = ref('')
@@ -20,6 +22,41 @@ const inputEncoding = ref<'text' | 'base64'>('text')
 const liveUrl = ref('https://')
 const liveLoading = ref(false)
 const liveError = ref('')
+
+interface ManagedCertificate {
+  id: string
+  name: string
+  source: string
+  createdAt: string
+  keyType: string
+  keyBits: number
+  subject: string
+  issuer: string
+  notAfter: string
+  expired: boolean
+  certificateCount: number
+  certPath: string
+  keyPath: string
+}
+
+const certificates = ref<ManagedCertificate[]>([])
+const certLoading = ref(false)
+const certError = ref('')
+const generateOpen = ref(false)
+const importOpen = ref(false)
+const certBusy = ref(false)
+const genForm = ref({
+  name: '',
+  commonName: 'localhost',
+  sans: 'localhost, 127.0.0.1',
+  days: 365,
+  keyType: 'rsa' as 'rsa' | 'ec',
+  keyBits: 2048,
+})
+const importForm = ref({ name: '', certPem: '', keyPem: '', password: '' })
+const certFile = ref<HTMLInputElement | null>(null)
+const keyFile = ref<HTMLInputElement | null>(null)
+const canManage = computed(() => auth.user?.role === 'admin')
 
 const validityPercent = computed(() => {
   if (!info.value || !info.value.notBeforeEpoch || !info.value.notAfterEpoch) return 0
@@ -125,6 +162,135 @@ function loadExample() {
   inputEncoding.value = 'text'
   ui.notify('info', t('tls.msg.hint'))
 }
+
+async function loadCertificates() {
+  certLoading.value = true
+  certError.value = ''
+  try {
+    const response = await get<{ ok: boolean; certificates: ManagedCertificate[] }>(
+      '/api/tls/certificates',
+    )
+    if (response.ok) certificates.value = response.certificates
+  } catch (err) {
+    certError.value = errorMessage(err)
+  } finally {
+    certLoading.value = false
+  }
+}
+
+function splitSans(value: string) {
+  return value
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+async function generateCertificate() {
+  certBusy.value = true
+  certError.value = ''
+  try {
+    const response = await post<{ ok: boolean; certificate?: ManagedCertificate; error?: string }>(
+      '/api/tls/certificates/generate',
+      {
+        name: genForm.value.name,
+        commonName: genForm.value.commonName,
+        sans: splitSans(genForm.value.sans),
+        days: genForm.value.days,
+        keyType: genForm.value.keyType,
+        keyBits: genForm.value.keyBits,
+      },
+    )
+    if (!response.ok || !response.certificate) {
+      certError.value = response.error || t('tls.vault.generateFailed')
+      return
+    }
+    generateOpen.value = false
+    await loadCertificates()
+    ui.notify('success', t('tls.vault.generated'), response.certificate.subject)
+  } catch (err) {
+    certError.value = errorMessage(err)
+  } finally {
+    certBusy.value = false
+  }
+}
+
+async function importCertificate() {
+  certBusy.value = true
+  certError.value = ''
+  try {
+    const response = await post<{ ok: boolean; certificate?: ManagedCertificate; error?: string }>(
+      '/api/tls/certificates/import',
+      importForm.value,
+    )
+    if (!response.ok || !response.certificate) {
+      certError.value = response.error || t('tls.vault.importFailed')
+      return
+    }
+    importOpen.value = false
+    importForm.value = { name: '', certPem: '', keyPem: '', password: '' }
+    await loadCertificates()
+    ui.notify('success', t('tls.vault.imported'), response.certificate.subject)
+  } catch (err) {
+    certError.value = errorMessage(err)
+  } finally {
+    certBusy.value = false
+  }
+}
+
+async function deleteCertificate(cert: ManagedCertificate) {
+  if (!window.confirm(t('tls.vault.deleteConfirm', { name: cert.name }))) return
+  try {
+    const response = await del<{ ok: boolean; error?: string }>(
+      `/api/tls/certificates/${cert.id}`,
+    )
+    if (!response.ok) {
+      ui.notify('error', t('tls.vault.deleteFailed'), response.error)
+      return
+    }
+    certificates.value = certificates.value.filter((item) => item.id !== cert.id)
+    ui.notify('success', t('tls.vault.deleted'))
+  } catch (err) {
+    ui.toastError(err, t('tls.vault.deleteFailed'))
+  }
+}
+
+async function inspectManaged(cert: ManagedCertificate) {
+  try {
+    const response = await get<{ ok: boolean; certificate: { certificate?: CertificateInfo } }>(
+      `/api/tls/certificates/${cert.id}`,
+    )
+    const parsed = response.certificate?.certificate
+    if (parsed) {
+      info.value = { ...parsed, ok: true }
+      liveError.value = ''
+      ui.notify('success', t('tls.msg.decoded'), cert.name)
+    }
+  } catch (err) {
+    ui.toastError(err, t('tls.msg.parseFailed'))
+  }
+}
+
+async function readTextFile(event: Event, target: 'cert' | 'key') {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (file.size > 1024 * 1024) {
+    ui.notify('warning', t('tls.msg.fileTooLarge'))
+    return
+  }
+  const text = await file.text()
+  if (target === 'cert') importForm.value.certPem = text
+  else importForm.value.keyPem = text
+  input.value = ''
+}
+
+function downloadCertificate(cert: ManagedCertificate) {
+  window.open(`/api/tls/certificates/${cert.id}/cert`, '_blank', 'noopener')
+}
+
+onMounted(() => {
+  void loadCertificates()
+})
 </script>
 
 <template>
@@ -288,5 +454,136 @@ function loadExample() {
         </template>
       </section>
     </div>
+
+    <section class="card cert-vault">
+      <header class="card__head">
+        <div>
+          <span class="eyebrow">{{ t('tls.vault.eyebrow') }}</span>
+          <h3>{{ t('tls.vault.title') }}</h3>
+        </div>
+        <div v-if="canManage" class="card__tools">
+          <button class="button button--sm" @click="generateOpen = true; certError = ''">
+            <Icon name="plus" :size="14" />{{ t('tls.vault.generate') }}
+          </button>
+          <button class="button button--sm" @click="importOpen = true; certError = ''">
+            <Icon name="upload" :size="14" />{{ t('tls.vault.import') }}
+          </button>
+        </div>
+      </header>
+      <p class="muted cert-vault__lead">{{ t('tls.vault.lead') }}</p>
+      <div v-if="certError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ certError }}</div>
+      <div v-if="certLoading" class="session-empty"><span class="spinner" /></div>
+      <div v-else-if="certificates.length" class="vault-list">
+        <div v-for="cert in certificates" :key="cert.id" class="vault-item">
+          <div class="vault-main">
+            <strong>{{ cert.name }}</strong>
+            <small>{{ cert.subject }} · {{ cert.source }} · {{ cert.notAfter }}</small>
+            <code class="mono">{{ cert.certPath }}</code>
+          </div>
+          <div class="vault-actions">
+            <button class="icon-button icon-button--sm" :title="t('tls.vault.inspect')" @click="inspectManaged(cert)">
+              <Icon name="shield" :size="14" />
+            </button>
+            <button class="icon-button icon-button--sm" :title="t('tls.vault.download')" @click="downloadCertificate(cert)">
+              <Icon name="download" :size="14" />
+            </button>
+            <button v-if="canManage" class="icon-button icon-button--sm icon-button--danger" :title="t('tls.vault.delete')" @click="deleteCertificate(cert)">
+              <Icon name="trash" :size="14" />
+            </button>
+          </div>
+        </div>
+      </div>
+      <div v-else class="session-empty">
+        <Icon name="shield" :size="20" />
+        <span>{{ t('tls.vault.empty') }}</span>
+      </div>
+    </section>
+
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="generateOpen" class="modal-scrim" @click.self="generateOpen = false">
+          <form class="modal-card modal-card--wide" @submit.prevent="generateCertificate">
+            <header class="modal-head">
+              <div><span class="eyebrow">{{ t('tls.vault.eyebrow') }}</span><h3>{{ t('tls.generate.title') }}</h3></div>
+              <button type="button" class="icon-button" @click="generateOpen = false"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <div class="form-grid">
+                <label class="field field--grow"><span>{{ t('tls.generate.name') }}</span><input v-model="genForm.name" :placeholder="t('tls.generate.namePlaceholder')" /></label>
+                <label class="field field--grow"><span>{{ t('tls.generate.commonName') }}</span><input v-model="genForm.commonName" class="mono" /></label>
+              </div>
+              <label class="field"><span>{{ t('tls.generate.sans') }}</span><textarea v-model="genForm.sans" class="code-input code-input--short" spellcheck="false" :placeholder="t('tls.generate.sansPlaceholder')" /></label>
+              <div class="form-grid">
+                <label class="field"><span>{{ t('tls.generate.days') }}</span><input v-model.number="genForm.days" type="number" min="1" max="3650" class="mono" /></label>
+                <label class="field"><span>{{ t('tls.generate.keyType') }}</span>
+                  <select v-model="genForm.keyType" class="select" @change="genForm.keyBits = genForm.keyType === 'ec' ? 256 : 2048">
+                    <option value="rsa">RSA</option>
+                    <option value="ec">ECDSA</option>
+                  </select>
+                </label>
+                <label class="field"><span>{{ t('tls.generate.keyBits') }}</span>
+                  <select v-model.number="genForm.keyBits" class="select">
+                    <template v-if="genForm.keyType === 'rsa'">
+                      <option :value="2048">2048</option>
+                      <option :value="3072">3072</option>
+                      <option :value="4096">4096</option>
+                    </template>
+                    <template v-else>
+                      <option :value="256">P-256</option>
+                      <option :value="384">P-384</option>
+                    </template>
+                  </select>
+                </label>
+              </div>
+              <div v-if="certError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ certError }}</div>
+              <p class="modal-hint">{{ t('tls.generate.hint') }}</p>
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="generateOpen = false">{{ t('tls.generate.cancel') }}</button>
+              <button type="submit" class="button button--primary" :disabled="certBusy">
+                <span v-if="certBusy" class="spinner" /><Icon v-else name="plus" :size="15" />{{ t('tls.generate.action') }}
+              </button>
+            </footer>
+          </form>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="importOpen" class="modal-scrim" @click.self="importOpen = false">
+          <form class="modal-card modal-card--wide" @submit.prevent="importCertificate">
+            <header class="modal-head">
+              <div><span class="eyebrow">{{ t('tls.vault.eyebrow') }}</span><h3>{{ t('tls.import.title') }}</h3></div>
+              <button type="button" class="icon-button" @click="importOpen = false"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <label class="field"><span>{{ t('tls.import.name') }}</span><input v-model="importForm.name" :placeholder="t('tls.import.namePlaceholder')" /></label>
+              <label class="field">
+                <span>{{ t('tls.import.cert') }}</span>
+                <textarea v-model="importForm.certPem" class="code-input code-input--short" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" />
+                <button type="button" class="link-button" @click="certFile?.click()"><Icon name="upload" :size="13" />{{ t('tls.import.chooseFile') }}</button>
+                <input ref="certFile" type="file" accept=".pem,.crt,.cer" hidden @change="readTextFile($event, 'cert')" />
+              </label>
+              <label class="field">
+                <span>{{ t('tls.import.key') }}</span>
+                <textarea v-model="importForm.keyPem" class="code-input code-input--short" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----" />
+                <button type="button" class="link-button" @click="keyFile?.click()"><Icon name="upload" :size="13" />{{ t('tls.import.chooseFile') }}</button>
+                <input ref="keyFile" type="file" accept=".pem,.key" hidden @change="readTextFile($event, 'key')" />
+              </label>
+              <label class="field"><span>{{ t('tls.import.password') }}</span><input v-model="importForm.password" type="password" class="mono" :placeholder="t('tls.import.passwordPlaceholder')" /></label>
+              <div v-if="certError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ certError }}</div>
+              <p class="modal-hint">{{ t('tls.import.hint') }}</p>
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="importOpen = false">{{ t('tls.import.cancel') }}</button>
+              <button type="submit" class="button button--primary" :disabled="certBusy">
+                <span v-if="certBusy" class="spinner" /><Icon v-else name="upload" :size="15" />{{ t('tls.import.action') }}
+              </button>
+            </footer>
+          </form>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>

@@ -52,6 +52,26 @@ const blank = () => ({
   rules: [] as ProxyRule[],
 })
 const form = ref(blank())
+const managedCerts = ref<Array<{ id: string; name: string; certPath: string; keyPath: string; notAfter: string }>>([])
+const selectedCertId = ref('')
+
+async function loadManagedCerts() {
+  try {
+    const response = await get<{ ok: boolean; certificates: Array<{ id: string; name: string; certPath: string; keyPath: string; notAfter: string }> }>(
+      '/api/tls/certificates',
+    )
+    if (response.ok) managedCerts.value = response.certificates
+  } catch {
+    managedCerts.value = []
+  }
+}
+
+function applyManagedCert() {
+  const cert = managedCerts.value.find((item) => item.id === selectedCertId.value)
+  if (!cert) return
+  form.value.certPath = cert.certPath
+  form.value.keyPath = cert.keyPath
+}
 
 const canOperate = computed(() => auth.user?.role === 'admin' || auth.user?.role === 'operator')
 const activeCount = computed(() => proxies.value.filter((proxy) => proxy.running).length)
@@ -73,8 +93,10 @@ async function load() {
 
 function openCreate() {
   form.value = blank()
+  selectedCertId.value = ''
   formError.value = ''
   editorOpen.value = true
+  void loadManagedCerts()
 }
 
 function openEdit(proxy: ProxyInfo) {
@@ -90,8 +112,15 @@ function openEdit(proxy: ProxyInfo) {
     keyPath: proxy.keyPath || '',
     rules: (proxy.rules || []).map((rule) => ({ ...rule })),
   }
+  selectedCertId.value = ''
   formError.value = ''
   editorOpen.value = true
+  void loadManagedCerts().then(() => {
+    const match = managedCerts.value.find(
+      (item) => item.certPath === form.value.certPath && item.keyPath === form.value.keyPath,
+    )
+    if (match) selectedCertId.value = match.id
+  })
 }
 
 function addRule() {
@@ -343,6 +372,13 @@ onBeforeUnmount(stopLogPolling)
                 <label class="switch-field"><span>{{ t('proxy.editor.autoStart') }}</span><button type="button" class="switch" :class="{ on: form.autoStart }" @click="form.autoStart = !form.autoStart"><i /></button></label>
                 <label class="switch-field"><span>{{ t('proxy.editor.tls') }}</span><button type="button" class="switch" :class="{ on: form.tls }" @click="form.tls = !form.tls"><i /></button></label>
               </div>
+              <label v-if="form.tls" class="field">
+                <span>{{ t('proxy.editor.managedCert') }}</span>
+                <select v-model="selectedCertId" class="select" @change="applyManagedCert">
+                  <option value="">{{ t('proxy.editor.customCert') }}</option>
+                  <option v-for="cert in managedCerts" :key="cert.id" :value="cert.id">{{ cert.name }} · {{ cert.notAfter }}</option>
+                </select>
+              </label>
               <div v-if="form.tls" class="form-grid">
                 <label class="field"><span>{{ t('proxy.editor.certPath') }}</span><input v-model="form.certPath" class="mono" placeholder="/etc/ssl/certs/site.pem" /></label>
                 <label class="field"><span>{{ t('proxy.editor.keyPath') }}</span><input v-model="form.keyPath" class="mono" placeholder="/etc/ssl/private/site.key" /></label>
