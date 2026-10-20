@@ -174,9 +174,11 @@
 
 ### M3 — 协议深度（0.4.x）
 
-- HTTP/2：
-  - 验证 ALPN、stream ID、GOAWAY、HEADERS/DATA 摘要；
-  - 失败时明确区分 TLS、ALPN、GOAWAY、连接重置。
+- HTTP/2：（进行中）显式 `protocol: "http2"` 已通过 ALPN 协商 h2，返回 stream ID、GOAWAY 与
+  前 200 个接收帧摘要（类型/标志/流/载荷长度/错误码）；Linux smoke 已覆盖，Windows/macOS
+  CI 的运行时验证待补。`auto` 仍走 HTTP/1.1。
+  - 剩余：ALPN/GOAWAY/连接重置的失败分类细化；
+  - 剩余：跨平台运行时矩阵。
 - HTTP/3 / QUIC：
   - libuvcpp HTTP/3 客户端；
   - 0-RTT、连接迁移、QPACK 摘要；
@@ -455,7 +457,8 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 - libuvcpp 1.8.2 是发布版 SDK，uvscope 不再携带本地补丁；低于 1.8.2 的 SDK 在 configure
   阶段被拒绝。1.8.2 已包含 AF_UNSPEC、TLS 证书链、SOCKS5 会话统计、总 deadline、WebSocket
   逐帧、HTTP 流式响应与 h2/h3 事件，是 0.4 协议深度切片的上游基础。
-- 0.3.0 发布构建默认关闭 libuvcpp 的 HTTP/2、QUIC、HTTP/3 选项，避免发布“能选但不可用”的协议路径。
+- 0.3.0 发布构建默认关闭 libuvcpp 的 QUIC、HTTP/3 选项，避免发布“能选但不可用”的协议路径；
+  HTTP/2 自 1.8.2 起默认启用，`UVCPP_ENABLE_NGHTTP2=OFF` 可构建精简版。
 - 本地开发可以打开这些选项做实验，但不应把它们写进稳定版发行说明。
 - Windows 使用 MinGW-w64，不使用 MSVC 作为默认工具链。
 

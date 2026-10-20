@@ -12,7 +12,8 @@ All notable changes to uvscope are documented here. The format is based on
   POSIX sync I/O timeouts, complete `cmake --install`, SOCKS5 proxy stage) is retired because
   1.8.1/1.8.2 ship those fixes. Configure now fails early when the detected SDK is older than
   1.8.2, and the TLS live-chain / SOCKS5 session-stat paths are always compiled instead of
-  depending on a capability probe.
+  depending on a capability probe. The managed SDK also enables HTTP/2 (nghttp2); HTTP/3/QUIC
+  stay closed.
 
 ### Added
 
@@ -32,6 +33,11 @@ All notable changes to uvscope are documented here. The format is based on
   disconnects for the daemon lifetime.
 - HTTP probe results now expose the negotiated stream ID and `retryable`, plus GOAWAY state when
   the build enables HTTP/2. The timing panel shows both; HTTP/1.1 reports 0 / false.
+- HTTP/2 over TLS is enabled in the default SDK: `protocol: "http2"` negotiates ALPN `h2`, and
+  the probe returns a summary of the first 200 received frames (type, flags, stream, payload
+  length, RST_STREAM/GOAWAY error codes). The timing panel lists the frame summary. The smoke
+  test runs a real h2 request against a local Node.js server; lean builds can opt out with
+  `UVCPP_ENABLE_NGHTTP2=OFF`.
 - TLS Inspector decodes every certificate in a PEM bundle (up to 32 displayed) and lists the
   chain in input order with per-certificate validity and fingerprints.
 - TLS Inspector can fetch a live `https://` URL and show the peer chain, ALPN, verification

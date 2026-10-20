@@ -399,7 +399,7 @@ onBeforeUnmount(() => {
           <div class="request-toolbar">
             <div class="protocol-switch" role="group" :aria-label="t('http.protocol.group')">
               <button :class="{ active: protocol === 'http1' }" @click="protocol = 'http1'">HTTP/1.1</button>
-              <button :class="{ active: protocol === 'http2' }" :title="t('http.protocol.http2Title')" @click="protocol = 'http2'">H2 <em>{{ t('http.protocol.experimental') }}</em></button>
+              <button :class="{ active: protocol === 'http2' }" :title="t('http.protocol.http2Title')" @click="protocol = 'http2'">H2</button>
               <button :class="{ active: protocol === 'http3' }" :title="t('http.protocol.http3Title')" @click="protocol = 'http3'">H3 <em>{{ t('http.protocol.experimental') }}</em></button>
             </div>
             <div class="request-toolbar__right">
@@ -624,6 +624,27 @@ onBeforeUnmount(() => {
                   </strong>
                 </div>
                 <div><span>{{ t('http.timing.sentAt') }}</span><strong class="mono">{{ result.startedAt }}</strong></div>
+              </div>
+              <div v-if="result.h2" class="h2-frames">
+                <header class="h2-frames__head">
+                  <span>{{ t('http.h2.title') }}</span>
+                  <span class="mono">{{ t('http.h2.count', { count: result.h2.frameCount }) }}</span>
+                </header>
+                <div v-if="result.h2.frames.length" class="h2-frames__list">
+                  <div v-for="(frame, index) in result.h2.frames" :key="index" class="h2-frame">
+                    <span class="h2-frame__type">{{ frame.type }}</span>
+                    <span class="mono" :title="t('http.h2.stream')">{{ frame.streamId }}</span>
+                    <span class="mono" :title="t('http.h2.length')">{{ frame.length }} B</span>
+                    <span class="mono" :title="t('http.h2.flags')">
+                      {{ frame.flags ? `0x${frame.flags.toString(16)}` : '—' }}
+                    </span>
+                    <span v-if="frame.errorCode" class="h2-frame__error mono">{{ frame.errorCode }}</span>
+                  </div>
+                </div>
+                <p v-else class="h2-frames__empty">{{ t('http.h2.empty') }}</p>
+                <p v-if="result.h2.framesTruncated" class="h2-frames__hint">
+                  {{ t('http.h2.truncated', { limit: result.h2.maxFrames }) }}
+                </p>
               </div>
             </div>
           </template>

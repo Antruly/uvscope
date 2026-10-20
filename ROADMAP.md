@@ -41,7 +41,8 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 
 ## 0.4 — protocol depth
 
-- [ ] Reliable HTTP/2 over libuvcpp (ALPN, stream IDs, GOAWAY, frame summary)
+- [x] HTTP/2 over libuvcpp 1.8.2 (ALPN, stream IDs, GOAWAY, frame summary; Linux smoke)
+- [ ] HTTP/2 runtime validation on the Windows and macOS CI jobs
 - [ ] HTTP/3 / QUIC client with QPACK / 0-RTT / migration events
 - [ ] Raw QUIC stream and datagram debugging
 - [ ] Compression decoding and streaming large bodies

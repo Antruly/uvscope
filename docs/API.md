@@ -60,7 +60,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 | GET | `/api/socks5/servers/:id/events?after=&limit=` | Server event log |
 | GET | `/api/socks5/servers/:id/sessions` | CONNECT / BIND / UDP ASSOCIATE attempts |
 | POST | `/api/tls/inspect` | `{pem, encoding}` → certificate profile; PEM bundles return `certificates[]` |
-| POST | `/api/tls/probe` | `{url, timeoutMs, insecure}` → live peer chain + verification (libuvcpp 1.8.2+) |
+| POST | `/api/tls/probe` | `{url, timeoutMs, insecure}` → live peer chain + verification |
 | GET | `/api/tls/certificates` | Managed certificate metadata (no private keys) |
 | POST | `/api/tls/certificates/generate` | `{name, commonName, sans[], days, keyType, keyBits}` (admin) |
 | POST | `/api/tls/certificates/import` | `{name, certPem, keyPem, password}` (admin) |
@@ -78,9 +78,29 @@ Each module must be enabled in Settings and the role must have `debug`.
 `encoding` is `text` or `hex`. Probe results always include `ok`; protocol failures are reported in
 the result rather than as an API error.
 
-`/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). Builds with
-HTTP/2 enabled also return `goaway: {received, errorCode, lastStreamId}`; it is omitted on
-HTTP/3-only builds.
+`/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). With
+`protocol: "http2"` over `https://`, the daemon negotiates ALPN `h2` and also returns
+`goaway: {received, errorCode, lastStreamId}` plus a frame summary:
+
+```json
+"h2": {
+  "frameCount": 4,
+  "framesTruncated": false,
+  "maxFrames": 200,
+  "frames": [
+    {"type": "SETTINGS", "typeId": 4, "flags": 0, "streamId": 0, "length": 0,
+     "errorCode": 0, "lastStreamId": 0},
+    {"type": "HEADERS", "typeId": 1, "flags": 4, "streamId": 1, "length": 34,
+     "errorCode": 0, "lastStreamId": 0}
+  ]
+}
+```
+
+`frames` holds the first 200 **received** frames (payload bytes are not captured), in arrival
+order; `frameCount` is the total seen and `framesTruncated` marks the cap. `type` uses the RFC
+9113 names, `flags` is the raw bit mask, and `errorCode` / `lastStreamId` are meaningful only on
+`RST_STREAM` / `GOAWAY`. An SDK built without nghttp2 makes the daemon reject `protocol: "http2"`
+with `this libuvcpp build has no HTTP/2 support`.
 
 `POST /api/preview` stores a captured HTML document in memory (max 8 entries, 8 MiB each,
 120 s TTL) and returns a random token. `mode: "safe"` allows remote CSS/images/fonts/frames but
@@ -163,17 +183,15 @@ at the top level) plus `live`:
 - The chain is returned even when verification fails (self-signed, expired, wrong host), so the
   UI can inspect the certificate; `verified` is false and `verifyError` carries the OpenSSL text.
 - `insecure: true` disables verification for the handshake itself.
-- Requires libuvcpp 1.8.2 (`peer_cert_chain_der`); older builds return
-  `{ok: false, code: "unsupported"}`.
+- The build requires libuvcpp 1.8.2, which provides `peer_cert_chain_der`.
 - HTTP/3 is not supported by this probe; ALPN is reported when the build enables HTTP/2.
 
 `POST /api/socks5/servers` binds a local SOCKS5 port. Leaving `username` and `password` empty
 enables no-auth; providing both enables RFC 1929 username/password authentication. The password is
 stored as a PBKDF2 hash and is never returned. SOCKS5 servers default to `127.0.0.1` and must be
 moved to a LAN address explicitly. Sessions report the requested command, target, peer, status and
-error. With libuvcpp 1.8.2 the session-end callback adds `bytesClientToTarget`,
-`bytesTargetToClient`, `udpDatagrams`, `udpBytes`, `durationMs`, `endedAt` and `endStatus`; older
-SDKs omit them and report `bytesAvailable: false`.
+error. The libuvcpp 1.8.2 session-end callback adds `bytesClientToTarget`,
+`bytesTargetToClient`, `udpDatagrams`, `udpBytes`, `durationMs`, `endedAt` and `endStatus`.
 
 `POST /api/transport/listeners` binds a local port; `transport` is `tcp` or `udp`. TCP listeners
 produce accepted-session records with `peer`, `state`, byte counters and a per-session event log.

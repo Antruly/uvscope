@@ -21,6 +21,11 @@ sdk_is_current() {
   patch="$(awk '/^#define UVCPP_VERSION_PATCH /{print $3; exit}' "${header}")"
   [[ "${major}" =~ ^[0-9]+$ && "${minor}" =~ ^[0-9]+$ && "${patch}" =~ ^[0-9]+$ ]] || return 1
   (( major > 1 || (major == 1 && (minor > 8 || (minor == 8 && patch >= 2))) )) || return 1
+  # The managed SDK enables HTTP/2 by default; a cached 1.8.2 tree built without it must
+  # be rebuilt rather than silently dropping h2 from the daemon.
+  if [[ "${UVCPP_ENABLE_NGHTTP2:-ON}" == "ON" ]]; then
+    grep -q '^#  define UVCPP_NGHTTP2_ENABLE 1$' "${prefix}/include/uvcpp/uvcpp_config.h" || return 1
+  fi
   return 0
 }
 

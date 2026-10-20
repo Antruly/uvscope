@@ -119,6 +119,16 @@ export interface Socks5ProxyInfo {
   error?: string
 }
 
+export interface Http2Frame {
+  type: string
+  typeId: number
+  flags: number
+  streamId: number
+  length: number
+  errorCode: number
+  lastStreamId: number
+}
+
 export interface HttpResult {
   ok: boolean
   error?: string
@@ -146,6 +156,12 @@ export interface HttpResult {
   streamId?: number
   retryable?: boolean
   goaway?: { received: boolean; errorCode: number; lastStreamId: number }
+  h2?: {
+    frameCount: number
+    framesTruncated: boolean
+    maxFrames: number
+    frames: Http2Frame[]
+  }
   startedAt?: string
   finishedAt?: string
 }

@@ -2845,6 +2845,56 @@ button.nav-item {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.h2-frames {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.h2-frames__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--panel-soft);
+  font-size: 10px;
+  color: var(--muted);
+}
+.h2-frames__list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.h2-frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px 60px 52px auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+}
+.h2-frame__type {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.h2-frame > span:not(.h2-frame__type) {
+  color: var(--muted);
+  text-align: right;
+}
+.h2-frame__error {
+  color: var(--danger);
+}
+.h2-frames__empty,
+.h2-frames__hint {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--faint);
+}
 .history-panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);

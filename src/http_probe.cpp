@@ -113,7 +113,41 @@ struct AsyncState {
   bool proxy_connect_failed = false;
   uvcpp::uvcpp_http_response response;
   std::string alpn;
+  bool h2_active = false;
+  std::size_t h2_frame_count = 0;
+  bool h2_frames_truncated = false;
+  nlohmann::json h2_frames = nlohmann::json::array();
 };
+
+// One h2 frame summary is a few hundred bytes; capping keeps a busy stream from
+// turning a debug response into a capture file.
+constexpr std::size_t kMaxH2Frames = 200;
+
+#if UVCPP_NGHTTP2_ENABLE
+const char* h2_frame_type_name(int type) {
+  switch (type) {
+    case uvcpp::H2_FRAME_DATA: return "DATA";
+    case uvcpp::H2_FRAME_HEADERS: return "HEADERS";
+    case uvcpp::H2_FRAME_PRIORITY: return "PRIORITY";
+    case uvcpp::H2_FRAME_RST_STREAM: return "RST_STREAM";
+    case uvcpp::H2_FRAME_SETTINGS: return "SETTINGS";
+    case uvcpp::H2_FRAME_PUSH_PROMISE: return "PUSH_PROMISE";
+    case uvcpp::H2_FRAME_PING: return "PING";
+    case uvcpp::H2_FRAME_GOAWAY: return "GOAWAY";
+    case uvcpp::H2_FRAME_WINDOW_UPDATE: return "WINDOW_UPDATE";
+    case uvcpp::H2_FRAME_CONTINUATION: return "CONTINUATION";
+    default: return "UNKNOWN";
+  }
+}
+#endif
+
+void attach_h2_frames(nlohmann::json& result, const AsyncState& state) {
+  if (!state.h2_active) return;
+  result["h2"] = {{"frameCount", state.h2_frame_count},
+                  {"framesTruncated", state.h2_frames_truncated},
+                  {"maxFrames", kMaxH2Frames},
+                  {"frames", state.h2_frames}};
+}
 
 void add_protocol_metadata(nlohmann::json& result,
                            const uvcpp::uvcpp_http_response& response,
@@ -283,7 +317,24 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
   } else {
     AsyncState state;
 #if UVCPP_NGHTTP2_ENABLE
-    if (protocol == "http2") client.set_http2_enabled(true);
+    if (protocol == "http2") {
+      state.h2_active = true;
+      client.set_http2_enabled(true);
+      client.set_h2_frame_callback([&state](const uvcpp::uvcpp_h2_frame_event& frame) {
+        ++state.h2_frame_count;
+        if (state.h2_frames.size() >= kMaxH2Frames) {
+          state.h2_frames_truncated = true;
+          return;
+        }
+        state.h2_frames.push_back({{"type", h2_frame_type_name(frame.type)},
+                                   {"typeId", frame.type},
+                                   {"flags", frame.flags},
+                                   {"streamId", frame.stream_id},
+                                   {"length", frame.length},
+                                   {"errorCode", frame.error_code},
+                                   {"lastStreamId", frame.last_stream_id}});
+      });
+    }
 #endif
 #if UVCPP_HTTP3_ENABLE
     if (protocol == "http3") client.set_http3_enabled(true);
@@ -329,6 +380,7 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
     }
     if (!state.done) {
       client.stop();
+      attach_h2_frames(result, state);
       if (input.proxy.enabled()) {
         result["proxy"] = socks5_failure_json(input.proxy, UV_ETIMEDOUT, "timed out", false);
       }
@@ -337,6 +389,7 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
       return result;
     }
     if (state.error != 0) {
+      attach_h2_frames(result, state);
       if (input.proxy.enabled()) {
         result["proxy"] = socks5_failure_json(input.proxy, state.error,
                                               state.proxy_detail,
@@ -352,6 +405,7 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
     response = state.response;
     alpn = state.alpn;
     add_protocol_metadata(result, response, client, protocol != "http3");
+    attach_h2_frames(result, state);
     const auto connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - connect_started)
                                 .count();

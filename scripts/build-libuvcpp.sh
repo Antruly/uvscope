@@ -45,9 +45,9 @@ if git -C "${SRC_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
   fi
 fi
 
-# The release build uses reliable HTTP/1.1 transport. The HTTP/2 and HTTP/3 preferences in
-# the UI remain experimental; enable their libuvcpp switches once upstream async
-# TLS/h2/h3 paths are validated on every target.
+# HTTP/2 ships in the default SDK; set UVCPP_ENABLE_NGHTTP2=OFF for a lean build without
+# nghttp2. HTTP/3/QUIC stay closed: upstream has not validated a release path yet.
+UVCPP_ENABLE_NGHTTP2="${UVCPP_ENABLE_NGHTTP2:-ON}"
 extra_cmake=()
 if [[ "$(uname -s)" == "Darwin" ]]; then
   extra_cmake+=("-DCMAKE_INSTALL_RPATH=@loader_path")
@@ -75,7 +75,7 @@ cmake -S "${CMAKE_SRC}" -B "${CMAKE_SRC}/build-uvscope" \
   -DUVCPP_ENABLE_OPENSSL=ON \
   -DUVCPP_ENABLE_ZLIB=ON \
   -DUVCPP_ENABLE_BROTLI=OFF \
-  -DUVCPP_ENABLE_NGHTTP2=OFF \
+  -DUVCPP_ENABLE_NGHTTP2="${UVCPP_ENABLE_NGHTTP2}" \
   -DUVCPP_ENABLE_QUIC=OFF \
   -DUVCPP_ENABLE_HTTP3=OFF \
   -DUVCPP_ENABLE_WSDL=ON \

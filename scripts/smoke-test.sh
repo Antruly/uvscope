@@ -11,13 +11,19 @@ UDP_LISTEN_PORT="${6:-18791}"
 SOCKS5_PORT="${7:-18792}"
 SOCKS5_AUTH_PORT="${8:-18793}"
 SOCKS5_UDP_TARGET_PORT="${9:-18794}"
+H2_PORT="${10:-18795}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
 PID=""
 ECHO_PID=""
+H2_PID=""
 
 cleanup() {
+  if [[ -n "${H2_PID}" ]] && kill -0 "${H2_PID}" 2>/dev/null; then
+    kill "${H2_PID}" 2>/dev/null || true
+    wait "${H2_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${ECHO_PID}" ]] && kill -0 "${ECHO_PID}" 2>/dev/null; then
     kill "${ECHO_PID}" 2>/dev/null || true
     wait "${ECHO_PID}" 2>/dev/null || true
@@ -112,6 +118,36 @@ HTTP_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/ap
   -H 'content-type: application/json' \
   -d "{\"url\":\"http://127.0.0.1:${PORT}/api/health\",\"method\":\"GET\",\"protocol\":\"http1\",\"headers\":[],\"body\":\"\",\"timeoutMs\":5000}")"
 
+# HTTP/2 over TLS (ALPN) against a local Node.js h2 server. Self-signed
+# certificates are generated per run and never checked in.
+H2_RESULT=""
+if command -v node >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+  H2_DIR="${DATA_DIR}/h2"
+  mkdir -p "${H2_DIR}"
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "${H2_DIR}/key.pem" \
+    -out "${H2_DIR}/cert.pem" -days 2 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" >/dev/null 2>&1
+  node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/h2-test-server.mjs" \
+    "${H2_DIR}/key.pem" "${H2_DIR}/cert.pem" "${H2_PORT}" >"${H2_DIR}/server.log" 2>&1 &
+  H2_PID=$!
+  for _ in $(seq 1 80); do
+    if grep -q "H2 LISTENING" "${H2_DIR}/server.log" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  if ! grep -q "H2 LISTENING" "${H2_DIR}/server.log" 2>/dev/null; then
+    echo "h2 test server did not start" >&2
+    cat "${H2_DIR}/server.log" >&2
+    exit 1
+  fi
+  H2_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/http/send" \
+    -H 'content-type: application/json' \
+    -d "{\"url\":\"https://127.0.0.1:${H2_PORT}/h2\",\"method\":\"GET\",\"protocol\":\"http2\",\"headers\":[],\"body\":\"\",\"timeoutMs\":8000,\"insecure\":true}")"
+else
+  echo "skipping HTTP/2 smoke: node or openssl is not available" >&2
+fi
+
 PROXY_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/proxies" \
   -H 'content-type: application/json' \
   -d "{\"name\":\"smoke\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${PROXY_PORT},\"target\":\"http://127.0.0.1:${PORT}\",\"start\":true,\"rules\":[{\"name\":\"redirect\",\"matchType\":\"exact\",\"pattern\":\"/smoke-redirect\",\"action\":\"redirect\",\"status\":301,\"destination\":\"/api/health\",\"preserveQuery\":true},{\"name\":\"rewrite\",\"matchType\":\"prefix\",\"pattern\":\"/smoke-rewrite\",\"action\":\"rewrite\",\"destination\":\"/api\$rest\",\"preserveQuery\":true}]}")"
@@ -150,6 +186,7 @@ EVENTS_RESULT="$(curl -fsS -b "${COOKIE_JAR}" \
 curl -fsS -b "${COOKIE_JAR}" -X DELETE "http://127.0.0.1:${PORT}/api/tcp/sessions/${SESSION_ID}" >/dev/null
 
 HTTP_RESULT="${HTTP_RESULT}" PROXY_RESULT="${PROXY_RESULT}" PROXIED="${PROXIED}" \
+H2_RESULT="${H2_RESULT}" \
 REDIRECT_HEADERS="${REDIRECT_HEADERS}" REWRITTEN="${REWRITTEN}" \
 SESSION_RESULT="${SESSION_RESULT}" SEND_ONE="${SEND_ONE}" SEND_TWO="${SEND_TWO}" \
 EVENTS_RESULT="${EVENTS_RESULT}" python3 - <<'PY'
@@ -170,6 +207,28 @@ check(http.get("ok") is True, f"HTTP probe failed: {http.get('error')}")
 check(http.get("status") == 200, f"HTTP probe status was {http.get('status')}")
 check(http.get("streamId") == 0, f"HTTP/1.1 streamId should be 0: {http.get('streamId')}")
 check(http.get("retryable") is False, f"HTTP/1.1 retryable should be false: {http.get('retryable')}")
+
+h2_checked = False
+if os.environ.get("H2_RESULT"):
+    h2 = json.loads(os.environ["H2_RESULT"])
+    if h2.get("ok") is not True:
+        if "no HTTP/2 support" in (h2.get("error") or ""):
+            print("skipping HTTP/2 assertions: SDK built without nghttp2", file=sys.stderr)
+        else:
+            check(False, f"HTTP/2 probe failed: {h2.get('error')}")
+    else:
+        h2_checked = True
+        check(h2.get("httpVersion") == "HTTP/2",
+              f"HTTP/2 version was {h2.get('httpVersion')}")
+        check(h2.get("alpn") == "h2", f"HTTP/2 ALPN was {h2.get('alpn')}")
+        check(h2.get("streamId", 0) > 0, f"HTTP/2 stream id was {h2.get('streamId')}")
+        check(h2.get("bodyText") == "h2-ok", f"HTTP/2 body was {h2.get('bodyText')!r}")
+        frames = (h2.get("h2") or {}).get("frames") or []
+        types = [frame.get("type") for frame in frames]
+        check("HEADERS" in types, f"HTTP/2 frame summary has no HEADERS: {types}")
+        check("DATA" in types, f"HTTP/2 frame summary has no DATA: {types}")
+        check(h2.get("h2", {}).get("frameCount", 0) >= len(frames),
+              "HTTP/2 frame count is smaller than the captured frames")
 
 proxy = json.loads(os.environ["PROXY_RESULT"])
 check(proxy.get("ok") is True, f"proxy creation failed: {proxy.get('error')}")
@@ -207,7 +266,8 @@ if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP session)")
+print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP session"
+      + (", HTTP/2" if h2_checked else "") + ")")
 PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
