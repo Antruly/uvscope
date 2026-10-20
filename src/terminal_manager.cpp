@@ -1,3 +1,9 @@
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE 1
+#elif !defined(_WIN32) && !defined(_XOPEN_SOURCE)
+#define _XOPEN_SOURCE 700
+#endif
+
 #include "terminal_manager.h"
 
 #include <algorithm>
@@ -33,11 +39,6 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
-#if defined(__linux__)
-#include <pty.h>
-#elif defined(__APPLE__)
-#include <util.h>
-#endif
 #endif
 
 namespace uvscope {
@@ -363,16 +364,50 @@ struct TerminalManager::Impl {
     for (auto& item : env_storage) envp.push_back(item.data());
     envp.push_back(nullptr);
 
-    int master = -1;
-    const pid_t pid = forkpty(&master, nullptr, nullptr, &ws);
-    if (pid < 0) {
+    // Use posix_openpt/fork instead of forkpty: macOS does not ship a
+    // standalone libutil that CMake can reliably find, while posix_openpt is
+    // in libc on both Linux and macOS. The slave name is resolved before the
+    // fork so the child only performs async-signal-safe calls.
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0) {
+      if (master >= 0) ::close(master);
       std::lock_guard<std::mutex> lock(state->mutex);
-      state->error = "forkpty failed: " + std::string(std::strerror(errno));
+      state->error = "posix_openpt failed: " + std::string(std::strerror(errno));
+      state->done = true;
+      state->cv.notify_all();
+      return;
+    }
+    const char* resolved_slave = ptsname(master);
+    if (resolved_slave == nullptr) {
+      ::close(master);
+      std::lock_guard<std::mutex> lock(state->mutex);
+      state->error = "ptsname failed: " + std::string(std::strerror(errno));
+      state->done = true;
+      state->cv.notify_all();
+      return;
+    }
+    char slave_name[256] = {};
+    std::strncpy(slave_name, resolved_slave, sizeof(slave_name) - 1);
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+      ::close(master);
+      std::lock_guard<std::mutex> lock(state->mutex);
+      state->error = "fork failed: " + std::string(std::strerror(errno));
       state->done = true;
       state->cv.notify_all();
       return;
     }
     if (pid == 0) {
+      setsid();
+      const int slave = open(slave_name, O_RDWR);
+      if (slave < 0) _exit(126);
+      ioctl(slave, TIOCSCTTY, 0);
+      ioctl(slave, TIOCSWINSZ, &ws);
+      dup2(slave, STDIN_FILENO);
+      dup2(slave, STDOUT_FILENO);
+      dup2(slave, STDERR_FILENO);
+      if (slave > STDERR_FILENO) ::close(slave);
       if (chdir(session->cwd.c_str()) != 0) _exit(126);
       execve(session->shell.c_str(), argv, envp.data());
       _exit(127);
