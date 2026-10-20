@@ -52,7 +52,7 @@ const en: Record<string, string> = {
   'proxy.editor.certPath': 'Certificate path',
   'proxy.editor.keyPath': 'Private key path',
   'proxy.editor.hint':
-    'HTTP/1.1 forwarding only in 0.2.0. WebSocket upgrade and per-path rules are on the roadmap.',
+    'HTTP/1.1 forwarding only in 0.3.0. WebSocket upgrade and per-path rules are on the roadmap.',
   'proxy.editor.cancel': 'Cancel',
   'proxy.editor.save': 'Save & start',
 
@@ -124,7 +124,7 @@ const zh: Record<string, string> = {
   'proxy.editor.tls': 'HTTPS 监听',
   'proxy.editor.certPath': '证书路径',
   'proxy.editor.keyPath': '私钥路径',
-  'proxy.editor.hint': '0.2.0 仅支持 HTTP/1.1 转发。WebSocket 升级与按路径路由已在规划中。',
+  'proxy.editor.hint': '0.3.0 仅支持 HTTP/1.1 转发。WebSocket 升级与按路径路由已在规划中。',
   'proxy.editor.cancel': '取消',
   'proxy.editor.save': '保存并启动',
 

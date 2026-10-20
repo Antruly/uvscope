@@ -37,7 +37,7 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
                      HTTP(S) / TCP / UDP / TLS targets
 ```
 
-## Process model in 0.2.0
+## Process model in 0.3.0
 
 - **Main daemon**: the only process. It owns the UI server, SQLite, auth and all protocol clients.
 - **Short-lived work**: HTTP/TCP/UDP/TLS probes run on the libuv thread pool through `uvcpp_work`; the
@@ -207,7 +207,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 - **Vue 3 / Vite / Pinia / Vue Router** — SPA.
 - **Inno Setup** — Windows installer.
 
-## Known architectural gaps (0.2.0)
+## Known architectural gaps (0.3.0)
 
 - HTTP/2 and HTTP/3 remain opt-in and experimental; the libuvcpp async TLS/h2 path works in local
   Linux testing but still needs the full Windows/macOS matrix.

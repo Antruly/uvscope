@@ -1,6 +1,6 @@
 # uvscope 开发计划
 
-> 版本：0.2.0 开发中
+> 版本：0.3.0 发布收尾
 > 技术底座：libuvcpp 1.8.0 + Vue 3 + SQLite + libuvcpp WSDL/SOAP  
 > 目标：做一款覆盖 Web 调试、协议探测与可编程反向代理的本地瑞士军刀，并保持单机、可审计、可离线部署。
 
@@ -99,7 +99,7 @@
 - 离线 `uvscope --self-check` 全部通过。
 - `npm run build` 与 C++ Release 构建通过。
 
-### M1 — 调试体验与响应预览（0.2.0，当前）
+### M1 — 调试体验与响应预览（0.2.0，已完成）
 
 目标：让“看到响应”变成“看懂并安全地预览响应”。
 
@@ -125,7 +125,7 @@
 - 语言与主题刷新后保持；
 - 无新增网络栈。
 
-### M2 — 传输工作台（0.3.x）
+### M2 — 传输工作台（0.3.0，已完成）
 
 目标：从“一次性探测”升级为“可持续观察和交互的传输会话”。
 
@@ -150,7 +150,7 @@
 - TCP/UDP 服务端可启动、被外部客户端访问、在 UI 中回复、停止后端口释放；
 - `--self-check` 与 smoke test 覆盖最小 echo 回合。
 
-### M2.5 — SOCKS5 客户端与服务端（0.3.x）
+### M2.5 — SOCKS5 客户端与服务端（0.3.0，已完成）
 
 目标：把代理能力做成一等公民，而不是隐藏开关。
 
@@ -450,22 +450,22 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 ### 构建事实
 
 - libuvcpp 1.8.0 的上游 TLS 客户端缺少 SNI。uvscope 携带补丁，CI 构建时应用到 libuvcpp 源码。
-- 0.2.0 发布构建默认关闭 libuvcpp 的 HTTP/2、QUIC、HTTP/3 选项，避免发布“能选但不可用”的协议路径。
+- 0.3.0 发布构建默认关闭 libuvcpp 的 HTTP/2、QUIC、HTTP/3 选项，避免发布“能选但不可用”的协议路径。
 - 本地开发可以打开这些选项做实验，但不应把它们写进稳定版发行说明。
 - Windows 使用 MinGW-w64，不使用 MSVC 作为默认工具链。
 
 ### 发布产物
 
 ```text
-uvscope-0.2.0-linux-x64.tar.gz
-uvscope-0.2.0-linux-arm64.tar.gz
-uvscope_0.2.0_amd64.deb
-uvscope_0.2.0_arm64.deb
-uvscope-0.2.0-1.x86_64.rpm
-uvscope-0.2.0-1.aarch64.rpm
-uvscope-0.2.0-mingw-x64.zip
-uvscope-0.2.0-setup.exe
-uvscope-0.2.0-macos-arm64.zip
+uvscope-0.3.0-linux-x64.tar.gz
+uvscope-0.3.0-linux-arm64.tar.gz
+uvscope_0.3.0_amd64.deb
+uvscope_0.3.0_arm64.deb
+uvscope-0.3.0-1.x86_64.rpm
+uvscope-0.3.0-1.aarch64.rpm
+uvscope-0.3.0-mingw-x64.zip
+uvscope-0.3.0-setup.exe
+uvscope-0.3.0-macos-arm64.zip
 ```
 
 ---

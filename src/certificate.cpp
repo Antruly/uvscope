@@ -255,7 +255,7 @@ nlohmann::json inspect_certificate(const std::string& input, std::string* error)
   out["keyUsage"] = key_usage(cert.get());
   out["extendedKeyUsage"] = ext_key_usage(cert.get());
   out["sha256"] = sha256_hex(input);
-  out["chainNotice"] = "v0.2.0 decodes the first certificate in the input. Paste the full chain to inspect the leaf first.";
+  out["chainNotice"] = "v0.3.0 decodes the first certificate in the input. Paste the full chain to inspect the leaf first.";
   return out;
 }
 

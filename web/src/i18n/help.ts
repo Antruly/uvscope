@@ -78,7 +78,7 @@ const en: Record<string, string> = {
   'help.tls.textAfter': ' only while testing.',
   'help.http2.title': 'HTTP/2 or HTTP/3 errors',
   'help.http2.text':
-    'Protocol negotiation is experimental in 0.2.0. Use HTTP/1.1 for production debugging; the daemon reports the negotiated ALPN in the timing tab.',
+    'Protocol negotiation is experimental in 0.3.0. Use HTTP/1.1 for production debugging; the daemon reports the negotiated ALPN in the timing tab.',
   'help.proxy.title': 'A proxy port will not bind',
   'help.proxy.text':
     'Another process owns the port, or the listener is already running. Stop the old proxy, choose another port, and check the listener host.',
@@ -171,7 +171,7 @@ const zh: Record<string, string> = {
   'help.tls.textAfter': '。',
   'help.http2.title': 'HTTP/2 或 HTTP/3 错误',
   'help.http2.text':
-    '协议协商在 0.2.0 中仍属实验性。生产调试请使用 HTTP/1.1；守护进程会在耗时标签中报告协商出的 ALPN。',
+    '协议协商在 0.3.0 中仍属实验性。生产调试请使用 HTTP/1.1；守护进程会在耗时标签中报告协商出的 ALPN。',
   'help.proxy.title': '代理端口无法绑定',
   'help.proxy.text':
     '端口被其他进程占用，或监听器已在运行。停止旧代理，换一个端口，并检查监听地址。',

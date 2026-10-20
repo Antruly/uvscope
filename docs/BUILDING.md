@@ -140,7 +140,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-macOS builds are source-oriented in 0.2.0. A signed/notarized `.app` is later work.
+macOS builds are source-oriented in 0.3.0. A signed/notarized `.app` is later work.
 
 ## CI
 

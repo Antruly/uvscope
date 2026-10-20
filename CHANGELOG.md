@@ -6,6 +6,8 @@ All notable changes to uvscope are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-20
+
 ### Added
 
 - Persistent TCP sessions: create a connection, send repeatedly (text or hex), inspect a
@@ -32,6 +34,11 @@ All notable changes to uvscope are documented here. The format is based on
   connecting to the proxy or after it replied.
 - Smoke coverage for TCP, HTTP and UDP through a local SOCKS5 server plus error classification and
   no-direct-fallback assertions.
+
+### Changed
+
+- Version bumped to 0.3.0 across CMake, npm, the Windows installer, documentation and the UI
+  fallback.
 
 ## [0.2.0] - 2026-10-20
 

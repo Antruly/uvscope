@@ -29,7 +29,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 
 ![HTTP Studio](docs/screenshots/http-studio.png)
 
-## What is in 0.2.0
+## What is in 0.3.0
 
 | Area | Status |
 | --- | --- |
@@ -40,17 +40,23 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | HTTPS with system CA bundle / explicit insecure mode | ✅ Stable |
 | WebSocket console (browser-native, text + binary) | ✅ Stable |
 | TCP and UDP one-shot probes (text / hex) | ✅ Stable |
+| Persistent TCP sessions with repeated sends and event logs | ✅ New in 0.3.0 |
+| TCP / UDP server listeners with sessions, datagrams and replies | ✅ New in 0.3.0 |
+| SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) and outbound proxy | ✅ New in 0.3.0 |
 | TLS certificate decoder (PEM / DER) | ✅ Stable |
 | SOAP 1.1 + WSDL operation discovery | ✅ Stable |
 | Managed HTTP reverse proxy with live logs | ✅ Stable |
 | SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
 | Module toggles, factory reset, update check, about/help | ✅ Stable |
-| HTTP/2 and HTTP/3 wire transports | 🧪 Experimental protocol preference (HTTP/1.1 is the reliable path in 0.2.0) |
-| Persistent TCP/UDP listeners, raw QUIC streams, HTTP/3 server | 🗺️ Roadmap |
+| HTTP/2 and HTTP/3 wire transports | 🧪 Experimental protocol preference (HTTP/1.1 is the reliable path in 0.3.0) |
+| Raw QUIC streams and HTTP/3 server | 🗺️ Roadmap |
 
 The UI exposes HTTP/2 and HTTP/3 as protocol preferences so the protocol plumbing can be tested.
 They are intentionally labelled experimental: the libuvcpp async TLS/h2/h3 path still needs
 upstream validation on every target. Use HTTP/1.1 for production debugging today.
+
+SOCKS5 outbound proxying is mandatory when configured: a failed handshake fails the request rather
+than falling back to a direct connection.
 
 ## Screens
 
