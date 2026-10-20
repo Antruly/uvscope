@@ -66,11 +66,14 @@ than falling back to a direct connection.
 
 ## Download
 
-Prebuilt **v0.2.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.2.0):
+Prebuilt **v0.3.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.3.0):
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.2.0-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.3.0-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
+
+The Windows executable and installer share the uvscope icon; Linux packages install the hicolor
+icon set and a desktop entry with `Icon=uvscope`.
 
 ## Quick start
 
