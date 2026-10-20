@@ -82,6 +82,7 @@ async function load() {
     if (platform.value) params.set('platform', platform.value)
     if (category.value) params.set('category', category.value)
     if (search.value.trim()) params.set('q', search.value.trim())
+    if (isAdmin.value) params.set('all', '1')
     const response = await get<{ ok: boolean; commands: CommandEntry[] }>(
       `/api/terminal/commands?${params.toString()}`,
     )
