@@ -78,6 +78,7 @@ const dynamicPrefixes = [
   'auth.setup.strength.', 'theme.', 'proxy.status.', 'dashboard.greeting.',
   'help.modules.', 'help.shortcut.', 'settings.modules.',
   'transport.session.state.', 'transport.session.event.',
+  'listeners.state.', 'listeners.sessionState.', 'listeners.event.', 'listeners.sessionEvent.',
 ]
 const unused = [...en].filter(
   (key) => !used.has(key) && !dynamicPrefixes.some((prefix) => key.startsWith(prefix)),

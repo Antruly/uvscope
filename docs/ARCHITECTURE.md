@@ -18,6 +18,7 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 │   ├─ /api/auth, /api/setup, /api/users                              │
 │   ├─ /api/http, /api/tcp, /api/udp, /api/tls                         │
 │   ├─ /api/tcp/sessions (persistent transport sessions)               │
+│   ├─ /api/transport/listeners (TCP/UDP server listeners)              │
 │   ├─ /api/proxies, /api/history, /api/settings                      │
 │   └─ static SPA (web/ dist)                                         │
 │                                                                     │
@@ -45,6 +46,10 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 - **Persistent transport sessions**: `TransportManager` owns one dedicated libuv loop on its own
   thread. Web handlers enqueue commands and read mutex-protected snapshots; sessions never run on
   the control-plane loop. A 500 ms sweep enforces connect timeouts and retires closed clients.
+- **TCP/UDP listeners**: the same transport loop hosts `uvcpp_tcp_server` listeners and raw
+  `uv_udp_t` sockets. TCP accepted clients stay server-owned; the manager only observes them and
+  queues writes. Listener configs live in SQLite; runtime state and bounded event logs live in the
+  manager.
 - **Static assets**: served by the same `uvcpp_web_app`; SPA fallback is enabled so deep links work.
 
 The roadmap moves persistent proxy/transport services into explicit child processes with a
@@ -109,6 +114,18 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
   callbacks have run.
 - Session state is plain data guarded by a mutex; libuv objects stay on the transport thread.
 
+## Listener runtime
+
+- TCP listeners use `uvcpp_tcp_server` on the transport loop. Accepted clients remain owned by the
+  server; the manager holds non-owning pointers, queues one write at a time, and relies on the
+  server for close/delete.
+- UDP listeners use `uv_udp_t` with `uv_udp_recv_start`; replies use `uv_udp_send` to the numeric
+  peer address.
+- Listener configs are persisted under the `transport.listeners` settings key and auto-started
+  when requested.
+- Stopping a listener closes the listener handle and all accepted clients; the server object is
+  retired and deleted by the 500 ms sweep after its close callbacks have run.
+
 ## Response preview safety
 
 - The preview iframe uses `sandbox=""`: scripts, forms, popups and top-level navigation are off.
@@ -164,7 +181,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 
 - HTTP/2 and HTTP/3 remain opt-in and experimental; the libuvcpp async TLS/h2 path works in local
   Linux testing but still needs the full Windows/macOS matrix.
-- Persistent TCP sessions are implemented; TCP/UDP listeners and SOCKS5 client/server are next.
+- Persistent TCP sessions and TCP/UDP listeners are implemented; SOCKS5 client/server is next.
 - Preview cannot execute scripts and does not stream bodies larger than the probe cap.
 - Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
 - No WebSocket upgrade pass-through in the proxy.

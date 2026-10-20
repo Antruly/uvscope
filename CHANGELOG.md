@@ -15,6 +15,10 @@ All notable changes to uvscope are documented here. The format is based on
   `DELETE /api/tcp/sessions/:id`.
 - Transport panel with session state, byte counters, queued writes and an incremental event log.
 - Smoke coverage for a two-send TCP echo round-trip on one persistent connection.
+- TCP and UDP server listeners with start/stop/delete, persisted `autoStart`, accepted TCP
+  sessions, UDP datagram timelines, per-session/per-datagram send, and a dedicated
+  `TCP / UDP Servers` page.
+- `/api/transport/listeners` routes for listener lifecycle, events, accepted sessions and sends.
 
 ## [0.2.0] - 2026-10-20
 

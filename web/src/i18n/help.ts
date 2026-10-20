@@ -23,6 +23,9 @@ const en: Record<string, string> = {
   'help.modules.websocket.title': 'WebSocket console',
   'help.modules.websocket.text':
     'Connects from the browser, so the URL must be reachable by this machine. Text and hex frames are captured in the tab while it is cached.',
+  'help.modules.listeners.title': 'TCP / UDP servers',
+  'help.modules.listeners.text':
+    'Bind a local TCP or UDP port, inspect accepted sessions or datagrams, and send replies from the workbench. Listener configs persist and can auto-start with the daemon.',
   'help.modules.tcpudp.title': 'TCP / UDP bench',
   'help.modules.tcpudp.text':
     'One-shot probes through libuvcpp, plus persistent TCP sessions with repeated sends and a per-session event log. Hex mode accepts spaced, colon-separated or plain hex payloads.',
@@ -113,6 +116,9 @@ const zh: Record<string, string> = {
   'help.modules.websocket.title': 'WebSocket 控制台',
   'help.modules.websocket.text':
     '由浏览器发起连接，因此 URL 必须能从本机访问。标签页缓存期间会捕获文本与十六进制帧。',
+  'help.modules.listeners.title': 'TCP / UDP 服务端',
+  'help.modules.listeners.text':
+    '绑定本地 TCP 或 UDP 端口，检查接入会话或数据报，并在工作台内直接回复。监听配置会持久化，并随守护进程自动启动。',
   'help.modules.tcpudp.title': 'TCP / UDP 调试台',
   'help.modules.tcpudp.text':
     '通过 libuvcpp 执行一次性探测，并支持可连续发送、带逐会话事件日志的持久 TCP 会话。十六进制模式支持带空格、冒号分隔或纯十六进制负载。',

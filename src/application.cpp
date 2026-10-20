@@ -195,6 +195,11 @@ bool Application::initialize() {
   if (!transport_->available()) {
     std::fprintf(stderr, "uvscope: transport sessions unavailable: %s\n",
                  transport_->start_error().c_str());
+  } else {
+    for (const auto& listener : store_.listeners()) {
+      if (!transport_->add_listener(listener, nullptr)) continue;
+      if (listener.auto_start) transport_->start_listener(listener.id, nullptr);
+    }
   }
   web_root_ = options_.web_root.string();
   if (!web_root_.empty()) {
@@ -831,6 +836,226 @@ void Application::register_debug_routes() {
     }
     send_json(resp, 200, {{"ok", true}});
   });
+
+  app_.get("/api/transport/listeners", [this](uvcpp::uvcpp_web_request& req,
+                                              uvcpp::uvcpp_web_response& resp,
+                                              uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    if (!transport_ || !transport_->available()) {
+      send_error(resp, 503, "transport listeners are unavailable", "unavailable");
+      return;
+    }
+    send_json(resp, 200, transport_->listeners());
+  });
+
+  app_.post("/api/transport/listeners", [this](uvcpp::uvcpp_web_request& req,
+                                               uvcpp::uvcpp_web_response& resp,
+                                               uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    if (!transport_ || !transport_->available()) {
+      send_error(resp, 503, "transport listeners are unavailable", "unavailable");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    ListenerConfig config;
+    config.id = make_id();
+    config.transport = lower(string_field(*body, "transport", "tcp"));
+    config.name = string_field(*body, "name");
+    config.host = string_field(*body, "host", "127.0.0.1");
+    config.port = int_field(*body, "port", 0);
+    config.auto_start = bool_field(*body, "autoStart", false);
+    config.created_at = now_iso8601();
+    if ((config.transport != "tcp" && config.transport != "udp") ||
+        config.host.empty() || config.port <= 0 || config.port > 65535) {
+      send_error(resp, 400, "transport, host and port are required", "bad_request");
+      return;
+    }
+    std::string error;
+    if (!transport_->add_listener(config, &error)) {
+      send_error(resp, 400, error, "listener_failed");
+      return;
+    }
+    if (!store_.save_listener(config, &error)) {
+      transport_->remove_listener(config.id, nullptr);
+      send_error(resp, 500, error, "persist_failed");
+      return;
+    }
+    if (bool_field(*body, "start", true)) {
+      if (!transport_->start_listener(config.id, &error)) {
+        transport_->remove_listener(config.id, nullptr);
+        store_.delete_listener(config.id, nullptr);
+        send_error(resp, 400, error, "listener_failed");
+        return;
+      }
+    }
+    send_json(resp, 200, {{"ok", true}, {"listener", config.id}});
+  });
+
+  app_.post("/api/transport/listeners/:id/start", [this](uvcpp::uvcpp_web_request& req,
+                                                         uvcpp::uvcpp_web_response& resp,
+                                                         uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::string error;
+    if (!id || !transport_ || !transport_->start_listener(*id, &error)) {
+      send_error(resp, 400, error.empty() ? "listener not found" : error, "listener_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.post("/api/transport/listeners/:id/stop", [this](uvcpp::uvcpp_web_request& req,
+                                                        uvcpp::uvcpp_web_response& resp,
+                                                        uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::string error;
+    if (!id || !transport_ || !transport_->stop_listener(*id, &error)) {
+      send_error(resp, 400, error.empty() ? "listener not found" : error, "listener_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.del("/api/transport/listeners/:id", [this](uvcpp::uvcpp_web_request& req,
+                                                  uvcpp::uvcpp_web_response& resp,
+                                                  uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_ || !transport_->remove_listener(*id, nullptr)) {
+      send_error(resp, 404, "listener not found", "not_found");
+      return;
+    }
+    store_.delete_listener(*id, nullptr);
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.get("/api/transport/listeners/:id", [this](uvcpp::uvcpp_web_request& req,
+                                                 uvcpp::uvcpp_web_response& resp,
+                                                 uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_) {
+      send_error(resp, 404, "listener not found", "not_found");
+      return;
+    }
+    const auto result = transport_->listener(*id);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("listener not found")), "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/transport/listeners/:id/events", [this](uvcpp::uvcpp_web_request& req,
+                                                         uvcpp::uvcpp_web_response& resp,
+                                                         uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_) {
+      send_error(resp, 404, "listener not found", "not_found");
+      return;
+    }
+    std::uint64_t after = 0;
+    if (const std::string* value = req.query("after")) after = std::strtoull(value->c_str(), nullptr, 10);
+    int limit = 200;
+    if (const std::string* value = req.query("limit")) limit = std::atoi(value->c_str());
+    const auto result = transport_->listener_events(*id, after, limit);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("listener not found")), "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/transport/listeners/:id/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                                           uvcpp::uvcpp_web_response& resp,
+                                                           uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_) {
+      send_error(resp, 404, "listener not found", "not_found");
+      return;
+    }
+    const auto result = transport_->listener_sessions(*id);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("listener not found")), "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/transport/listeners/:id/sessions/:sid/events",
+           [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                  uvcpp::uvcpp_web_next) {
+             const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+             if (!principal) return;
+             const std::string* id = req.param("id");
+             const std::string* sid = req.param("sid");
+             if (!id || !sid || !transport_) {
+               send_error(resp, 404, "session not found", "not_found");
+               return;
+             }
+             std::uint64_t after = 0;
+             if (const std::string* value = req.query("after")) after = std::strtoull(value->c_str(), nullptr, 10);
+             int limit = 200;
+             if (const std::string* value = req.query("limit")) limit = std::atoi(value->c_str());
+             const auto result = transport_->listener_session_events(*id, *sid, after, limit);
+             if (!result.value("ok", false)) {
+               send_error(resp, 404, result.value("error", std::string("session not found")), "not_found");
+               return;
+             }
+             send_json(resp, 200, result);
+           });
+
+  app_.post("/api/transport/listeners/:id/send", [this](uvcpp::uvcpp_web_request& req,
+                                                        uvcpp::uvcpp_web_response& resp,
+                                                        uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !transport_) {
+      send_error(resp, 404, "listener not found", "not_found");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    std::string error;
+    if (!transport_->listener_send(*id, string_field(*body, "sessionId"),
+                                   string_field(*body, "peerHost"),
+                                   int_field(*body, "peerPort", 0),
+                                   string_field(*body, "payload"),
+                                   string_field(*body, "encoding", "text"), &error)) {
+      send_error(resp, 400, error, "send_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.del("/api/transport/listeners/:id/sessions/:sid",
+           [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                  uvcpp::uvcpp_web_next) {
+             const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+             if (!principal) return;
+             const std::string* id = req.param("id");
+             const std::string* sid = req.param("sid");
+             std::string error;
+             if (!id || !sid || !transport_ ||
+                 !transport_->listener_close_session(*id, *sid, &error)) {
+               send_error(resp, 400, error.empty() ? "session not found" : error, "close_failed");
+               return;
+             }
+             send_json(resp, 200, {{"ok", true}});
+           });
 
   app_.post("/api/tls/inspect", [this](uvcpp::uvcpp_web_request& req,
                                        uvcpp::uvcpp_web_response& resp,

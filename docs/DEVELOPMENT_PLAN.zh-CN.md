@@ -373,9 +373,12 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 
 不做：TLS 客户端、SOCKS5、服务端监听。
 
-### S4 — TCP / UDP 服务端（后端 + 前端）
+### S4 — TCP / UDP 服务端（后端 + 前端，已实现）
 
 边界：监听配置表与迁移、`/api/listeners*`、运行时管理器、TransportView 服务端区、Help/API/smoke。
+
+状态：已实现。TCP/UDP 监听、启停、端口冲突、TCP 接入会话、UDP 数据报时间线、
+逐会话/按来源发送、配置持久化与自动启动、独立服务端页面和 smoke 断言均已落地。
 
 内容：
 

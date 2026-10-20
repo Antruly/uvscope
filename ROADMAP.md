@@ -32,9 +32,9 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 ## 0.3 — transport workbench
 
 - [x] Persistent TCP client sessions (send repeatedly, stream receives, close, reconnect)
-- [ ] TCP server listeners with session list, send and close
-- [ ] UDP server listeners with datagram timeline and replies
-- [ ] Listener persistence and optional auto-start
+- [x] TCP server listeners with session list, send and close
+- [x] UDP server listeners with datagram timeline and replies
+- [x] Listener persistence and optional auto-start
 - [ ] SOCKS5 client for HTTP/TCP/UDP with authentication and error classification
 - [ ] SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) with session logs
 - [ ] No silent direct fallback when a proxy is configured

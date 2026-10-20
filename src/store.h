@@ -39,6 +39,17 @@ struct HistoryItem {
   std::string created_at;
 };
 
+struct ListenerConfig {
+  std::string id;
+  std::string transport = "tcp";
+  std::string name;
+  std::string host = "127.0.0.1";
+  int port = 0;
+  bool auto_start = false;
+  std::string created_at;
+  std::string updated_at;
+};
+
 struct ProxyConfig {
   std::string id;
   std::string name;
@@ -103,6 +114,11 @@ class Store {
   std::int64_t history_count(const std::string& kind, std::int64_t since) const;
   bool clear_history(const std::string& kind, std::string* error);
   bool clear_all_history(std::string* error);
+
+  std::vector<ListenerConfig> listeners() const;
+  std::optional<ListenerConfig> listener(const std::string& id) const;
+  bool save_listener(const ListenerConfig& listener, std::string* error);
+  bool delete_listener(const std::string& id, std::string* error);
 
   std::vector<ProxyConfig> proxies() const;
   std::optional<ProxyConfig> proxy(const std::string& id) const;

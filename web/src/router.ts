@@ -28,6 +28,12 @@ export const router = createRouter({
       meta: { title: 'TCP / UDP', titleKey: 'nav.transport', icon: 'layers', componentName: 'TransportView', module: 'tcpudp' },
     },
     {
+      path: '/listeners',
+      name: 'listeners',
+      component: () => import('./views/ListenersView.vue'),
+      meta: { title: 'TCP / UDP Servers', titleKey: 'nav.listeners', icon: 'server', componentName: 'ListenersView', module: 'tcpudp' },
+    },
+    {
       path: '/soap',
       name: 'soap',
       component: () => import('./views/SoapView.vue'),

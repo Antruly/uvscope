@@ -6,6 +6,8 @@ BIN="${1:-./build/uvscope}"
 PORT="${2:-18787}"
 PROXY_PORT="${3:-18788}"
 TCP_PORT="${4:-18789}"
+TCP_LISTEN_PORT="${5:-18790}"
+UDP_LISTEN_PORT="${6:-18791}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -177,4 +179,126 @@ if failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
 print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP session)")
+PY
+
+BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
+TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" python3 - <<'PY'
+import http.cookiejar
+import json
+import os
+import socket
+import time
+import urllib.error
+import urllib.request
+
+base = os.environ["BASE"]
+jar = http.cookiejar.MozillaCookieJar(os.environ["COOKIE_JAR"])
+jar.load(ignore_discard=True, ignore_expires=True)
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+failures = []
+
+
+def check(condition, message):
+    if not condition:
+        failures.append(message)
+
+
+def call(method, path, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    headers = {"content-type": "application/json"} if body is not None else {}
+    request = urllib.request.Request(base + path, data=data, headers=headers, method=method)
+    try:
+        with opener.open(request, timeout=10) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
+def wait_listener(listener_id, state="listening", timeout=5):
+    end = time.time() + timeout
+    while time.time() < end:
+        status, payload = call("GET", f"/api/transport/listeners/{listener_id}")
+        if payload.get("listener", {}).get("state") == state:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+status, created = call("POST", "/api/transport/listeners", {
+    "transport": "tcp", "name": "smoke-tcp", "host": "127.0.0.1",
+    "port": int(os.environ["TCP_LISTEN_PORT"]), "start": True,
+})
+check(status == 200 and created.get("ok") is True, f"TCP listener create failed: {created}")
+tcp_listener = created.get("listener")
+check(bool(tcp_listener), "TCP listener id missing")
+if tcp_listener:
+    check(wait_listener(tcp_listener), "TCP listener did not start")
+    client = socket.create_connection(("127.0.0.1", int(os.environ["TCP_LISTEN_PORT"])), timeout=5)
+    client.sendall(b"listener-hello")
+    session_id = ""
+    for _ in range(50):
+        status, sessions = call("GET", f"/api/transport/listeners/{tcp_listener}/sessions")
+        if sessions.get("sessions"):
+            session_id = sessions["sessions"][0]["id"]
+            break
+        time.sleep(0.1)
+    check(bool(session_id), "TCP listener did not accept a session")
+    if session_id:
+        status, sent = call("POST", f"/api/transport/listeners/{tcp_listener}/send", {
+            "sessionId": session_id, "payload": "listener-reply", "encoding": "text",
+        })
+        check(status == 200 and sent.get("ok") is True, f"listener send failed: {sent}")
+        client.settimeout(5)
+        reply = client.recv(4096)
+        check(reply == b"listener-reply", f"TCP listener reply mismatch: {reply}")
+        status, events = call(
+            "GET", f"/api/transport/listeners/{tcp_listener}/sessions/{session_id}/events?after=0")
+        texts = [item.get("payload", {}).get("text") for item in events.get("events", [])
+                 if item.get("type") == "recv"]
+        check("listener-hello" in texts, f"TCP listener did not record the client bytes: {texts}")
+    client.close()
+    status, deleted = call("DELETE", f"/api/transport/listeners/{tcp_listener}")
+    check(status == 200 and deleted.get("ok") is True, f"TCP listener delete failed: {deleted}")
+
+status, created = call("POST", "/api/transport/listeners", {
+    "transport": "udp", "name": "smoke-udp", "host": "127.0.0.1",
+    "port": int(os.environ["UDP_LISTEN_PORT"]), "start": True,
+})
+check(status == 200 and created.get("ok") is True, f"UDP listener create failed: {created}")
+udp_listener = created.get("listener")
+check(bool(udp_listener), "UDP listener id missing")
+if udp_listener:
+    check(wait_listener(udp_listener), "UDP listener did not start")
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+    udp.settimeout(5)
+    udp.sendto(b"udp-smoke", ("127.0.0.1", int(os.environ["UDP_LISTEN_PORT"])))
+    peer = ""
+    for _ in range(50):
+        status, events = call(
+            "GET", f"/api/transport/listeners/{udp_listener}/events?after=0&limit=50")
+        datagrams = [item for item in events.get("events", []) if item.get("type") == "datagram"]
+        if datagrams:
+            peer = datagrams[0].get("peer", "")
+            break
+        time.sleep(0.1)
+    check(bool(peer), "UDP listener did not receive the datagram")
+    if peer:
+        host, port_text = peer.rsplit(":", 1)
+        status, sent = call("POST", f"/api/transport/listeners/{udp_listener}/send", {
+            "peerHost": host, "peerPort": int(port_text),
+            "payload": "udp-reply", "encoding": "text",
+        })
+        check(status == 200 and sent.get("ok") is True, f"UDP listener send failed: {sent}")
+        reply, _ = udp.recvfrom(4096)
+        check(reply == b"udp-reply", f"UDP listener reply mismatch: {reply}")
+    udp.close()
+    status, deleted = call("DELETE", f"/api/transport/listeners/{udp_listener}")
+    check(status == 200 and deleted.get("ok") is True, f"UDP listener delete failed: {deleted}")
+
+if failures:
+    for failure in failures:
+        print("FAIL:", failure, file=sys.stderr)
+    sys.exit(1)
+print("smoke test OK (listener TCP accept/send and UDP datagram/reply)")
 PY

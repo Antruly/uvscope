@@ -40,6 +40,17 @@ Each module must be enabled in Settings and the role must have `debug`.
 | GET | `/api/tcp/sessions/:id/events?after=&limit=` | Incremental session event log |
 | POST | `/api/tcp/sessions/:id/send` | `{payload, encoding}` → queue a write |
 | DELETE | `/api/tcp/sessions/:id` | Close a session |
+| GET | `/api/transport/listeners` | List configured TCP/UDP listeners and runtime state |
+| POST | `/api/transport/listeners` | `{transport, name, host, port, autoStart, start}` |
+| GET | `/api/transport/listeners/:id` | One listener snapshot |
+| POST | `/api/transport/listeners/:id/start` | Start a listener |
+| POST | `/api/transport/listeners/:id/stop` | Stop a listener |
+| DELETE | `/api/transport/listeners/:id` | Stop and delete a listener |
+| GET | `/api/transport/listeners/:id/events?after=&limit=` | Listener event log |
+| GET | `/api/transport/listeners/:id/sessions` | Accepted TCP sessions |
+| GET | `/api/transport/listeners/:id/sessions/:sid/events?after=&limit=` | Accepted session event log |
+| POST | `/api/transport/listeners/:id/send` | TCP: `{sessionId, payload, encoding}`; UDP: `{peerHost, peerPort, payload, encoding}` |
+| DELETE | `/api/transport/listeners/:id/sessions/:sid` | Close one accepted TCP session |
 | POST | `/api/tls/inspect` | `{pem}` → certificate profile |
 | POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, autoStart, tls, certPath, keyPath, start}` |
 | POST | `/api/proxies/:id/start` | Start a proxy |
@@ -85,6 +96,18 @@ Data events carry `payload` with `length`, `encoding` (`utf8` or `base64`), `tex
 
 Limits: 64 live sessions, 1 MiB per payload, 1 MiB queued per session, 512 KiB / 2,000 events
 retained per session. Closed sessions remain visible until the retained list exceeds 128.
+
+## TCP / UDP listeners
+
+`POST /api/transport/listeners` binds a local port; `transport` is `tcp` or `udp`. TCP listeners
+produce accepted-session records with `peer`, `state`, byte counters and a per-session event log.
+UDP listeners produce `datagram` and `sent` events with `peer` and `payload`; replies use the
+numeric peer host/port from the datagram log.
+
+Listener states are `stopped`, `starting`, `listening`, `stopping` and `error`. A listener error
+keeps the config; fix the port and start it again. Listener configs are stored in SQLite settings
+and auto-started when `autoStart` is true. Limits mirror the TCP session limits; accepted sessions
+are retained up to 128 per listener.
 
 ## Administration
 

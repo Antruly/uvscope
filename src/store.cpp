@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <sstream>
 
+#include <nlohmann/json.hpp>
+
 #include "crypto.h"
 #include "util.h"
 
@@ -568,6 +570,99 @@ bool Store::save_proxy(const ProxyConfig& proxy, std::string* error) {
 
 bool Store::delete_proxy(const std::string& id, std::string* error) {
   return exec("DELETE FROM proxies WHERE id = ?", {id}, error);
+}
+
+std::vector<ListenerConfig> Store::listeners() const {
+  std::vector<ListenerConfig> out;
+  const nlohmann::json parsed =
+      nlohmann::json::parse(setting("transport.listeners", "[]"), nullptr, false);
+  if (!parsed.is_array()) return out;
+  for (const auto& item : parsed) {
+    if (!item.is_object()) continue;
+    ListenerConfig listener;
+    listener.id = item.value("id", std::string());
+    listener.transport = item.value("transport", std::string("tcp"));
+    listener.name = item.value("name", std::string());
+    listener.host = item.value("host", std::string("127.0.0.1"));
+    listener.port = item.value("port", 0);
+    listener.auto_start = item.value("autoStart", false);
+    listener.created_at = item.value("createdAt", std::string());
+    listener.updated_at = item.value("updatedAt", std::string());
+    if (listener.id.empty() || (listener.transport != "tcp" && listener.transport != "udp") ||
+        listener.port <= 0 || listener.port > 65535) {
+      continue;
+    }
+    out.push_back(std::move(listener));
+  }
+  return out;
+}
+
+std::optional<ListenerConfig> Store::listener(const std::string& id) const {
+  for (const auto& listener : listeners()) {
+    if (listener.id == id) return listener;
+  }
+  return std::nullopt;
+}
+
+bool Store::save_listener(const ListenerConfig& listener, std::string* error) {
+  if (listener.id.empty() || (listener.transport != "tcp" && listener.transport != "udp") ||
+      listener.host.empty() || listener.port <= 0 || listener.port > 65535) {
+    if (error) *error = "invalid listener";
+    return false;
+  }
+  auto list = listeners();
+  bool found = false;
+  for (auto& item : list) {
+    if (item.id == listener.id) {
+      item = listener;
+      if (item.created_at.empty()) item.created_at = now_iso8601();
+      item.updated_at = now_iso8601();
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    ListenerConfig copy = listener;
+    if (copy.created_at.empty()) copy.created_at = now_iso8601();
+    copy.updated_at = now_iso8601();
+    list.push_back(std::move(copy));
+  }
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& item : list) {
+    out.push_back({{"id", item.id},
+                   {"transport", item.transport},
+                   {"name", item.name},
+                   {"host", item.host},
+                   {"port", item.port},
+                   {"autoStart", item.auto_start},
+                   {"createdAt", item.created_at},
+                   {"updatedAt", item.updated_at}});
+  }
+  return set_setting("transport.listeners", out.dump(), error);
+}
+
+bool Store::delete_listener(const std::string& id, std::string* error) {
+  auto list = listeners();
+  const auto before = list.size();
+  list.erase(std::remove_if(list.begin(), list.end(),
+                            [&](const ListenerConfig& item) { return item.id == id; }),
+             list.end());
+  if (list.size() == before) {
+    if (error) *error = "listener not found";
+    return false;
+  }
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& item : list) {
+    out.push_back({{"id", item.id},
+                   {"transport", item.transport},
+                   {"name", item.name},
+                   {"host", item.host},
+                   {"port", item.port},
+                   {"autoStart", item.auto_start},
+                   {"createdAt", item.created_at},
+                   {"updatedAt", item.updated_at}});
+  }
+  return set_setting("transport.listeners", out.dump(), error);
 }
 
 std::int64_t Store::user_count() const {

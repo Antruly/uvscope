@@ -14,6 +14,7 @@ const modules = [
   { icon: 'bolt', titleKey: 'help.modules.http.title', textKey: 'help.modules.http.text' },
   { icon: 'pulse', titleKey: 'help.modules.websocket.title', textKey: 'help.modules.websocket.text' },
   { icon: 'layers', titleKey: 'help.modules.tcpudp.title', textKey: 'help.modules.tcpudp.text' },
+  { icon: 'server', titleKey: 'help.modules.listeners.title', textKey: 'help.modules.listeners.text' },
   { icon: 'eye', titleKey: 'help.modules.preview.title', textKey: 'help.modules.preview.text' },
   { icon: 'braces', titleKey: 'help.modules.soap.title', textKey: 'help.modules.soap.text' },
   { icon: 'shield', titleKey: 'help.modules.tls.title', textKey: 'help.modules.tls.text' },

@@ -4,6 +4,8 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstring>
+#include <cstdlib>
 #include <deque>
 #include <functional>
 #include <map>
@@ -18,6 +20,7 @@
 #include <handle/uvcpp_loop.h>
 #include <net/uvcpp_net_read.h>
 #include <net/uvcpp_tcp_client.h>
+#include <net/uvcpp_tcp_server.h>
 
 #include "util.h"
 
@@ -115,6 +118,54 @@ struct TransportManager::Impl {
     std::size_t queued_bytes = 0;
   };
 
+  struct Accepted {
+    std::string id;
+    std::string peer;
+    std::string state = "connected";
+    std::string error;
+    std::string connected_at;
+    std::string closed_at;
+    uvcpp::uvcpp_tcp_client* client = nullptr;
+    std::uint64_t sent_bytes = 0;
+    std::uint64_t received_bytes = 0;
+    std::uint64_t next_seq = 1;
+    bool writing = false;
+    std::string current_payload;
+    std::deque<std::pair<std::string, std::size_t>> writes;
+    std::size_t queued_bytes = 0;
+    std::deque<StoredEvent> events;
+    std::size_t event_bytes = 0;
+  };
+
+  struct Listener {
+    ListenerConfig config;
+    std::string state = "stopped";
+    std::string error;
+    std::string started_at;
+    std::string stopped_at;
+    std::uint64_t next_seq = 1;
+    std::uint64_t datagrams = 0;
+    std::string last_peer;
+    std::deque<StoredEvent> events;
+    std::size_t event_bytes = 0;
+    uvcpp::uvcpp_tcp_server* tcp = nullptr;
+    uv_udp_t* udp = nullptr;
+    std::map<std::string, std::shared_ptr<Accepted>> sessions;
+  };
+
+  struct UdpContext {
+    Impl* impl = nullptr;
+    std::string listener_id;
+  };
+
+  struct UdpSendContext {
+    Impl* impl = nullptr;
+    std::string listener_id;
+    std::string peer;
+    std::string payload;
+    uv_udp_send_t req{};
+  };
+
   std::thread thread;
   std::mutex ready_mutex;
   std::condition_variable ready_cv;
@@ -132,9 +183,12 @@ struct TransportManager::Impl {
   mutable std::mutex state_mutex;
   std::map<std::string, std::shared_ptr<Session>> sessions;
 
+  std::map<std::string, std::shared_ptr<Listener>> listeners;
+
   // Loop-thread only.
   std::map<std::string, std::unique_ptr<Active>> active;
   std::vector<uvcpp::uvcpp_tcp_client*> retired;
+  std::vector<uvcpp::uvcpp_tcp_server*> retired_servers;
 
   bool post(std::function<void()> fn) {
     std::lock_guard<std::mutex> lock(command_mutex);
@@ -194,6 +248,96 @@ struct TransportManager::Impl {
             {"nextSeq", session.next_seq - 1},
             {"queuedWrites", session.queued_writes},
             {"queuedBytes", session.queued_bytes}};
+  }
+
+  void append_event(std::deque<StoredEvent>& events, std::size_t& bytes,
+                    std::uint64_t& seq, nlohmann::json event) {
+    event["seq"] = seq++;
+    event["at"] = now_iso8601();
+    const std::string serialized = event.dump();
+    events.push_back({std::move(event), serialized.size()});
+    bytes += serialized.size();
+    while (events.size() > kMaxEventCount || bytes > kMaxEventBytes) {
+      bytes -= events.front().bytes;
+      events.pop_front();
+    }
+  }
+
+  std::shared_ptr<Listener> listener_locked(const std::string& id) const {
+    const auto it = listeners.find(id);
+    return it == listeners.end() ? nullptr : it->second;
+  }
+
+  void listener_event_locked(Listener& listener, nlohmann::json event) {
+    append_event(listener.events, listener.event_bytes, listener.next_seq,
+                 std::move(event));
+  }
+
+  void accepted_event_locked(Accepted& session, nlohmann::json event) {
+    append_event(session.events, session.event_bytes, session.next_seq,
+                 std::move(event));
+  }
+
+  std::string peer_string(uvcpp::uvcpp_tcp_client* client) const {
+    if (client == nullptr) return std::string();
+    uvcpp::uvcpp_tcp* tcp = client->get_tcp();
+    if (tcp == nullptr) return std::string();
+    struct sockaddr_storage storage;
+    std::memset(&storage, 0, sizeof(storage));
+    int len = static_cast<int>(sizeof(storage));
+    if (tcp->getpeername(reinterpret_cast<struct sockaddr*>(&storage), &len) != 0) {
+      return std::string();
+    }
+    char ip[INET6_ADDRSTRLEN] = {0};
+    int port = 0;
+    if (storage.ss_family == AF_INET) {
+      auto* addr = reinterpret_cast<struct sockaddr_in*>(&storage);
+      uv_ip4_name(addr, ip, sizeof(ip));
+      port = ntohs(addr->sin_port);
+    } else if (storage.ss_family == AF_INET6) {
+      auto* addr = reinterpret_cast<struct sockaddr_in6*>(&storage);
+      uv_ip6_name(addr, ip, sizeof(ip));
+      port = ntohs(addr->sin6_port);
+    } else {
+      return std::string();
+    }
+    return std::string(ip) + ":" + std::to_string(port);
+  }
+
+  nlohmann::json accepted_snapshot_locked(const Accepted& session) const {
+    return {{"id", session.id},
+            {"peer", session.peer},
+            {"state", state_name(session.state)},
+            {"error", session.error},
+            {"connectedAt", session.connected_at},
+            {"closedAt", session.closed_at},
+            {"sentBytes", session.sent_bytes},
+            {"receivedBytes", session.received_bytes},
+            {"nextSeq", session.next_seq - 1},
+            {"queuedWrites", session.writes.size() + (session.writing ? 1 : 0)},
+            {"queuedBytes", session.queued_bytes}};
+  }
+
+  nlohmann::json listener_snapshot_locked(const Listener& listener) const {
+    std::size_t active_sessions = 0;
+    for (const auto& item : listener.sessions) {
+      if (item.second->state == "connected") ++active_sessions;
+    }
+    return {{"id", listener.config.id},
+            {"transport", listener.config.transport},
+            {"name", listener.config.name},
+            {"host", listener.config.host},
+            {"port", listener.config.port},
+            {"autoStart", listener.config.auto_start},
+            {"state", state_name(listener.state)},
+            {"error", listener.error},
+            {"startedAt", listener.started_at},
+            {"stoppedAt", listener.stopped_at},
+            {"sessionCount", listener.sessions.size()},
+            {"activeSessions", active_sessions},
+            {"datagrams", listener.datagrams},
+            {"lastPeer", listener.last_peer},
+            {"nextSeq", listener.next_seq - 1}};
   }
 
   void mark_connected(const std::string& id) {
@@ -439,11 +583,488 @@ struct TransportManager::Impl {
     }
   }
 
+  void mark_listener_error(const std::string& id, const std::string& message) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    auto listener = listener_locked(id);
+    if (!listener || listener->state == "error") return;
+    listener->state = "error";
+    listener->error = message;
+    listener->stopped_at = now_iso8601();
+    listener_event_locked(*listener, {{"type", "error"}, {"error", message}});
+  }
+
+  void mark_listener_listening(const std::string& id) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    auto listener = listener_locked(id);
+    if (!listener) return;
+    listener->state = "listening";
+    listener->error.clear();
+    listener->started_at = now_iso8601();
+    listener_event_locked(*listener, {{"type", "started"}});
+  }
+
+  void start_listener_loop(const std::string& id) {
+    std::shared_ptr<Listener> listener;
+    ListenerConfig config;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      listener = listener_locked(id);
+      if (!listener || listener->state == "listening") return;
+      listener->state = "starting";
+      listener->error.clear();
+      config = listener->config;
+    }
+
+    if (config.transport == "tcp") {
+      auto* server = new uvcpp::uvcpp_tcp_server(loop);
+      server->set_tcp_nodelay(true);
+      int rc = server->bind(config.host.c_str(), config.port);
+      if (rc == 0) {
+        rc = server->listen([this, id](uvcpp::uvcpp_tcp_client* client) {
+          on_accept(id, client);
+        });
+      }
+      if (rc != 0) {
+        delete server;
+        mark_listener_error(id, "bind/listen failed: " + uv_error_string(rc));
+        return;
+      }
+      {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        auto current = listener_locked(id);
+        if (!current) {
+          retired_servers.push_back(server);
+          return;
+        }
+        current->tcp = server;
+      }
+      mark_listener_listening(id);
+      return;
+    }
+
+    auto* udp = new uv_udp_t();
+    udp->data = new UdpContext{this, id};
+    int rc = uv_udp_init(reinterpret_cast<uv_loop_t*>(loop->get_handle()), udp);
+    struct sockaddr_storage storage;
+    std::memset(&storage, 0, sizeof(storage));
+    if (rc == 0) {
+      struct sockaddr_in addr4;
+      struct sockaddr_in6 addr6;
+      if (uv_ip4_addr(config.host.c_str(), config.port, &addr4) == 0) {
+        std::memcpy(&storage, &addr4, sizeof(addr4));
+      } else if (uv_ip6_addr(config.host.c_str(), config.port, &addr6) == 0) {
+        std::memcpy(&storage, &addr6, sizeof(addr6));
+      } else {
+        rc = UV_EINVAL;
+      }
+    }
+    if (rc == 0) {
+      rc = uv_udp_bind(udp, reinterpret_cast<const struct sockaddr*>(&storage), 0);
+    }
+    if (rc == 0) {
+      rc = uv_udp_recv_start(udp, &Impl::udp_alloc_cb, &Impl::udp_recv_cb);
+    }
+    if (rc != 0) {
+      uv_close(reinterpret_cast<uv_handle_t*>(udp), [](uv_handle_t* handle) {
+        delete static_cast<UdpContext*>(handle->data);
+        delete reinterpret_cast<uv_udp_t*>(handle);
+      });
+      mark_listener_error(id, "bind/receive failed: " + uv_error_string(rc));
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      auto current = listener_locked(id);
+      if (!current) {
+        uv_udp_recv_stop(udp);
+        uv_close(reinterpret_cast<uv_handle_t*>(udp), [](uv_handle_t* handle) {
+          delete static_cast<UdpContext*>(handle->data);
+          delete reinterpret_cast<uv_udp_t*>(handle);
+        });
+        return;
+      }
+      current->udp = udp;
+    }
+    mark_listener_listening(id);
+  }
+
+  void stop_listener_loop(const std::string& id) {
+    std::shared_ptr<Listener> listener;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      listener = listener_locked(id);
+      if (!listener) return;
+    }
+
+    if (listener->tcp != nullptr) {
+      uvcpp::uvcpp_tcp_server* server = listener->tcp;
+      listener->tcp = nullptr;
+      server->stop();
+      server->close_all_clients();
+      {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        for (auto& item : listener->sessions) {
+          Accepted& session = *item.second;
+          if (session.state != "closed" && session.state != "error") {
+            session.state = "closed";
+            session.closed_at = now_iso8601();
+            accepted_event_locked(session, {{"type", "closed"},
+                                            {"reason", "listener stopped"}});
+            listener_event_locked(*listener, {{"type", "session-closed"},
+                                              {"sessionId", session.id}});
+          }
+          session.client = nullptr;
+        }
+      }
+      retired_servers.push_back(server);
+    }
+
+    if (listener->udp != nullptr) {
+      uv_udp_t* udp = listener->udp;
+      listener->udp = nullptr;
+      uv_udp_recv_stop(udp);
+      uv_close(reinterpret_cast<uv_handle_t*>(udp), [](uv_handle_t* handle) {
+        delete static_cast<UdpContext*>(handle->data);
+        delete reinterpret_cast<uv_udp_t*>(handle);
+      });
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      listener->state = "stopped";
+      listener->stopped_at = now_iso8601();
+      listener_event_locked(*listener, {{"type", "stopped"}});
+    }
+  }
+
+  void on_accept(const std::string& listener_id, uvcpp::uvcpp_tcp_client* client) {
+    auto session = std::make_shared<Accepted>();
+    session->id = make_id();
+    session->peer = peer_string(client);
+    session->connected_at = now_iso8601();
+    session->client = client;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      auto listener = listener_locked(listener_id);
+      if (!listener) {
+        client->close();
+        return;
+      }
+      accepted_event_locked(*session, {{"type", "accepted"}, {"peer", session->peer}});
+      listener->sessions[session->id] = session;
+      listener_event_locked(*listener, {{"type", "accepted"},
+                                        {"sessionId", session->id},
+                                        {"peer", session->peer}});
+      while (listener->sessions.size() > 128) {
+        auto oldest = listener->sessions.end();
+        for (auto it = listener->sessions.begin(); it != listener->sessions.end(); ++it) {
+          if (it->second->state != "closed" && it->second->state != "error") continue;
+          if (oldest == listener->sessions.end() ||
+              it->second->connected_at < oldest->second->connected_at) {
+            oldest = it;
+          }
+        }
+        if (oldest == listener->sessions.end()) break;
+        listener->sessions.erase(oldest);
+      }
+    }
+    const std::string session_id = session->id;
+    client->set_on_close([this, listener_id, session_id] {
+      on_accepted_close(listener_id, session_id);
+    });
+    const int rc = client->read_start_events(
+        [this, listener_id, session_id](uvcpp::uvcpp_tcp_client&,
+                                        const uvcpp::net_read_result& result) {
+          on_accepted_read(listener_id, session_id, result);
+        });
+    if (rc != 0) {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      auto listener = listener_locked(listener_id);
+      if (!listener) return;
+      auto it = listener->sessions.find(session_id);
+      if (it != listener->sessions.end()) {
+        it->second->state = "error";
+        it->second->error = "read start failed: " + uv_error_string(rc);
+        accepted_event_locked(*it->second, {{"type", "error"},
+                                            {"error", it->second->error}});
+      }
+      client->close();
+    }
+  }
+
+  void on_accepted_close(const std::string& listener_id,
+                         const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    auto listener = listener_locked(listener_id);
+    if (!listener) return;
+    auto it = listener->sessions.find(session_id);
+    if (it == listener->sessions.end()) return;
+    Accepted& session = *it->second;
+    session.client = nullptr;
+    if (session.state == "closed" || session.state == "error") return;
+    session.state = "closed";
+    session.closed_at = now_iso8601();
+    accepted_event_locked(session, {{"type", "closed"}});
+    listener_event_locked(*listener, {{"type", "session-closed"},
+                                      {"sessionId", session.id}});
+  }
+
+  void on_accepted_read(const std::string& listener_id,
+                        const std::string& session_id,
+                        const uvcpp::net_read_result& result) {
+    if (result.event == uvcpp::net_read_event::DATA) {
+      if (result.data == nullptr || result.size == 0) return;
+      const std::string bytes(result.data, result.size);
+      std::lock_guard<std::mutex> lock(state_mutex);
+      auto listener = listener_locked(listener_id);
+      if (!listener) return;
+      auto it = listener->sessions.find(session_id);
+      if (it == listener->sessions.end()) return;
+      it->second->received_bytes += bytes.size();
+      accepted_event_locked(*it->second, {{"type", "recv"},
+                                          {"payload", bytes_json(bytes)}});
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(state_mutex);
+    auto listener = listener_locked(listener_id);
+    if (!listener) return;
+    auto it = listener->sessions.find(session_id);
+    if (it == listener->sessions.end()) return;
+    Accepted& session = *it->second;
+    if (result.event == uvcpp::net_read_event::PEER_CLOSED) {
+      session.state = result.fin ? "closed" : "error";
+      if (!result.fin) session.error = "peer reset the connection";
+      session.closed_at = now_iso8601();
+      accepted_event_locked(session, {{"type", "peer-closed"}, {"fin", result.fin}});
+      listener_event_locked(*listener, {{"type", "session-closed"},
+                                        {"sessionId", session.id}});
+    } else {
+      session.state = "error";
+      session.error = "read failed: " + uv_error_string(result.error);
+      session.closed_at = now_iso8601();
+      accepted_event_locked(session, {{"type", "error"}, {"error", session.error}});
+      listener_event_locked(*listener, {{"type", "session-closed"},
+                                        {"sessionId", session.id}});
+    }
+  }
+
+  void enqueue_accepted_write(const std::string& listener_id,
+                              const std::string& session_id,
+                              std::string payload) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    auto listener = listener_locked(listener_id);
+    if (!listener) return;
+    auto it = listener->sessions.find(session_id);
+    if (it == listener->sessions.end() || it->second->client == nullptr ||
+        it->second->state != "connected") {
+      if (it != listener->sessions.end()) {
+        accepted_event_locked(*it->second, {{"type", "error"},
+                                            {"error", "session is not connected"}});
+      }
+      return;
+    }
+    Accepted& session = *it->second;
+    if (session.queued_bytes + payload.size() > kMaxQueuedBytes) {
+      accepted_event_locked(session, {{"type", "error"},
+                                      {"error", "send queue is full"}});
+      return;
+    }
+    const std::size_t size = payload.size();
+    session.queued_bytes += size;
+    session.writes.emplace_back(std::move(payload), size);
+    pump_accepted_write_locked(listener_id, session_id, session);
+  }
+
+  void pump_accepted_write_locked(const std::string& listener_id,
+                                  const std::string& session_id,
+                                  Accepted& session) {
+    if (session.writing || session.writes.empty() || session.client == nullptr) return;
+    session.current_payload = std::move(session.writes.front().first);
+    const std::size_t size = session.current_payload.size();
+    session.queued_bytes -= size;
+    session.writes.pop_front();
+    session.writing = true;
+    const int rc = session.client->write(
+        session.current_payload.data(), session.current_payload.size(),
+        [this, listener_id, session_id, size](int status) {
+          on_accepted_write(listener_id, session_id, size, status);
+        });
+    if (rc != 0) {
+      session.writing = false;
+      session.state = "error";
+      session.error = "write failed: " + uv_error_string(rc);
+      accepted_event_locked(session, {{"type", "error"}, {"error", session.error}});
+      session.client->close();
+    }
+  }
+
+  void on_accepted_write(const std::string& listener_id,
+                         const std::string& session_id, std::size_t size,
+                         int status) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    auto listener = listener_locked(listener_id);
+    if (!listener) return;
+    auto it = listener->sessions.find(session_id);
+    if (it == listener->sessions.end()) return;
+    Accepted& session = *it->second;
+    session.writing = false;
+    if (status == 0) {
+      session.sent_bytes += size;
+      accepted_event_locked(session, {{"type", "send"},
+                                      {"payload", bytes_json(session.current_payload)}});
+      pump_accepted_write_locked(listener_id, session_id, session);
+    } else {
+      session.state = "error";
+      session.error = "write failed: " + uv_error_string(status);
+      accepted_event_locked(session, {{"type", "error"}, {"error", session.error}});
+      if (session.client != nullptr) session.client->close();
+    }
+  }
+
+  static void udp_alloc_cb(uv_handle_t*, std::size_t suggested, uv_buf_t* buf) {
+    char* data = static_cast<char*>(std::malloc(suggested));
+    *buf = uv_buf_init(data, data == nullptr ? 0 : static_cast<unsigned int>(suggested));
+  }
+
+  static void udp_recv_cb(uv_udp_t* handle, ssize_t nread, const uv_buf_t* buf,
+                          const struct sockaddr* addr, unsigned flags) {
+    auto* context = static_cast<UdpContext*>(handle->data);
+    if (context != nullptr && nread > 0 && addr != nullptr && buf->base != nullptr) {
+      context->impl->on_udp_datagram(context->listener_id, buf->base,
+                                     static_cast<std::size_t>(nread), addr,
+                                     (flags & UV_UDP_PARTIAL) != 0);
+    }
+    std::free(buf->base);
+  }
+
+  void on_udp_datagram(const std::string& listener_id, const char* data,
+                       std::size_t size, const struct sockaddr* addr, bool partial) {
+    char ip[INET6_ADDRSTRLEN] = {0};
+    int port = 0;
+    if (addr->sa_family == AF_INET) {
+      auto* in = reinterpret_cast<const struct sockaddr_in*>(addr);
+      uv_ip4_name(in, ip, sizeof(ip));
+      port = ntohs(in->sin_port);
+    } else if (addr->sa_family == AF_INET6) {
+      auto* in6 = reinterpret_cast<const struct sockaddr_in6*>(addr);
+      uv_ip6_name(in6, ip, sizeof(ip));
+      port = ntohs(in6->sin6_port);
+    } else {
+      return;
+    }
+    const std::string peer = std::string(ip) + ":" + std::to_string(port);
+    const std::string bytes(data, size);
+    std::lock_guard<std::mutex> lock(state_mutex);
+    auto listener = listener_locked(listener_id);
+    if (!listener) return;
+    listener->datagrams += 1;
+    listener->last_peer = peer;
+    listener_event_locked(*listener, {{"type", "datagram"},
+                                      {"peer", peer},
+                                      {"partial", partial},
+                                      {"payload", bytes_json(bytes)}});
+  }
+
+  bool send_udp(const std::string& listener_id, const std::string& peer_host,
+                int peer_port, const std::string& payload, std::string* error) {
+    std::shared_ptr<Listener> listener;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      listener = listener_locked(listener_id);
+      if (!listener) {
+        if (error) *error = "listener not found";
+        return false;
+      }
+      if (listener->udp == nullptr || listener->state != "listening") {
+        if (error) *error = "listener is not running";
+        return false;
+      }
+    }
+    struct sockaddr_storage storage;
+    std::memset(&storage, 0, sizeof(storage));
+    struct sockaddr_in addr4;
+    struct sockaddr_in6 addr6;
+    const struct sockaddr* addr = nullptr;
+    if (uv_ip4_addr(peer_host.c_str(), peer_port, &addr4) == 0) {
+      std::memcpy(&storage, &addr4, sizeof(addr4));
+      addr = reinterpret_cast<const struct sockaddr*>(&storage);
+    } else if (uv_ip6_addr(peer_host.c_str(), peer_port, &addr6) == 0) {
+      std::memcpy(&storage, &addr6, sizeof(addr6));
+      addr = reinterpret_cast<const struct sockaddr*>(&storage);
+    } else {
+      if (error) *error = "peer address must be a numeric IP";
+      return false;
+    }
+
+    auto* context = new UdpSendContext();
+    context->impl = this;
+    context->listener_id = listener_id;
+    context->peer = std::string(peer_host) + ":" + std::to_string(peer_port);
+    context->payload = payload;
+    context->req.data = context;
+    uv_buf_t buf = uv_buf_init(const_cast<char*>(context->payload.data()),
+                               static_cast<unsigned int>(context->payload.size()));
+    const int rc = uv_udp_send(
+        &context->req, listener->udp, &buf, 1, addr,
+        [](uv_udp_send_t* req, int status) {
+          auto* send = static_cast<UdpSendContext*>(req->data);
+          if (send != nullptr) {
+            send->impl->on_udp_sent(send->listener_id, send->peer,
+                                    send->payload, status);
+            delete send;
+          }
+        });
+    if (rc != 0) {
+      delete context;
+      if (error) *error = "send failed: " + uv_error_string(rc);
+      return false;
+    }
+    return true;
+  }
+
+  void on_udp_sent(const std::string& listener_id, const std::string& peer,
+                   const std::string& payload, int status) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    auto listener = listener_locked(listener_id);
+    if (!listener) return;
+    if (status == 0) {
+      listener_event_locked(*listener, {{"type", "sent"},
+                                        {"peer", peer},
+                                        {"payload", bytes_json(payload)}});
+    } else {
+      listener_event_locked(*listener, {{"type", "error"},
+                                        {"error", "send failed: " + uv_error_string(status)}});
+    }
+  }
+
+  void close_accepted(const std::string& listener_id,
+                      const std::string& session_id) {
+    uvcpp::uvcpp_tcp_client* client = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      auto listener = listener_locked(listener_id);
+      if (!listener) return;
+      auto it = listener->sessions.find(session_id);
+      if (it == listener->sessions.end()) return;
+      client = it->second->client;
+      if (client != nullptr && it->second->state == "connected") {
+        it->second->state = "closing";
+      }
+    }
+    if (client != nullptr) client->close();
+  }
+
   void sweep() {
     for (uvcpp::uvcpp_tcp_client* client : retired) {
       if (client != nullptr) delete client;
     }
     retired.clear();
+
+    for (uvcpp::uvcpp_tcp_server* server : retired_servers) {
+      if (server != nullptr) delete server;
+    }
+    retired_servers.clear();
 
     const std::int64_t now = now_ms();
     std::vector<std::pair<std::string, std::string>> expired;
@@ -464,6 +1085,17 @@ struct TransportManager::Impl {
   }
 
   void shutdown_loop() {
+    std::vector<std::string> listener_ids;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      for (const auto& item : listeners) {
+        if (item.second->state == "listening" || item.second->state == "starting") {
+          listener_ids.push_back(item.first);
+        }
+      }
+    }
+    for (const auto& id : listener_ids) stop_listener_loop(id);
+
     std::vector<std::string> ids;
     for (const auto& item : active) ids.push_back(item.first);
     for (const auto& id : ids) close_active(id, "shutdown");
@@ -547,6 +1179,23 @@ struct TransportManager::Impl {
     active.clear();
     for (auto* client : retired) delete client;
     retired.clear();
+    for (auto* server : retired_servers) delete server;
+    retired_servers.clear();
+    for (auto& item : listeners) {
+      if (item.second->tcp != nullptr) {
+        delete item.second->tcp;
+        item.second->tcp = nullptr;
+      }
+      if (item.second->udp != nullptr) {
+        uv_udp_recv_stop(item.second->udp);
+        uv_close(reinterpret_cast<uv_handle_t*>(item.second->udp),
+                 [](uv_handle_t* handle) {
+                   delete static_cast<UdpContext*>(handle->data);
+                   delete reinterpret_cast<uv_udp_t*>(handle);
+                 });
+        item.second->udp = nullptr;
+      }
+    }
 
     if (sweep_timer != nullptr) {
       uv_close(reinterpret_cast<uv_handle_t*>(sweep_timer),
@@ -737,6 +1386,257 @@ bool TransportManager::tcp_close(const std::string& id, std::string* error) {
     if (session->state == "closed") return true;
   }
   if (!impl_->post([this, id] { impl_->close_active(id, "closed by user"); })) {
+    if (error) *error = "transport manager is stopping";
+    return false;
+  }
+  return true;
+}
+
+bool TransportManager::add_listener(const ListenerConfig& config,
+                                    std::string* error) {
+  if (!available()) {
+    if (error) *error = start_error().empty() ? "transport manager is not running" : start_error();
+    return false;
+  }
+  if (config.id.empty() || (config.transport != "tcp" && config.transport != "udp") ||
+      config.host.empty() || config.port <= 0 || config.port > 65535) {
+    if (error) *error = "invalid listener";
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  auto existing = impl_->listener_locked(config.id);
+  if (existing) {
+    if ((existing->state == "listening" || existing->state == "starting") &&
+        (existing->config.transport != config.transport ||
+         existing->config.host != config.host || existing->config.port != config.port)) {
+      if (error) *error = "stop the listener before changing transport, host or port";
+      return false;
+    }
+    existing->config = config;
+    return true;
+  }
+  auto listener = std::make_shared<Impl::Listener>();
+  listener->config = config;
+  impl_->listeners[config.id] = listener;
+  return true;
+}
+
+bool TransportManager::start_listener(const std::string& id, std::string* error) {
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    auto listener = impl_->listener_locked(id);
+    if (!listener) {
+      if (error) *error = "listener not found";
+      return false;
+    }
+    if (listener->state == "listening") return true;
+    listener->state = "starting";
+  }
+  if (!impl_->post([this, id] { impl_->start_listener_loop(id); })) {
+    if (error) *error = "transport manager is stopping";
+    return false;
+  }
+  return true;
+}
+
+bool TransportManager::stop_listener(const std::string& id, std::string* error) {
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    auto listener = impl_->listener_locked(id);
+    if (!listener) {
+      if (error) *error = "listener not found";
+      return false;
+    }
+    if (listener->state == "stopped") return true;
+  }
+  if (!impl_->post([this, id] { impl_->stop_listener_loop(id); })) {
+    if (error) *error = "transport manager is stopping";
+    return false;
+  }
+  return true;
+}
+
+bool TransportManager::remove_listener(const std::string& id, std::string* error) {
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    if (!impl_->listener_locked(id)) {
+      if (error) *error = "listener not found";
+      return false;
+    }
+  }
+  if (!impl_->post([this, id] {
+        impl_->stop_listener_loop(id);
+        std::lock_guard<std::mutex> lock(impl_->state_mutex);
+        impl_->listeners.erase(id);
+      })) {
+    if (error) *error = "transport manager is stopping";
+    return false;
+  }
+  return true;
+}
+
+nlohmann::json TransportManager::listeners() const {
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& item : impl_->listeners) {
+    out.push_back(impl_->listener_snapshot_locked(*item.second));
+  }
+  std::sort(out.begin(), out.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+    return a.value("id", std::string()) < b.value("id", std::string());
+  });
+  return {{"ok", true}, {"listeners", out}};
+}
+
+nlohmann::json TransportManager::listener(const std::string& id) const {
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  auto listener = impl_->listener_locked(id);
+  if (!listener) return {{"ok", false}, {"error", "listener not found"}};
+  return {{"ok", true}, {"listener", impl_->listener_snapshot_locked(*listener)}};
+}
+
+nlohmann::json TransportManager::listener_events(const std::string& id,
+                                                 std::uint64_t after,
+                                                 int limit) const {
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  auto listener = impl_->listener_locked(id);
+  if (!listener) return {{"ok", false}, {"error", "listener not found"}};
+  const int safe_limit = std::max(1, std::min(limit, 500));
+  nlohmann::json events = nlohmann::json::array();
+  for (const auto& event : listener->events) {
+    if (event.json.value("seq", std::uint64_t{0}) <= after) continue;
+    events.push_back(event.json);
+    if (events.size() >= static_cast<std::size_t>(safe_limit)) break;
+  }
+  return {{"ok", true},
+          {"listener", impl_->listener_snapshot_locked(*listener)},
+          {"events", events},
+          {"nextSeq", listener->next_seq - 1}};
+}
+
+nlohmann::json TransportManager::listener_sessions(const std::string& id) const {
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  auto listener = impl_->listener_locked(id);
+  if (!listener) return {{"ok", false}, {"error", "listener not found"}};
+  nlohmann::json sessions = nlohmann::json::array();
+  for (const auto& item : listener->sessions) {
+    auto snapshot = impl_->accepted_snapshot_locked(*item.second);
+    snapshot["listenerId"] = id;
+    sessions.push_back(snapshot);
+  }
+  std::sort(sessions.begin(), sessions.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+    return a.value("connectedAt", std::string()) > b.value("connectedAt", std::string());
+  });
+  return {{"ok", true}, {"sessions", sessions}};
+}
+
+nlohmann::json TransportManager::listener_session_events(
+    const std::string& id, const std::string& session_id, std::uint64_t after,
+    int limit) const {
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  auto listener = impl_->listener_locked(id);
+  if (!listener) return {{"ok", false}, {"error", "listener not found"}};
+  auto it = listener->sessions.find(session_id);
+  if (it == listener->sessions.end()) {
+    return {{"ok", false}, {"error", "session not found"}};
+  }
+  const int safe_limit = std::max(1, std::min(limit, 500));
+  nlohmann::json events = nlohmann::json::array();
+  for (const auto& event : it->second->events) {
+    if (event.json.value("seq", std::uint64_t{0}) <= after) continue;
+    events.push_back(event.json);
+    if (events.size() >= static_cast<std::size_t>(safe_limit)) break;
+  }
+  return {{"ok", true},
+          {"session", impl_->accepted_snapshot_locked(*it->second)},
+          {"events", events},
+          {"nextSeq", it->second->next_seq - 1}};
+}
+
+bool TransportManager::listener_send(const std::string& id,
+                                     const std::string& session_id,
+                                     const std::string& peer_host, int peer_port,
+                                     const std::string& payload,
+                                     const std::string& encoding,
+                                     std::string* error) {
+  std::string bytes;
+  if (!decode_payload(payload, encoding, &bytes, error)) return false;
+  if (bytes.empty()) {
+    if (error) *error = "payload is empty";
+    return false;
+  }
+
+  bool tcp_listener = false;
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    auto listener = impl_->listener_locked(id);
+    if (!listener) {
+      if (error) *error = "listener not found";
+      return false;
+    }
+    if (listener->state != "listening") {
+      if (error) *error = "listener is not running";
+      return false;
+    }
+    tcp_listener = listener->config.transport == "tcp";
+    if (tcp_listener) {
+      auto it = listener->sessions.find(session_id);
+      if (it == listener->sessions.end() || it->second->client == nullptr ||
+          it->second->state != "connected") {
+        if (error) *error = "session is not connected";
+        return false;
+      }
+    } else {
+      if (peer_host.empty() || peer_port <= 0 || peer_port > 65535) {
+        if (error) *error = "peer host and port are required";
+        return false;
+      }
+      struct sockaddr_in addr4;
+      struct sockaddr_in6 addr6;
+      if (uv_ip4_addr(peer_host.c_str(), peer_port, &addr4) != 0 &&
+          uv_ip6_addr(peer_host.c_str(), peer_port, &addr6) != 0) {
+        if (error) *error = "peer address must be a numeric IP";
+        return false;
+      }
+    }
+  }
+
+  if (!impl_->post([this, id, session_id, peer_host, peer_port, bytes, tcp_listener] {
+        if (tcp_listener) {
+          impl_->enqueue_accepted_write(id, session_id, bytes);
+        } else {
+          std::string ignored;
+          impl_->send_udp(id, peer_host, peer_port, bytes, &ignored);
+        }
+      })) {
+    if (error) *error = "transport manager is stopping";
+    return false;
+  }
+  return true;
+}
+
+bool TransportManager::listener_close_session(const std::string& id,
+                                              const std::string& session_id,
+                                              std::string* error) {
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    auto listener = impl_->listener_locked(id);
+    if (!listener) {
+      if (error) *error = "listener not found";
+      return false;
+    }
+    if (listener->config.transport != "tcp") {
+      if (error) *error = "UDP listeners do not have sessions";
+      return false;
+    }
+    auto it = listener->sessions.find(session_id);
+    if (it == listener->sessions.end()) {
+      if (error) *error = "session not found";
+      return false;
+    }
+  }
+  if (!impl_->post([this, id, session_id] {
+        impl_->close_accepted(id, session_id);
+      })) {
     if (error) *error = "transport manager is stopping";
     return false;
   }
