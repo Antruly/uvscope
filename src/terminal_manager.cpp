@@ -213,6 +213,9 @@ struct TerminalManager::Impl {
     uvcpp::uvcpp_pipe* out_pipe = nullptr;
     void* drain_handle = nullptr;
     std::int64_t hpc_close_at_ms = 0;
+    std::atomic<std::uint64_t> input_written{0};
+    std::atomic<std::uint64_t> output_read{0};
+    std::atomic<int> last_input_error{0};
 #endif
   };
 
@@ -330,6 +333,7 @@ struct TerminalManager::Impl {
     if (buf != nullptr && buf->base != nullptr) {
       if (nread > 0 && session != nullptr) {
         append_output(*session, buf->base, static_cast<std::size_t>(nread));
+        session->output_read.fetch_add(static_cast<std::uint64_t>(nread));
       }
       delete[] buf->base;
     }
@@ -377,6 +381,8 @@ struct TerminalManager::Impl {
     if (offset < data.size()) {
       session.pending_input = data.substr(offset) + session.pending_input;
     }
+    session.input_written.fetch_add(offset);
+    if (offset < data.size()) session.last_input_error.store(static_cast<int>(GetLastError()));
   }
 
   static std::size_t drain_remaining_output(Session& session) {
@@ -399,6 +405,7 @@ struct TerminalManager::Impl {
         break;
       }
       append_output_unlocked(session, buffer, read);
+      session.output_read.fetch_add(read);
       total += read;
     }
     CloseHandle(static_cast<HANDLE>(session.drain_handle));
@@ -495,6 +502,17 @@ struct TerminalManager::Impl {
     STARTUPINFOEXW startup;
     std::memset(&startup, 0, sizeof(startup));
     startup.StartupInfo.cb = sizeof(startup);
+    // Without STARTF_USESTDHANDLES, CreateProcess hands the child the parent's
+    // redirected std handles. The daemon's stdout/stderr point at a log file
+    // whenever it is started with redirection, so PowerShell would write its
+    // banner there, never touch the pseudoconsole, and exit on stdin EOF.
+    // Selecting the fields while leaving them null forces the child to use the
+    // console created by PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE instead
+    // (microsoft/terminal#11276).
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = nullptr;
+    startup.StartupInfo.hStdOutput = nullptr;
+    startup.StartupInfo.hStdError = nullptr;
     startup.lpAttributeList = attr;
     PROCESS_INFORMATION process_info;
     std::memset(&process_info, 0, sizeof(process_info));
@@ -1075,7 +1093,13 @@ nlohmann::json TerminalManager::Impl::snapshot_locked(const Session& session) {
           {"cols", session.cols},
           {"rows", session.rows},
           {"nextSeq", session.next_seq - 1},
-          {"bufferedBytes", session.buffered_bytes}};
+          {"bufferedBytes", session.buffered_bytes},
+#if defined(_WIN32)
+          {"inputBytesWritten", session.input_written.load()},
+          {"outputBytesRead", session.output_read.load()},
+          {"lastInputError", session.last_input_error.load()},
+#endif
+  };
 }
 
 nlohmann::json TerminalManager::sessions(std::int64_t owner_id, bool all) const {

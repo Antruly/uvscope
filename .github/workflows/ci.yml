@@ -187,28 +187,57 @@ jobs:
           if status != 200 or not session.get("id"):
               raise SystemExit(f"ConPTY session failed: {payload}")
           session_id = session["id"]
-          time.sleep(1.0)
-          status, payload = call(
-              "POST", f"/api/terminal/sessions/{session_id}/input",
-              {"data": "Write-Output conpty-ok\r\nexit\r\n"})
-          if status != 200:
-              raise SystemExit(f"ConPTY input failed: {payload}")
-          text = ""
-          state = ""
-          for _ in range(150):
+          data_dir = os.environ["DATA_DIR"]
+
+          def read_terminal():
               status, payload = call(
                   "GET", f"/api/terminal/sessions/{session_id}/output?after=0&limit=200")
               text = b"".join(base64.b64decode(chunk["data"])
                               for chunk in payload.get("chunks", [])).decode(
                                   "utf-8", "replace")
-              state = payload.get("session", {}).get("state", "")
-              if "conpty-ok" in text and state == "exited":
+              return text, payload.get("session", {})
+
+          def diagnostics(reason):
+              status, current = call(
+                  "GET", f"/api/terminal/sessions/{session_id}")
+              log = open(os.path.join(data_dir, "daemon.log"),
+                         encoding="utf-8", errors="replace").read()
+              return f"{reason}\n{json.dumps(current, ensure_ascii=False)}\n{log[-4000:]}"
+
+          # Wait for the shell prompt through the pseudoconsole instead of a
+          # blind sleep: this is the earliest proof that the child's stdio is
+          # wired to ConPTY rather than inherited from the daemon.
+          text, current = read_terminal()
+          deadline = time.time() + 10
+          while time.time() < deadline:
+              if "PS " in text and "> " in text:
+                  break
+              if current.get("state") != "running":
                   break
               time.sleep(0.1)
-          if "conpty-ok" not in text:
-              log = open(os.path.join(os.environ["DATA_DIR"], "daemon.log"),
-                         encoding="utf-8", errors="replace").read()
-              raise SystemExit(f"ConPTY output missing (state={state})\n{text[-800:]}\n{log[-2000:]}")
+              text, current = read_terminal()
+          if current.get("state") != "running":
+              raise SystemExit(diagnostics(
+                  f"ConPTY session stopped before input (state={current.get('state')})"
+                  f"\n{text[-800:]}"))
+          if "PS " not in text:
+              raise SystemExit(diagnostics(
+                  f"ConPTY prompt missing (state={current.get('state')})"
+                  f"\n{text[-800:]}"))
+          status, payload = call(
+              "POST", f"/api/terminal/sessions/{session_id}/input",
+              {"data": "Write-Output conpty-ok\r\nexit\r\n"})
+          if status != 200:
+              raise SystemExit(diagnostics(f"ConPTY input failed: {payload}"))
+          for _ in range(150):
+              text, current = read_terminal()
+              if "conpty-ok" in text and current.get("state") == "exited":
+                  break
+              time.sleep(0.1)
+          if "conpty-ok" not in text or current.get("state") != "exited":
+              raise SystemExit(diagnostics(
+                  f"ConPTY output missing (state={current.get('state')})"
+                  f"\n{text[-800:]}"))
           print("Windows ConPTY terminal smoke OK")
           PY
 
