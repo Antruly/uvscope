@@ -8,6 +8,10 @@ All notable changes to uvscope are documented here. The format is based on
 
 ### Added
 
+- Virtual terminal backend (Unix): persistent per-user PTY sessions with sequenced 256 KiB
+  scrollback, input/resize/output APIs, owner/admin access and a 200 ms reaper. The `terminal`
+  module is disabled by default and limited to admin/operator roles; sessions survive browser
+  disconnects for the daemon lifetime.
 - HTTP probe results now expose the negotiated stream ID and `retryable`, plus GOAWAY state when
   the build enables HTTP/2. The timing panel shows both; HTTP/1.1 reports 0 / false.
 - TLS Inspector decodes every certificate in a PEM bundle (up to 32 displayed) and lists the

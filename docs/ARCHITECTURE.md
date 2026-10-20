@@ -133,6 +133,19 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
 - Stopping a listener closes the listener handle and all accepted clients; the server object is
   retired and deleted by the 500 ms sweep after its close callbacks have run.
 
+## Virtual terminal runtime
+
+- `TerminalManager` owns one libuv loop thread for PTY masters; web handlers only enqueue
+  create/input/resize/close commands and read bounded snapshots.
+- Unix sessions use `forkpty`; the child `chdir`s to the requested directory and `execve`s an
+  absolute shell with a minimal environment (`TERM`, `PATH`, `HOME`, `USER`, locale). The child
+  only runs async-signal-safe calls between fork and exec.
+- Output is appended to a 256 KiB per-session ring of sequenced chunks; sessions persist while
+  the daemon runs, so browser refresh/reconnect only changes subscribers.
+- A 200 ms sweep reaps children, records exit codes and prunes exited sessions.
+- The module is off by default; enabling it grants shell access on the daemon host to admin and
+  operator roles. Windows ConPTY is a follow-up slice.
+
 ## SOCKS5 outbound proxy
 
 - `Socks5Proxy` is carried by HTTP/TCP/UDP probes and persistent sessions. HTTP/TCP use

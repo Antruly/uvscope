@@ -278,7 +278,7 @@ std::string platform_name() {
 
 bool module_id_valid(const std::string& module) {
   return module == "http" || module == "websocket" || module == "tcpudp" || module == "soap" ||
-         module == "tls" || module == "proxy" || module == "all";
+         module == "tls" || module == "proxy" || module == "terminal" || module == "all";
 }
 
 }  // namespace
@@ -295,6 +295,7 @@ Application::Application(AppOptions options)
 Application::~Application() {
   if (update_thread_.joinable()) update_thread_.join();
 
+  terminal_.reset();
   socks5_.reset();
   transport_.reset();
 
@@ -327,6 +328,11 @@ bool Application::initialize() {
     if (!socks5_->add_server(server, nullptr)) continue;
     if (server.auto_start) socks5_->start_server(server.id, nullptr);
   }
+  terminal_.reset(new TerminalManager());
+  if (!terminal_->available()) {
+    std::fprintf(stderr, "uvscope: terminal sessions unavailable: %s\n",
+                 terminal_->start_error().c_str());
+  }
   web_root_ = options_.web_root.string();
   if (!web_root_.empty()) {
     std::error_code ec;
@@ -358,6 +364,7 @@ bool Application::initialize() {
   register_dashboard_routes();
   register_debug_routes();
   register_socks5_routes();
+  register_terminal_routes();
   register_proxy_routes();
   register_admin_routes();
   register_update_routes();
@@ -1510,6 +1517,172 @@ void Application::register_socks5_routes() {
 }
 
 // ---------------------------------------------------------------------------
+// Virtual terminals
+// ---------------------------------------------------------------------------
+void Application::register_terminal_routes() {
+  auto can_access = [this](const Principal& principal, const std::string& id) {
+    if (principal.user.role == "admin") return terminal_ && terminal_->session(id).value("ok", false);
+    std::int64_t owner = 0;
+    return terminal_ && terminal_->owner_of(id, &owner) && owner == principal.user.id;
+  };
+
+  app_.get("/api/terminal/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                            uvcpp::uvcpp_web_response& resp,
+                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+    if (!principal) return;
+    if (!terminal_ || !terminal_->available()) {
+      send_error(resp, 503, terminal_ ? terminal_->start_error() : "terminal is unavailable",
+                 "unavailable");
+      return;
+    }
+    const bool all = principal->user.role == "admin" && req.query("all") != nullptr;
+    send_json(resp, 200, terminal_->sessions(principal->user.id, all));
+  });
+
+  app_.post("/api/terminal/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                             uvcpp::uvcpp_web_response& resp,
+                                             uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+    if (!principal) return;
+    if (!terminal_ || !terminal_->available()) {
+      send_error(resp, 503, terminal_ ? terminal_->start_error() : "terminal is unavailable",
+                 "unavailable");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    TerminalConfig config;
+    config.name = string_field(*body, "name");
+    config.shell = string_field(*body, "shell");
+    config.cwd = string_field(*body, "cwd");
+    config.cols = int_field(*body, "cols", 100);
+    config.rows = int_field(*body, "rows", 30);
+    std::string error;
+    auto result = terminal_->create(principal->user.id, principal->user.username, config, &error);
+    if (!result.is_object() || !result.value("ok", false)) {
+      send_error(resp, 400, error.empty() ? "could not create terminal" : error,
+                 "terminal_failed");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/terminal/sessions/:id", [this, can_access](uvcpp::uvcpp_web_request& req,
+                                                            uvcpp::uvcpp_web_response& resp,
+                                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !terminal_ || !can_access(*principal, *id)) {
+      send_error(resp, 404, "terminal not found", "not_found");
+      return;
+    }
+    send_json(resp, 200, terminal_->session(*id));
+  });
+
+  app_.del("/api/terminal/sessions/:id", [this, can_access](uvcpp::uvcpp_web_request& req,
+                                                            uvcpp::uvcpp_web_response& resp,
+                                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !terminal_ || !can_access(*principal, *id)) {
+      send_error(resp, 404, "terminal not found", "not_found");
+      return;
+    }
+    std::string error;
+    if (!terminal_->close(*id, &error)) {
+      send_error(resp, 400, error, "terminal_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.post("/api/terminal/sessions/:id/input",
+            [this, can_access](uvcpp::uvcpp_web_request& req,
+                               uvcpp::uvcpp_web_response& resp,
+                               uvcpp::uvcpp_web_next) {
+              const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+              if (!principal) return;
+              const std::string* id = req.param("id");
+              if (!id || !terminal_ || !can_access(*principal, *id)) {
+                send_error(resp, 404, "terminal not found", "not_found");
+                return;
+              }
+              const auto body = parse_json(req, resp);
+              if (!body) return;
+              std::string data = string_field(*body, "data");
+              const std::string encoding = lower(string_field(*body, "encoding", "text"));
+              if (encoding == "hex") {
+                const auto decoded = hex_decode(data);
+                if (!decoded) {
+                  send_error(resp, 400, "data is not valid hex", "bad_request");
+                  return;
+                }
+                data = *decoded;
+              } else if (encoding == "base64") {
+                const auto decoded = base64_decode(data);
+                if (!decoded) {
+                  send_error(resp, 400, "data is not valid base64", "bad_request");
+                  return;
+                }
+                data = *decoded;
+              }
+              std::string error;
+              if (!terminal_->input(*id, data, &error)) {
+                send_error(resp, 400, error, "terminal_failed");
+                return;
+              }
+              send_json(resp, 200, {{"ok", true}});
+            });
+
+  app_.post("/api/terminal/sessions/:id/resize",
+            [this, can_access](uvcpp::uvcpp_web_request& req,
+                               uvcpp::uvcpp_web_response& resp,
+                               uvcpp::uvcpp_web_next) {
+              const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+              if (!principal) return;
+              const std::string* id = req.param("id");
+              if (!id || !terminal_ || !can_access(*principal, *id)) {
+                send_error(resp, 404, "terminal not found", "not_found");
+                return;
+              }
+              const auto body = parse_json(req, resp);
+              if (!body) return;
+              std::string error;
+              if (!terminal_->resize(*id, int_field(*body, "cols", 100),
+                                     int_field(*body, "rows", 30), &error)) {
+                send_error(resp, 400, error, "terminal_failed");
+                return;
+              }
+              send_json(resp, 200, {{"ok", true}});
+            });
+
+  app_.get("/api/terminal/sessions/:id/output",
+           [this, can_access](uvcpp::uvcpp_web_request& req,
+                              uvcpp::uvcpp_web_response& resp,
+                              uvcpp::uvcpp_web_next) {
+             const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+             if (!principal) return;
+             const std::string* id = req.param("id");
+             if (!id || !terminal_ || !can_access(*principal, *id)) {
+               send_error(resp, 404, "terminal not found", "not_found");
+               return;
+             }
+             std::uint64_t after = 0;
+             if (const std::string* value = req.query("after")) {
+               after = std::strtoull(value->c_str(), nullptr, 10);
+             }
+             int limit = 200;
+             if (const std::string* value = req.query("limit")) {
+               limit = std::atoi(value->c_str());
+             }
+             send_json(resp, 200, terminal_->output(*id, after, limit));
+           });
+}
+
+// ---------------------------------------------------------------------------
 // Reverse proxies
 // ---------------------------------------------------------------------------
 nlohmann::json Application::proxy_view() const {
@@ -1726,6 +1899,9 @@ void Application::register_admin_routes() {
           send_error(resp, 400, error, "settings_save_failed");
           return;
         }
+        if (it.key() == "terminal" && !it.value().get<bool>() && terminal_) {
+          terminal_->close_all();
+        }
       }
     }
     send_json(resp, 200, {{"ok", true}, {"modules", store_.module_states()}});
@@ -1834,6 +2010,7 @@ void Application::register_admin_routes() {
     }
     std::string error;
     if (module == "all") {
+      if (terminal_) terminal_->close_all();
       if (proxies_) proxies_->stop_all();
       if (!store_.reset_database(&error)) {
         send_error(resp, 500, "database reset failed: " + error, "reset_failed");
@@ -1845,6 +2022,7 @@ void Application::register_admin_routes() {
       return;
     }
     if (module == "proxy" && proxies_) proxies_->stop_all();
+    if (module == "terminal" && terminal_) terminal_->close_all();
     if (!store_.reset_module(module, &error)) {
       send_error(resp, 500, error, "reset_failed");
       return;

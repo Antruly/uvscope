@@ -10,6 +10,7 @@ const allModules: ModuleMap = {
   soap: true,
   tls: true,
   proxy: true,
+  terminal: false,
 }
 
 export const useAuthStore = defineStore('auth', () => {

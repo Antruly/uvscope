@@ -22,6 +22,11 @@ const en: Record<string, string> = {
   'settings.modules.tls.description': 'Local X.509 decoding and validity analysis.',
   'settings.modules.proxy.title': 'Reverse proxy',
   'settings.modules.proxy.description': 'Managed HTTP gateways with live request logs.',
+  'settings.modules.terminal.title': 'Virtual terminal',
+  'settings.modules.terminal.description':
+    'Server-side PTY shells owned by users; admin/operator only. This grants shell access to the daemon host.',
+  'settings.modules.terminal.confirm':
+    'Enable the virtual terminal? Anyone with admin/operator access will be able to run commands on this machine. Keep the daemon bound to localhost unless you trust the network.',
 
   'settings.maintenance': 'Maintenance',
   'settings.releaseChannel': 'Release channel',
@@ -99,6 +104,11 @@ const zh: Record<string, string> = {
   'settings.modules.tls.description': '本地 X.509 解码与有效期分析。',
   'settings.modules.proxy.title': '反向代理',
   'settings.modules.proxy.description': '带实时请求日志的可管理 HTTP 网关。',
+  'settings.modules.terminal.title': '虚拟终端',
+  'settings.modules.terminal.description':
+    '用户归属的服务端 PTY Shell；仅 admin/operator 可用。开启等于授予守护进程主机的命令执行权限。',
+  'settings.modules.terminal.confirm':
+    '启用虚拟终端？拥有 admin/operator 权限的用户将可以在这台机器上执行命令。除非你信任所在网络，否则请保持守护进程只监听 localhost。',
 
   'settings.maintenance': '维护',
   'settings.releaseChannel': '发布通道',

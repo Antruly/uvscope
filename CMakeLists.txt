@@ -162,6 +162,7 @@ set(UVSCOPE_SOURCES
   src/socks5_manager.cpp
   src/socks5_proxy.cpp
   src/store.cpp
+  src/terminal_manager.cpp
   src/tls_probe.cpp
   src/transport_manager.cpp
   src/util.cpp)
@@ -192,6 +193,13 @@ target_link_libraries(uvscope PRIVATE
   OpenSSL::Crypto
   Threads::Threads
   ${CMAKE_DL_LIBS})
+if(UNIX)
+  # forkpty / openpty live in libutil on Linux and macOS.
+  find_library(UVSCOPE_UTIL_LIBRARY util)
+  if(UVSCOPE_UTIL_LIBRARY)
+    target_link_libraries(uvscope PRIVATE "${UVSCOPE_UTIL_LIBRARY}")
+  endif()
+endif()
 target_compile_definitions(uvscope PRIVATE
   UVSCOPE_VERSION="${PROJECT_VERSION}"
   UVSCOPE_GITHUB_OWNER="${UVSCOPE_GITHUB_OWNER}"

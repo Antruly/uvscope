@@ -14,7 +14,8 @@
 namespace uvscope {
 namespace {
 
-constexpr const char* kModules[] = {"http", "websocket", "tcpudp", "soap", "tls", "proxy"};
+constexpr const char* kModules[] = {"http", "websocket", "tcpudp", "soap", "tls", "proxy",
+                                    "terminal"};
 constexpr int kSessionTtlSeconds = 7 * 24 * 60 * 60;
 
 bool is_known_module(const std::string& module) {
@@ -28,8 +29,13 @@ std::string module_setting_key(const std::string& module) {
   return "module." + module + ".enabled";
 }
 
+bool module_default_enabled(const std::string& module) {
+  // A terminal is a remote shell; it stays off until an administrator opts in.
+  return module != "terminal";
+}
+
 std::string feature_defaults() {
-  return R"({"http":true,"websocket":true,"tcpudp":true,"soap":true,"tls":true,"proxy":true})";
+  return R"({"http":true,"websocket":true,"tcpudp":true,"soap":true,"tls":true,"proxy":true,"terminal":false})";
 }
 
 nlohmann::json proxy_rules_to_json(const std::vector<ProxyRule>& rules) {
@@ -502,7 +508,8 @@ bool Store::set_setting(const std::string& key, const std::string& value, std::s
 std::map<std::string, bool> Store::module_states() const {
   std::map<std::string, bool> out;
   for (const char* module : kModules) {
-    const std::string value = setting(module_setting_key(module), "1");
+    const std::string value =
+        setting(module_setting_key(module), module_default_enabled(module) ? "1" : "0");
     out[module] = value != "0" && value != "false";
   }
   return out;
@@ -510,7 +517,8 @@ std::map<std::string, bool> Store::module_states() const {
 
 bool Store::module_enabled(const std::string& module) const {
   if (!is_known_module(module)) return false;
-  const std::string value = setting(module_setting_key(module), "1");
+  const std::string value =
+      setting(module_setting_key(module), module_default_enabled(module) ? "1" : "0");
   return value != "0" && value != "false";
 }
 

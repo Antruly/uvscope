@@ -211,6 +211,27 @@ wins. A rule is:
 - Invalid regexes, rewrite destinations that do not start with `/` or `$`, empty patterns or more
   than 64 rules are rejected with `400 bad_request`.
 
+## Virtual terminals
+
+The `terminal` module is disabled by default; enable it in Settings. Routes require the `terminal`
+permission (admin and operator) and an enabled module. Sessions are owned by the creating user and
+survive browser disconnects for the lifetime of the daemon.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/terminal/sessions` | Own sessions; admins may pass `?all=1` |
+| POST | `/api/terminal/sessions` | `{name, shell, cwd, cols, rows}` → session |
+| GET | `/api/terminal/sessions/:id` | One session (owner or admin) |
+| DELETE | `/api/terminal/sessions/:id` | Close a session (owner or admin) |
+| POST | `/api/terminal/sessions/:id/input` | `{data, encoding}` where encoding is text, hex or base64 |
+| POST | `/api/terminal/sessions/:id/resize` | `{cols, rows}` |
+| GET | `/api/terminal/sessions/:id/output?after=&limit=` | Ordered output chunks, base64 encoded |
+
+Session states are `starting`, `running`, `closing`, `exited` and `error`. Output chunks carry
+`seq` and base64 `data`; `nextSeq`, `firstSeq`, `truncated` and `missed` describe the bounded
+scrollback (256 KiB). `shell` must be an absolute executable; `cwd` must be an absolute directory.
+Limits: 4 running sessions per user, 32 total.
+
 ## Administration
 
 | Method | Path | Description |

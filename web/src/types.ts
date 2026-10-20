@@ -8,7 +8,7 @@ export interface User {
   lastLogin: string
 }
 
-export type ModuleMap = Record<'http' | 'websocket' | 'tcpudp' | 'soap' | 'tls' | 'proxy', boolean>
+export type ModuleMap = Record<'http' | 'websocket' | 'tcpudp' | 'soap' | 'tls' | 'proxy' | 'terminal', boolean>
 
 export interface SetupStatus {
   ok: boolean

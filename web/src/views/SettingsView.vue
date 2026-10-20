@@ -13,7 +13,7 @@ const auth = useAuthStore()
 const ui = useUiStore()
 const i18n = useI18nStore()
 const t = i18n.t
-const modules = ref<ModuleMap>({ http: true, websocket: true, tcpudp: true, soap: true, tls: true, proxy: true })
+const modules = ref<ModuleMap>({ http: true, websocket: true, tcpudp: true, soap: true, tls: true, proxy: true, terminal: false })
 const autoUpdateCheck = ref(true)
 const updateIntervalHours = ref(24)
 const dataDir = ref('')
@@ -29,6 +29,7 @@ const moduleMeta: Array<{ key: keyof ModuleMap; icon: string; titleKey: string; 
   { key: 'soap', icon: 'braces', titleKey: 'settings.modules.soap.title', descriptionKey: 'settings.modules.soap.description' },
   { key: 'tls', icon: 'shield', titleKey: 'settings.modules.tls.title', descriptionKey: 'settings.modules.tls.description' },
   { key: 'proxy', icon: 'route', titleKey: 'settings.modules.proxy.title', descriptionKey: 'settings.modules.proxy.description' },
+  { key: 'terminal', icon: 'terminal', titleKey: 'settings.modules.terminal.title', descriptionKey: 'settings.modules.terminal.description' },
 ]
 
 async function load() {
@@ -60,6 +61,10 @@ async function save() {
 }
 
 function toggleModule(key: keyof ModuleMap) {
+  if (key === 'terminal' && !modules.value.terminal &&
+      !window.confirm(t('settings.modules.terminal.confirm'))) {
+    return
+  }
   modules.value[key] = !modules.value[key]
 }
 

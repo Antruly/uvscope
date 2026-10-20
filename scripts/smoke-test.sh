@@ -214,6 +214,7 @@ BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
 SOCKS5_UDP_TARGET_PORT="${SOCKS5_UDP_TARGET_PORT}" TCP_PORT="${TCP_PORT}" python3 - <<'PY'
+import base64
 import http.cookiejar
 import json
 import os
@@ -580,6 +581,41 @@ if auth_server:
         check(False, f"authenticated SOCKS5 tunnel failed: {error}")
     status, deleted = call("DELETE", f"/api/socks5/servers/{auth_server}")
     check(status == 200 and deleted.get("ok") is True, f"SOCKS5 auth delete failed: {deleted}")
+
+# Virtual terminal: the module is off by default, then a real PTY round-trip.
+status, settings = call("PUT", "/api/settings", {"modules": {"terminal": True}})
+check(status == 200 and settings.get("ok") is True,
+      f"could not enable the terminal module: {settings}")
+status, created = call("POST", "/api/terminal/sessions",
+                       {"name": "smoke", "cols": 80, "rows": 24})
+check(status == 200 and created.get("session", {}).get("state") == "running",
+      f"terminal create failed: {created}")
+terminal_id = created.get("session", {}).get("id", "")
+if terminal_id:
+    status, sent = call("POST", f"/api/terminal/sessions/{terminal_id}/input",
+                        {"data": "printf 'term-smoke\\n'; exit\n", "encoding": "text"})
+    check(status == 200 and sent.get("ok") is True, f"terminal input failed: {sent}")
+    terminal_state = ""
+    terminal_text = ""
+    for _ in range(60):
+        status, output = call(
+            "GET", f"/api/terminal/sessions/{terminal_id}/output?after=0&limit=200")
+        chunks = output.get("chunks", [])
+        terminal_text = b"".join(base64.b64decode(item["data"]) for item in chunks).decode(
+            errors="replace")
+        terminal_state = output.get("session", {}).get("state", "")
+        if terminal_state == "exited" and "term-smoke" in terminal_text:
+            break
+        time.sleep(0.1)
+    check(terminal_state == "exited", f"terminal did not exit: {terminal_state}")
+    check(output.get("session", {}).get("exitCode") == 0,
+          f"terminal exit code: {output.get('session', {}).get('exitCode')}")
+    check("term-smoke" in terminal_text, f"terminal output missing: {terminal_text!r}")
+    status, deleted = call("DELETE", f"/api/terminal/sessions/{terminal_id}")
+    check(status in (200, 400), f"terminal close failed: {deleted}")
+status, settings = call("PUT", "/api/settings", {"modules": {"terminal": False}})
+check(status == 200 and settings.get("ok") is True,
+      f"could not disable the terminal module: {settings}")
 
 # Preview documents: safe mode keeps scripts off, scripts mode opts in, both
 # carry a CSP sandbox and a base URL injection.
