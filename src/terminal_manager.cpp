@@ -205,9 +205,8 @@ struct TerminalManager::Impl {
 #if defined(_WIN32)
     void* hpc = nullptr;
     void* process = nullptr;
+    void* input_write = nullptr;
     uv_pipe_t* out_pipe = nullptr;
-    uv_pipe_t* in_pipe = nullptr;
-    bool write_in_flight = false;
     std::int64_t hpc_close_at_ms = 0;
 #endif
   };
@@ -297,12 +296,6 @@ struct TerminalManager::Impl {
 
 
 #if defined(_WIN32)
-  struct WriteContext {
-    Session* session = nullptr;
-    std::string data;
-    uv_write_t request{};
-  };
-
   static void close_pipe(uv_pipe_t*& pipe) {
     if (pipe == nullptr) return;
     uv_pipe_t* handle = pipe;
@@ -342,33 +335,23 @@ struct TerminalManager::Impl {
     }
   }
 
-  static void on_input_written(uv_write_t* request, int status) {
-    auto* context = static_cast<WriteContext*>(request->data);
-    Session* session = context != nullptr ? context->session : nullptr;
-    delete context;
-    if (session == nullptr) return;
-    session->write_in_flight = false;
-    if (status == 0) pump_input(*session);
-  }
-
   static void pump_input(Session& session) {
-    if (session.write_in_flight || session.pending_input.empty() ||
-        session.in_pipe == nullptr) {
-      return;
+    if (session.pending_input.empty() || session.input_write == nullptr) return;
+    std::string data;
+    data.swap(session.pending_input);
+    std::size_t offset = 0;
+    while (offset < data.size()) {
+      DWORD written = 0;
+      const DWORD chunk = static_cast<DWORD>(data.size() - offset);
+      if (!WriteFile(static_cast<HANDLE>(session.input_write), data.data() + offset,
+                     chunk, &written, nullptr) ||
+          written == 0) {
+        break;
+      }
+      offset += written;
     }
-    auto* context = new WriteContext();
-    context->session = &session;
-    context->data.swap(session.pending_input);
-    context->request.data = context;
-    session.write_in_flight = true;
-    uv_buf_t buffer = uv_buf_init(context->data.data(),
-                                  static_cast<unsigned int>(context->data.size()));
-    const int rc = uv_write(&context->request,
-                            reinterpret_cast<uv_stream_t*>(session.in_pipe), &buffer, 1,
-                            on_input_written);
-    if (rc != 0) {
-      session.write_in_flight = false;
-      delete context;
+    if (offset < data.size()) {
+      session.pending_input = data.substr(offset) + session.pending_input;
     }
   }
 
@@ -378,7 +361,10 @@ struct TerminalManager::Impl {
       CloseHandle(session.process);
       session.process = nullptr;
     }
-    close_pipe(session.in_pipe);
+    if (session.input_write != nullptr) {
+      CloseHandle(static_cast<HANDLE>(session.input_write));
+      session.input_write = nullptr;
+    }
     close_pipe(session.out_pipe);
     if (session.hpc != nullptr) {
       if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
@@ -482,17 +468,13 @@ struct TerminalManager::Impl {
 
     const int out_fd = _open_osfhandle(
         reinterpret_cast<intptr_t>(output_read), _O_RDONLY | _O_BINARY);
-    const int in_fd = _open_osfhandle(
-        reinterpret_cast<intptr_t>(input_write), _O_WRONLY | _O_BINARY);
-    if (out_fd < 0 || in_fd < 0) {
-      if (out_fd >= 0) _close(out_fd);
-      else CloseHandle(output_read);
-      if (in_fd >= 0) _close(in_fd);
-      else CloseHandle(input_write);
+    if (out_fd < 0) {
+      CloseHandle(output_read);
+      CloseHandle(input_write);
       TerminateProcess(process_info.hProcess, 1);
       CloseHandle(process_info.hProcess);
       conpty_api().close(hpc);
-      fail("cannot adapt the ConPTY pipes");
+      fail("cannot adapt the ConPTY output pipe");
       return;
     }
 
@@ -503,33 +485,19 @@ struct TerminalManager::Impl {
         uv_pipe_open(out_pipe, out_fd) != 0) {
       delete out_pipe;
       _close(out_fd);
-      _close(in_fd);
+      CloseHandle(input_write);
       TerminateProcess(process_info.hProcess, 1);
       CloseHandle(process_info.hProcess);
       conpty_api().close(hpc);
       fail("cannot open the ConPTY output pipe");
       return;
     }
-    auto* in_pipe = new uv_pipe_t();
-    in_pipe->data = session.get();
-    if (uv_pipe_init(reinterpret_cast<uv_loop_t*>(current_loop->get_handle()),
-                     in_pipe, 0) != 0 ||
-        uv_pipe_open(in_pipe, in_fd) != 0) {
-      delete in_pipe;
-      _close(in_fd);
-      close_pipe(out_pipe);
-      TerminateProcess(process_info.hProcess, 1);
-      CloseHandle(process_info.hProcess);
-      conpty_api().close(hpc);
-      fail("cannot open the ConPTY input pipe");
-      return;
-    }
     uv_read_start(reinterpret_cast<uv_stream_t*>(out_pipe), conpty_alloc, conpty_read);
 
     session->hpc = hpc;
     session->process = process_info.hProcess;
+    session->input_write = input_write;
     session->out_pipe = out_pipe;
-    session->in_pipe = in_pipe;
     session->state = "running";
     session->created_at = now_iso8601();
     session->last_activity = session->created_at;
@@ -625,7 +593,10 @@ struct TerminalManager::Impl {
     }
     CloseHandle(session.process);
     session.process = nullptr;
-    close_pipe(session.in_pipe);
+    if (session.input_write != nullptr) {
+      CloseHandle(static_cast<HANDLE>(session.input_write));
+      session.input_write = nullptr;
+    }
     // Let the pipe reader drain the final output before closing the
     // pseudoconsole; ClosePseudoConsole also closes the output pipe.
     session.hpc_close_at_ms =
@@ -1087,7 +1058,10 @@ bool TerminalManager::close(const std::string& id, std::string* error) {
         if (session->process != nullptr) {
           TerminateProcess(session->process, 1);
         }
-        Impl::close_pipe(session->in_pipe);
+        if (session->input_write != nullptr) {
+          CloseHandle(static_cast<HANDLE>(session->input_write));
+          session->input_write = nullptr;
+        }
         if (session->hpc != nullptr) {
           if (conpty_api().close != nullptr) conpty_api().close(session->hpc);
           session->hpc = nullptr;
@@ -1127,7 +1101,7 @@ bool TerminalManager::input(const std::string& id, const std::string& bytes,
   return impl_->post([this, session, bytes] {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
 #if defined(_WIN32)
-    if (session->state != "running" || session->in_pipe == nullptr) return;
+    if (session->state != "running" || session->input_write == nullptr) return;
 #else
     if (session->state != "running" || session->poll == nullptr) return;
 #endif
@@ -1248,7 +1222,10 @@ void TerminalManager::close_all() {
         TerminateProcess(session->process, 1);
         session->state = "closing";
       }
-      Impl::close_pipe(session->in_pipe);
+      if (session->input_write != nullptr) {
+          CloseHandle(static_cast<HANDLE>(session->input_write));
+          session->input_write = nullptr;
+        }
       if (session->hpc != nullptr) {
         if (conpty_api().close != nullptr) conpty_api().close(session->hpc);
         session->hpc = nullptr;
