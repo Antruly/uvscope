@@ -12,6 +12,12 @@ All notable changes to uvscope are documented here. The format is based on
   the build enables HTTP/2. The timing panel shows both; HTTP/1.1 reports 0 / false.
 - TLS Inspector decodes every certificate in a PEM bundle (up to 32 displayed) and lists the
   chain in input order with per-certificate validity and fingerprints.
+- HTML preview has an opt-in “Run scripts (unsafe)” mode backed by short-lived `/preview/:id`
+  documents with `CSP: sandbox allow-scripts`. It renders JS-driven pages and remote CSS/JS on an
+  opaque origin without uvscope cookies; the default sandbox still blocks scripts.
+- Safe preview now rewrites CSS `@import` URLs. Enabling remote assets switches to a `/preview`
+  document with its own CSP so external CSS, fonts and frames load (a `srcdoc` document inherits
+  the SPA CSP, which would block them).
 
 ## [0.3.0] - 2026-10-20
 

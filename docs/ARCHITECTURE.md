@@ -158,13 +158,25 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
 
 ## Response preview safety
 
-- The preview iframe uses `sandbox=""`: scripts, forms, popups and top-level navigation are off.
+- The default preview iframe uses `sandbox=""`: scripts, forms, popups and top-level navigation
+  are off.
 - An injected CSP adds `script-src 'none'`, `connect-src 'none'` and `frame-src 'none'`.
-- Remote images/audio/video are blocked until the user ticks “Load remote assets”. The child CSP
-  stays stricter than the embedding page, so the opt-in is per preview.
-- Relative URLs are resolved by rewriting `src`/`href`/`srcset`/CSS `url()` against the response
-  URL. `<base>` is not used because the embedding page's `base-uri 'self'` would reject it.
-- Blob URLs are revoked when the response or tab changes.
+- Remote images/audio/video are blocked until the user ticks “Load remote assets”. When it is on,
+  the preview switches from `srcdoc` to `/preview/:id` with `mode: "safe"`: a real HTTP document
+  with its own CSP, so remote CSS, fonts and frames are not blocked by the SPA's stricter policy
+  (a `srcdoc` document inherits that policy). Scripts remain off in this mode.
+- Relative URLs are resolved against the response URL: `srcdoc` rewrites `src`/`href`/`srcset`/
+  CSS `url()` and `@import`; `/preview` injects `<base href="response URL">` under a CSP that
+  permits that base.
+- “Run scripts (unsafe)” posts the captured HTML to `/api/preview` with `mode: "scripts"` and
+  embeds `/preview/:id`. That response carries `CSP: sandbox allow-scripts` and is therefore an
+  opaque origin even when opened directly: scripts can run and load remote resources, but they
+  cannot read uvscope cookies, storage or API responses. Tokens are random, in-memory, capped and
+  expire after 120 s.
+- The scripted document receives a `<base href="response URL">` so relative CSS/JS/fetch URLs
+  resolve like the original page. Target login state is not transferred; authenticated pages may
+  still render logged-out.
+- Blob URLs are revoked when the response or tab changes; preview tokens are deleted on switch.
 - Preview is a viewer, not a security boundary against resource exhaustion; the body is still
   capped at 4 MiB.
 

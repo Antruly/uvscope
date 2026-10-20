@@ -48,10 +48,20 @@ function absoluteUrl(value: string, baseUrl: string): string {
 }
 
 function rewriteCssUrls(css: string, baseUrl: string): string {
-  return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
+  const withUrls = css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (match, quote, url) => {
     if (!url || ABSOLUTE_URL.test(url.trim())) return match
     try {
       return `url(${quote}${new URL(url.trim(), baseUrl).href}${quote})`
+    } catch {
+      return match
+    }
+  })
+  // `@import "theme.css"` is not a url() token and would otherwise resolve
+  // against about:srcdoc.
+  return withUrls.replace(/@import\s+(['"])([^'"]+)\1/gi, (match, quote, url) => {
+    if (!url || ABSOLUTE_URL.test(url.trim())) return match
+    try {
+      return `@import ${quote}${new URL(url.trim(), baseUrl).href}${quote}`
     } catch {
       return match
     }
@@ -115,7 +125,8 @@ export function buildHtmlDocument(
   options: { allowRemote: boolean; baseUrl?: string },
 ): string {
   const remote = options.allowRemote
-    ? "img-src * data: blob:; media-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:"
+    ? "img-src * data: blob:; media-src * data: blob:; style-src * 'unsafe-inline'; " +
+      "font-src * data:; frame-src * data: blob:; child-src * data: blob:"
     : "img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:"
   const csp =
     `default-src 'none'; script-src 'none'; connect-src 'none'; frame-src 'none'; ` +

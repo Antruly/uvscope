@@ -551,9 +551,36 @@ if auth_server:
     status, deleted = call("DELETE", f"/api/socks5/servers/{auth_server}")
     check(status == 200 and deleted.get("ok") is True, f"SOCKS5 auth delete failed: {deleted}")
 
+# Preview documents: safe mode keeps scripts off, scripts mode opts in, both
+# carry a CSP sandbox and a base URL injection.
+for mode, csp_must, csp_must_not in [
+    ("safe", "script-src 'none'", "allow-scripts"),
+    ("scripts", "sandbox allow-scripts", None),
+]:
+    status, preview = call("POST", "/api/preview", {
+        "html": "<!doctype html><html><head></head><body><div id=\"p\">ok</div></body></html>",
+        "baseUrl": base + "/target/page",
+        "mode": mode,
+    })
+    check(status == 200 and bool(preview.get("url")),
+          f"preview {mode} create failed: {preview}")
+    if preview.get("url"):
+        with urllib.request.urlopen(base + preview["url"], timeout=5) as response:
+            csp = response.headers.get("content-security-policy", "")
+            page = response.read().decode()
+        check(csp_must in csp, f"preview {mode} CSP missing {csp_must}: {csp}")
+        if csp_must_not:
+            check(csp_must_not not in csp,
+                  f"preview {mode} CSP unexpectedly has {csp_must_not}: {csp}")
+        check(f'<base href="{base}/target/page">' in page,
+              f"preview {mode} did not inject the base URL")
+        status, deleted = call("DELETE", f"/api/preview/{preview['id']}")
+        check(status == 200 and deleted.get("ok") is True,
+              f"preview {mode} delete failed: {deleted}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5 server, outbound TCP/HTTP/UDP proxy)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes)")
 PY

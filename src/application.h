@@ -13,6 +13,7 @@
 #include <webapp/uvcpp_web_app.h>
 
 #include "auth.h"
+#include "preview_store.h"
 #include "proxy_manager.h"
 #include "socks5_manager.h"
 #include "store.h"
@@ -83,6 +84,7 @@ class Application {
   std::unique_ptr<ProxyManager> proxies_;
   std::unique_ptr<TransportManager> transport_;
   std::unique_ptr<Socks5Manager> socks5_;
+  PreviewStore previews_;
   uvcpp::uvcpp_web_app app_;
   AppMetrics metrics_;
   std::chrono::steady_clock::time_point started_;

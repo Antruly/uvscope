@@ -44,7 +44,17 @@ const en: Record<string, string> = {
   'http.response.truncated': 'Preview truncated at 4 MiB.',
   'http.response.unknownContentType': 'unknown content-type',
   'http.preview.loadRemote': 'Load remote assets',
+  'http.preview.runScripts': 'Run scripts (unsafe)',
+  'http.preview.remoteHint':
+    'Remote CSS, images and fonts are blocked. Enable "Load remote assets" for the original styling.',
+  'http.preview.scriptsHint':
+    'Full render: scripts and remote resources are enabled in an opaque-origin sandbox. The page has no uvscope cookies or target login state, but it can contact external hosts.',
+  'http.preview.scriptsWarning':
+    'Run this response with scripts and remote network access? It stays sandboxed without uvscope cookies, but it can contact external hosts just like opening the page in a browser.',
+  'http.preview.scriptsPreparing': 'Preparing the scripted preview…',
+  'http.preview.scriptsFailed': 'Could not prepare the scripted preview',
   'http.preview.scriptsDisabled': 'Scripts are disabled in the sandbox.',
+  'http.preview.scriptsEnabled': 'Scripts run in an opaque-origin sandbox.',
   'http.preview.localBrowser': 'Local browser preview.',
   'http.preview.warning':
     'The body was truncated at 4 MiB; this preview may be incomplete.',
@@ -121,7 +131,16 @@ const zh: Record<string, string> = {
   'http.response.truncated': '预览已在 4 MiB 处截断。',
   'http.response.unknownContentType': '未知内容类型',
   'http.preview.loadRemote': '加载远程资源',
+  'http.preview.runScripts': '运行脚本（不安全）',
+  'http.preview.remoteHint': '远程 CSS、图片和字体已被阻止。勾选“加载远程资源”可还原原始样式。',
+  'http.preview.scriptsHint':
+    '完整渲染：脚本与远程资源在 opaque origin 沙箱中启用。页面拿不到 uvscope Cookie 或目标登录态，但可以访问外部主机。',
+  'http.preview.scriptsWarning':
+    '要用脚本和远程网络访问运行这个响应吗？它仍在沙箱中、没有 uvscope Cookie，但可以像在浏览器里打开页面一样访问外部主机。',
+  'http.preview.scriptsPreparing': '正在准备脚本化预览…',
+  'http.preview.scriptsFailed': '无法准备脚本化预览',
   'http.preview.scriptsDisabled': '沙箱中已禁用脚本。',
+  'http.preview.scriptsEnabled': '脚本在 opaque origin 沙箱中运行。',
   'http.preview.localBrowser': '本地浏览器预览。',
   'http.preview.warning': '响应体已在 4 MiB 处截断，预览可能不完整。',
   'http.preview.htmlTitle': 'HTML 响应预览',

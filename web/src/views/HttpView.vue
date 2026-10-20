@@ -39,7 +39,11 @@ const sending = ref(false)
 const result = ref<HttpResult | null>(null)
 const responseTab = ref<'body' | 'preview' | 'headers' | 'timing'>('body')
 const allowRemotePreview = ref(false)
+const allowScriptsPreview = ref(false)
 const previewUrl = ref('')
+const previewDocUrl = ref('')
+const previewDocId = ref('')
+let previewDocSeq = 0
 const requestTab = ref<'headers' | 'body'>('headers')
 const advancedOpen = ref(false)
 const history = ref<HistoryEntry[]>([])
@@ -126,6 +130,64 @@ function revokePreviewUrl() {
   URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
 }
+
+function revokeScriptPreview() {
+  previewDocSeq += 1
+  if (previewDocId.value) {
+    void del(`/api/preview/${previewDocId.value}`).catch(() => {
+      // The token expires on its own; cleanup is best-effort.
+    })
+    previewDocId.value = ''
+  }
+  previewDocUrl.value = ''
+}
+
+async function loadServerPreview() {
+  revokeScriptPreview()
+  const needsServer = allowScriptsPreview.value || allowRemotePreview.value
+  if (!needsServer || previewKind.value !== 'html' ||
+      responseTab.value !== 'preview' || !htmlSource.value) {
+    return
+  }
+  const seq = ++previewDocSeq
+  try {
+    const response = await post<{ ok: boolean; id?: string; url?: string; error?: string }>(
+      '/api/preview',
+      {
+        html: htmlSource.value,
+        baseUrl: result.value?.request?.url,
+        mode: allowScriptsPreview.value ? 'scripts' : 'safe',
+      },
+    )
+    if (seq !== previewDocSeq) {
+      if (response.id) void del(`/api/preview/${response.id}`).catch(() => {})
+      return
+    }
+    if (!response.ok || !response.url || !response.id) {
+      ui.notify('error', t('http.preview.scriptsFailed'), response.error)
+      return
+    }
+    previewDocId.value = response.id
+    previewDocUrl.value = response.url
+  } catch (err) {
+    ui.toastError(err, t('http.preview.scriptsFailed'))
+  }
+}
+
+function toggleScripts(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (input.checked && !window.confirm(t('http.preview.scriptsWarning'))) {
+    input.checked = false
+    return
+  }
+  allowScriptsPreview.value = input.checked
+  if (input.checked) allowRemotePreview.value = true
+}
+
+watch(
+  [htmlSource, allowScriptsPreview, allowRemotePreview, responseTab],
+  () => void loadServerPreview(),
+)
 
 watch(
   [() => result.value, previewKind, responseTab],
@@ -293,6 +355,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   if (ticker) window.clearInterval(ticker)
   revokePreviewUrl()
+  revokeScriptPreview()
 })
 </script>
 
@@ -464,19 +527,55 @@ onBeforeUnmount(() => {
                 <span class="chip mono">{{ contentType || t('http.response.unknownContentType') }}</span>
                 <span class="muted">{{ formatBytes(result.bodySize ?? 0) }}</span>
                 <label v-if="previewKind === 'html'" class="preview-toggle">
-                  <input v-model="allowRemotePreview" type="checkbox" />
+                  <input v-model="allowRemotePreview" type="checkbox" :disabled="allowScriptsPreview" />
                   {{ t('http.preview.loadRemote') }}
                 </label>
+                <label v-if="previewKind === 'html'" class="preview-toggle preview-toggle--unsafe">
+                  <input type="checkbox" :checked="allowScriptsPreview" @change="toggleScripts" />
+                  {{ t('http.preview.runScripts') }}
+                </label>
                 <span class="muted preview-hint">
-                  {{ previewKind === 'html' ? t('http.preview.scriptsDisabled') : t('http.preview.localBrowser') }}
+                  <template v-if="previewKind !== 'html'">{{ t('http.preview.localBrowser') }}</template>
+                  <template v-else-if="allowScriptsPreview">{{ t('http.preview.scriptsEnabled') }}</template>
+                  <template v-else>{{ t('http.preview.scriptsDisabled') }}</template>
                 </span>
+              </div>
+              <div v-if="previewKind === 'html' && !allowRemotePreview && !allowScriptsPreview" class="preview-warning">
+                <Icon name="alert" :size="14" />
+                {{ t('http.preview.remoteHint') }}
+              </div>
+              <div v-if="allowScriptsPreview" class="preview-warning">
+                <Icon name="alert" :size="14" />
+                {{ t('http.preview.scriptsHint') }}
               </div>
               <div v-if="result.bodyTruncated" class="preview-warning">
                 <Icon name="alert" :size="14" />
                 {{ t('http.preview.warning') }}
               </div>
               <iframe
-                v-if="previewKind === 'html'"
+                v-if="previewKind === 'html' && allowScriptsPreview && previewDocUrl"
+                class="preview-frame preview-frame--html"
+                sandbox="allow-scripts"
+                :src="previewDocUrl"
+                referrerpolicy="no-referrer"
+                :title="t('http.preview.htmlTitle')"
+              />
+              <div v-else-if="previewKind === 'html' && allowScriptsPreview" class="preview-empty">
+                {{ t('http.preview.scriptsPreparing') }}
+              </div>
+              <iframe
+                v-else-if="previewKind === 'html' && allowRemotePreview && previewDocUrl"
+                class="preview-frame preview-frame--html"
+                sandbox=""
+                :src="previewDocUrl"
+                referrerpolicy="no-referrer"
+                :title="t('http.preview.htmlTitle')"
+              />
+              <div v-else-if="previewKind === 'html' && allowRemotePreview" class="preview-empty">
+                {{ t('http.preview.scriptsPreparing') }}
+              </div>
+              <iframe
+                v-else-if="previewKind === 'html'"
                 class="preview-frame preview-frame--html"
                 sandbox=""
                 :srcdoc="htmlPreviewDocument"

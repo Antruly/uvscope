@@ -8,6 +8,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -83,6 +84,42 @@ int int_field(const nlohmann::json& body, const char* key, int fallback) {
 bool bool_field(const nlohmann::json& body, const char* key, bool fallback) {
   if (!body.contains(key) || !body[key].is_boolean()) return fallback;
   return body[key].get<bool>();
+}
+
+bool safe_preview_base(const std::string& value) {
+  if (value.size() > 4096) return false;
+  if (value.rfind("http://", 0) != 0 && value.rfind("https://", 0) != 0) return false;
+  return value.find_first_of("\"'<>\r\n") == std::string::npos;
+}
+
+std::string html_attr_escape(const std::string& value) {
+  std::string out;
+  out.reserve(value.size());
+  for (char c : value) {
+    switch (c) {
+      case '&': out += "&amp;"; break;
+      case '"': out += "&quot;"; break;
+      case '<': out += "&lt;"; break;
+      case '>': out += "&gt;"; break;
+      default: out.push_back(c); break;
+    }
+  }
+  return out;
+}
+
+std::string preview_document(std::string html, const std::string& base_url) {
+  if (base_url.empty()) return html;
+  const std::string base = "<base href=\"" + html_attr_escape(base_url) + "\">";
+  if (std::regex_search(html, std::regex("<head[^>]*>", std::regex::icase))) {
+    return std::regex_replace(html, std::regex("<head[^>]*>", std::regex::icase),
+                              "$&" + base, std::regex_constants::format_first_only);
+  }
+  if (std::regex_search(html, std::regex("<html[^>]*>", std::regex::icase))) {
+    return std::regex_replace(html, std::regex("<html[^>]*>", std::regex::icase),
+                              "$&<head>" + base + "</head>",
+                              std::regex_constants::format_first_only);
+  }
+  return "<head>" + base + "</head>" + html;
 }
 
 Socks5Proxy proxy_field(const nlohmann::json& body) {
@@ -1105,6 +1142,96 @@ void Application::register_debug_routes() {
     add_history(*principal, "tls", "Certificate " + info.value("subject", std::string()), info);
     info["ok"] = true;
     send_json(resp, 200, info);
+  });
+
+  // Full-render preview: the SPA posts the captured HTML and receives a
+  // short-lived token. /preview/:id is served with its own CSP sandbox so the
+  // document runs scripts but stays on an opaque origin without uvscope
+  // cookies. It is a deliberate, per-preview opt-in.
+  app_.post("/api/preview", [this](uvcpp::uvcpp_web_request& req,
+                                   uvcpp::uvcpp_web_response& resp,
+                                   uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "http", "debug");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const std::string html = string_field(*body, "html");
+    const std::string base_url = string_field(*body, "baseUrl");
+    const std::string mode = lower(string_field(*body, "mode", "safe"));
+    if (mode != "safe" && mode != "scripts") {
+      send_error(resp, 400, "mode must be safe or scripts", "bad_request");
+      return;
+    }
+    if (html.empty()) {
+      send_error(resp, 400, "html is required", "bad_request");
+      return;
+    }
+    if (html.size() > PreviewStore::kMaxDocumentBytes) {
+      send_error(resp, 413, "preview document exceeds 8 MiB", "too_large");
+      return;
+    }
+    if (!base_url.empty() && !safe_preview_base(base_url)) {
+      send_error(resp, 400, "baseUrl must be an http(s) URL", "bad_request");
+      return;
+    }
+    const auto id = previews_.put(html, base_url, mode);
+    if (!id) {
+      send_error(resp, 413, "preview document exceeds 8 MiB", "too_large");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true},
+                          {"id", *id},
+                          {"url", "/preview/" + *id},
+                          {"expiresInSeconds", PreviewStore::kTtlSeconds}});
+  });
+
+  app_.del("/api/preview/:id", [this](uvcpp::uvcpp_web_request& req,
+                                      uvcpp::uvcpp_web_response& resp,
+                                      uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "http", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (id) previews_.remove(*id);
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.get("/preview/:id", [this](uvcpp::uvcpp_web_request& req,
+                                  uvcpp::uvcpp_web_response& resp,
+                                  uvcpp::uvcpp_web_next) {
+    // Remote-resource variants (CSS, fonts, frames) live on /preview instead
+    // of srcdoc because a srcdoc document inherits the SPA's stricter CSP.
+    static const char* kSafeCsp =
+        "sandbox; default-src 'none'; script-src 'none'; connect-src 'none'; "
+        "style-src 'unsafe-inline' http: https:; "
+        "img-src http: https: data: blob:; media-src http: https: data: blob:; "
+        "font-src http: https: data:; "
+        "frame-src http: https: data: blob:; "
+        "object-src 'none'; base-uri http: https:; form-action 'none'; "
+        "frame-ancestors 'self'";
+    static const char* kScriptsCsp =
+        "sandbox allow-scripts; default-src 'none'; "
+        "script-src 'unsafe-inline' 'unsafe-eval' http: https: data: blob:; "
+        "style-src 'unsafe-inline' http: https:; "
+        "img-src http: https: data: blob:; media-src http: https: data: blob:; "
+        "font-src http: https: data:; connect-src http: https: ws: wss:; "
+        "frame-src http: https: data: blob:; worker-src blob: http: https:; "
+        "object-src 'none'; base-uri http: https:; form-action 'none'; "
+        "frame-ancestors 'self'";
+    const std::string* id = req.param("id");
+    const auto document = id ? previews_.get(*id) : std::nullopt;
+    const char* csp = document && document->mode == "scripts" ? kScriptsCsp : kSafeCsp;
+    resp.set_header("Content-Security-Policy", csp)
+        .set_header("X-Frame-Options", "SAMEORIGIN")
+        .set_header("Cache-Control", "no-store")
+        .set_header("Referrer-Policy", "no-referrer");
+    if (!document) {
+      resp.status(404).body("preview not found or expired", "text/plain; charset=utf-8");
+      resp.end();
+      return;
+    }
+    resp.status(200).body(preview_document(document->html, document->base_url),
+                          "text/html; charset=utf-8");
+    resp.end();
   });
 }
 

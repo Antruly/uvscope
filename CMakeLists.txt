@@ -120,6 +120,7 @@ set(UVSCOPE_SOURCES
   src/crypto.cpp
   src/http_probe.cpp
   src/net_probe.cpp
+  src/preview_store.cpp
   src/proxy_manager.cpp
   src/socks5_manager.cpp
   src/socks5_proxy.cpp

@@ -34,7 +34,7 @@ const en: Record<string, string> = {
     'One-shot probes through libuvcpp, plus persistent TCP sessions with repeated sends and a per-session event log. Hex mode accepts spaced, colon-separated or plain hex payloads.',
   'help.modules.preview.title': 'Response preview',
   'help.modules.preview.text':
-    'HTML renders in a sandbox with scripts disabled. Images, audio, video and PDF load from a local Blob; remote media is opt-in.',
+    'HTML renders in a sandbox with scripts disabled by default. Remote CSS/images are opt-in; “Run scripts (unsafe)” renders the page on an opaque origin without uvscope cookies. Images, audio, video and PDF load from a local Blob.',
   'help.modules.soap.title': 'SOAP / WSDL',
   'help.modules.soap.text':
     'Fetch a WSDL through the daemon, pick an operation, edit the generated SOAP 1.1 envelope, then invoke it like any HTTP request.',
@@ -130,7 +130,7 @@ const zh: Record<string, string> = {
     '通过 libuvcpp 执行一次性探测，并支持可连续发送、带逐会话事件日志的持久 TCP 会话。十六进制模式支持带空格、冒号分隔或纯十六进制负载。',
   'help.modules.preview.title': '响应预览',
   'help.modules.preview.text':
-    'HTML 在禁用脚本的沙箱中渲染。图片、音频、视频与 PDF 从本地 Blob 加载；远程媒体需手动开启。',
+    'HTML 默认在禁用脚本的沙箱中渲染。远程 CSS/图片需手动开启；“运行脚本（不安全）”会在没有 uvscope Cookie 的 opaque origin 中完整渲染。图片、音频、视频与 PDF 从本地 Blob 加载。',
   'help.modules.soap.title': 'SOAP / WSDL',
   'help.modules.soap.text':
     '通过守护进程获取 WSDL，选择操作，编辑生成的 SOAP 1.1 信封，然后像普通 HTTP 请求一样调用。',

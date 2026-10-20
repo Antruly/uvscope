@@ -2678,6 +2678,9 @@ button.nav-item {
   margin-bottom: 10px;
   font-size: 10px;
 }
+.preview-toggle--unsafe {
+  color: var(--warn);
+}
 .preview-toggle {
   display: inline-flex;
   align-items: center;

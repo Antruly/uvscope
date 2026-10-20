@@ -60,6 +60,9 @@ Each module must be enabled in Settings and the role must have `debug`.
 | GET | `/api/socks5/servers/:id/events?after=&limit=` | Server event log |
 | GET | `/api/socks5/servers/:id/sessions` | CONNECT / BIND / UDP ASSOCIATE attempts |
 | POST | `/api/tls/inspect` | `{pem, encoding}` → certificate profile; PEM bundles return `certificates[]` |
+| POST | `/api/preview` | `{html, baseUrl, mode: safe\|scripts}` → `{id, url}` preview token (8 MiB, 120 s) |
+| DELETE | `/api/preview/:id` | Drop a preview token |
+| GET | `/preview/:id` | Token-based HTML with `CSP: sandbox allow-scripts` (no auth) |
 | POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, autoStart, tls, certPath, keyPath, start}` |
 | POST | `/api/proxies/:id/start` | Start a proxy |
 | POST | `/api/proxies/:id/stop` | Stop a proxy |
@@ -71,6 +74,14 @@ the result rather than as an API error.
 `/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). Builds with
 HTTP/2 enabled also return `goaway: {received, errorCode, lastStreamId}`; it is omitted on
 HTTP/3-only builds.
+
+`POST /api/preview` stores a captured HTML document in memory (max 8 entries, 8 MiB each,
+120 s TTL) and returns a random token. `mode: "safe"` allows remote CSS/images/fonts/frames but
+keeps `script-src 'none'`; `mode: "scripts"` additionally runs scripts. `GET /preview/:id` is
+public by token and always responds with `Content-Security-Policy: sandbox ...` in addition to the
+iframe sandbox, so the document runs on an opaque origin with no access to uvscope cookies,
+storage or API responses. The default `srcdoc` preview remains script-free; remote assets switch to
+the safe `/preview` document so they are not blocked by the SPA's own CSP.
 
 ## Persistent TCP sessions
 
