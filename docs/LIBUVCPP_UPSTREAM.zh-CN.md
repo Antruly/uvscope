@@ -11,14 +11,16 @@
 | `0001-tls-sni.patch` | TLS SNI；IP 字面量不发 SNI | 低 |
 | `0002-sync-io-timeouts.patch` | POSIX 同步 I/O 超时；超时/EOF 区分；失败状态码 | 中 |
 | `0003-install-complete.patch` | `cmake --install` 产出可用的 SDK | 低 |
-| `0004-socks5-proxy-stage.patch` | 区分"连代理失败"与代理应答后的失败（PR #42） | 低 |
+| `0004-socks5-proxy-stage.patch` | 区分"连代理失败"与代理应答后的失败（PR #42，已合并） | 低 |
 
 四个补丁按顺序可以干净应用到 `v1.8.0`（`13685c1`）。当前 `master`
-（`9b338b4`）已经包含 0001–0003 的等价改动（SNI、POSIX 同步超时、install 完整性），
-这三个补丁在 master 上应用会冲突，属于预期；`0004` 可以单独干净应用到 master，
-已提交上游 PR [#42](https://github.com/Antruly/libuvcpp/pull/42)。补丁在 Linux x64 上编译、安装、被一个
-`find_package(uvcpp CONFIG)` 的消费者程序链接运行；用这套 SDK 构建的 uvscope
-也通过了 `--self-check` 与 `scripts/smoke-test.sh`。
+（`48c65bf`）已经包含全部四项等价改动：0001–0003（SNI、POSIX 同步超时、install
+完整性）在合并前已进入 master，0004 由 PR
+[#42](https://github.com/Antruly/libuvcpp/pull/42) 合并。因此这些补丁只用于
+`v1.8.0`；对 master 不应再应用（会冲突或重复）。v1.8.1 早于 0004 的合并，
+在下一个 libuvcpp 发布前，uvscope 仍以 “v1.8.0 + 四个补丁” 构建。补丁在 Linux x64
+上编译、安装、被一个 `find_package(uvcpp CONFIG)` 的消费者程序链接运行；用这套
+SDK 构建的 uvscope 也通过了 `--self-check` 与 `scripts/smoke-test.sh`。
 
 ---
 
@@ -222,7 +224,7 @@ uv=1.48.0 web=1
 ### 补丁
 
 `0004-socks5-proxy-stage.patch`（上游 PR
-[#42](https://github.com/Antruly/libuvcpp/pull/42)）：
+[#42](https://github.com/Antruly/libuvcpp/pull/42)，已合并）：
 
 - `uvcpp_tcp_client` 新增只读 `socks5_proxy_connect_failed()`；在异步/同步
   的代理 TCP 连接、DNS 解析与连接超时路径置位，进入握手阶段前清零；
@@ -322,7 +324,7 @@ SNI/ALPN，而不是“异步 TLS 一律不可用”。旧结论应撤回。
 1. `fix(tls): send SNI for DNS host names` — 0001（master 已包含；PR #38 仍为 open）
 2. `fix(web): honor timeout_ms in blocking *_wait paths` — 0002（master 已包含；PR #39 仍为 open）
 3. `fix(build): make cmake --install produce a usable SDK` — 0003（已合并，PR #40）
-4. `fix(net): expose the SOCKS5 proxy-connect stage` — 0004（PR #42）
+4. `fix(net): expose the SOCKS5 proxy-connect stage` — 0004（PR #42，已合并）
 
 建议的验证命令（每个 PR 都附上）：
 
