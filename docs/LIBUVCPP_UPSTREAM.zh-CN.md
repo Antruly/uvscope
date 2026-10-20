@@ -13,8 +13,10 @@
 | `0003-install-complete.patch` | `cmake --install` 产出可用的 SDK | 低 |
 | `0004-socks5-proxy-stage.patch` | 区分"连代理失败"与代理应答后的失败 | 低 |
 
-四个补丁都已验证可以按顺序干净应用到 `v1.8.0`（`13685c1`）和当前 `master`
-（`d57dd47`），并在 Linux x64 上编译、安装、被一个
+四个补丁按顺序可以干净应用到 `v1.8.0`（`13685c1`）。当前 `master`
+（`9b338b4`）已经包含 0001–0003 的等价改动（SNI、POSIX 同步超时、install 完整性），
+这三个补丁在 master 上应用会冲突，属于预期；`0004` 可以单独干净应用到 master，
+但**尚未提交上游**。补丁在 Linux x64 上编译、安装、被一个
 `find_package(uvcpp CONFIG)` 的消费者程序链接运行；用这套 SDK 构建的 uvscope
 也通过了 `--self-check` 与 `scripts/smoke-test.sh`。
 
@@ -316,9 +318,10 @@ SNI/ALPN，而不是“异步 TLS 一律不可用”。旧结论应撤回。
 
 每个补丁一个 PR，不要合并成一个大 PR：
 
-1. `fix(tls): send SNI for DNS host names` — 0001
-2. `fix(web): honor timeout_ms in blocking *_wait paths` — 0002
-3. `fix(build): make cmake --install produce a usable SDK` — 0003
+1. `fix(tls): send SNI for DNS host names` — 0001（master 已包含；PR #38 仍为 open）
+2. `fix(web): honor timeout_ms in blocking *_wait paths` — 0002（master 已包含；PR #39 仍为 open）
+3. `fix(build): make cmake --install produce a usable SDK` — 0003（已合并，PR #40）
+4. `fix(net): expose the SOCKS5 proxy-connect stage` — 0004（待提交）
 
 建议的验证命令（每个 PR 都附上）：
 
