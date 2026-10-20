@@ -15,6 +15,10 @@ All notable changes to uvscope are documented here. The format is based on
 - HTML preview has an opt-in “Run scripts (unsafe)” mode backed by short-lived `/preview/:id`
   documents with `CSP: sandbox allow-scripts`. It renders JS-driven pages and remote CSS/JS on an
   opaque origin without uvscope cookies; the default sandbox still blocks scripts.
+- Reverse proxy start failures now show the real reason in the UI: bind errors map to
+  "address already in use", TLS/certificate failures populate `lastError`, and create/edit reports
+  the start warning instead of a success toast.
+- SOAP / WSDL starts with the webxml QQ online-check service as the default test WSDL.
 - Safe preview now rewrites CSS `@import` URLs. Enabling remote assets switches to a `/preview`
   document with its own CSP so external CSS, fonts and frames load (a `srcdoc` document inherits
   the SPA CSP, which would block them).

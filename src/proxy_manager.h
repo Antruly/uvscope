@@ -29,6 +29,7 @@ class ProxyManager {
   bool stop(const std::string& id, std::string* error);
   void stop_all();
   bool reload(const ProxyConfig& config, std::string* error);
+  bool is_running(const std::string& id) const;
 
   nlohmann::json snapshot() const;
   nlohmann::json logs(const std::string& id, std::uint64_t after, int limit) const;

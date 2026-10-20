@@ -238,12 +238,20 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
       .set_http2_enabled(false);
   if (config->tls) {
     if (config->cert_path.empty() || config->key_path.empty()) {
-      if (error) *error = "TLS proxy requires a certificate and private key path";
+      const std::string detail = "TLS proxy requires a certificate and private key path";
+      runtime->last_error = detail;
+      runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
+                        {"error", detail}, {"latencyMs", 0}});
+      if (error) *error = detail;
       return false;
     }
     app->enable_ssl(config->cert_path, config->key_path);
     if (!app->ssl_error().empty()) {
-      if (error) *error = "failed to load TLS certificate: " + app->ssl_error();
+      const std::string detail = "failed to load TLS certificate: " + app->ssl_error();
+      runtime->last_error = detail;
+      runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
+                        {"error", detail}, {"latencyMs", 0}});
+      if (error) *error = detail;
       return false;
     }
   }
@@ -254,7 +262,7 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
   app->any("/*path", handler);
   const int rc = app->start();
   if (rc != 0) {
-    const std::string detail = "bind/listen failed (" + uv_error_string(rc) + ") on " +
+    const std::string detail = "bind/listen failed: " + uv_error_string(rc) + " on " +
                                config->listen_host + ":" + std::to_string(config->listen_port);
     runtime->last_error = detail;
     if (error) *error = detail;
@@ -327,6 +335,11 @@ bool ProxyManager::reload(const ProxyConfig& config, std::string* error) {
     return start(config.id, error);
   }
   return true;
+}
+
+bool ProxyManager::is_running(const std::string& id) const {
+  const auto runtime = find(id);
+  return runtime && runtime->running.load();
 }
 
 nlohmann::json ProxyManager::snapshot() const {

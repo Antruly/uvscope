@@ -477,6 +477,9 @@ std::string uv_error_string(int code) {
     case UV_ENOMEM: return "out of memory";
     case UV_EACCES: return "permission denied";
     case UV_ENOENT: return "not found";
+    case UV_EADDRINUSE: return "address already in use";
+    case UV_EADDRNOTAVAIL: return "address not available";
+    case UV_EAFNOSUPPORT: return "address family not supported";
     case UV_EAI_NONAME: return "host not found";
     case UV_EAI_AGAIN: return "temporary DNS failure";
     case UV_EAI_FAIL: return "DNS lookup failed";

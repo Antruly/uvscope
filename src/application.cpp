@@ -1492,7 +1492,10 @@ void Application::register_proxy_routes() {
       return;
     }
     const bool should_start = bool_field(*body, "start", false);
-    if (should_start && !proxies_->start(config.id, &error)) {
+    // reload() restarts a running proxy in place; only start when it is still
+    // stopped, otherwise this would report a spurious "already running".
+    if (should_start && !proxies_->is_running(config.id) &&
+        !proxies_->start(config.id, &error)) {
       send_json(resp, 200, {{"ok", true}, {"warning", error}, {"proxies", proxy_view()}});
       return;
     }

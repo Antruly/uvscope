@@ -98,9 +98,16 @@ async function save(start = false) {
   }
   saving.value = true
   try {
-    await post('/api/proxies', { ...form.value, name: form.value.name.trim(), start })
+    const response = await post<{ ok: boolean; warning?: string; error?: string }>(
+      '/api/proxies',
+      { ...form.value, name: form.value.name.trim(), start },
+    )
     editorOpen.value = false
     await load()
+    if (response.warning) {
+      ui.notify('error', t('proxy.error.start'), response.warning)
+      return
+    }
     ui.notify('success', form.value.id ? t('proxy.notify.updated') : t('proxy.notify.created'))
   } catch (err) {
     formError.value = errorMessage(err)
