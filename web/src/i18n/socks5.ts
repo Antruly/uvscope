@@ -1,0 +1,158 @@
+const en: Record<string, string> = {
+  'nav.socks5': 'SOCKS5 Server',
+
+  'socks5.eyebrow': 'SOCKS5 runtime',
+  'socks5.title': 'Give the proxy a front door.',
+  'socks5.lead':
+    'Run a local SOCKS5 server with optional username/password authentication. CONNECT, BIND and UDP ASSOCIATE are served by libuvcpp; every server owns its own loop.',
+
+  'socks5.create.eyebrow': 'New server',
+  'socks5.create.title': 'Bind a SOCKS5 port',
+  'socks5.create.name': 'Name',
+  'socks5.create.namePlaceholder': 'local proxy',
+  'socks5.create.host': 'Host',
+  'socks5.create.port': 'Port',
+  'socks5.create.username': 'Username',
+  'socks5.create.usernamePlaceholder': 'empty = no authentication',
+  'socks5.create.password': 'Password',
+  'socks5.create.passwordPlaceholder': 'stored as a PBKDF2 hash',
+  'socks5.create.authHint':
+    'Leave both fields empty for no-auth. Supplying a username requires a password.',
+  'socks5.create.autoStart': 'Start with the daemon',
+  'socks5.create.startNow': 'Start now',
+  'socks5.create.action': 'Create SOCKS5 server',
+  'socks5.create.creating': 'Creating…',
+
+  'socks5.list.eyebrow': 'Servers',
+  'socks5.list.title': 'Configured proxies',
+  'socks5.list.refresh': 'Refresh servers',
+  'socks5.list.empty': 'No SOCKS5 servers yet.',
+  'socks5.list.select': 'Select a SOCKS5 server',
+
+  'socks5.state.stopped': 'stopped',
+  'socks5.state.starting': 'starting',
+  'socks5.state.listening': 'listening',
+  'socks5.state.stopping': 'stopping',
+  'socks5.state.error': 'error',
+
+  'socks5.action.start': 'Start',
+  'socks5.action.stop': 'Stop',
+  'socks5.action.delete': 'Delete',
+
+  'socks5.facts.active': 'Active',
+  'socks5.facts.total': 'Established',
+  'socks5.facts.rejected': 'Rejected',
+  'socks5.facts.auth': 'Auth',
+  'socks5.facts.autoStart': 'Auto-start',
+  'socks5.facts.startedAt': 'Started at',
+  'socks5.facts.yes': 'yes',
+  'socks5.facts.no': 'no',
+  'socks5.facts.authEnabled': 'username/password',
+  'socks5.facts.authNone': 'no-auth',
+
+  'socks5.events.eyebrow': 'Server',
+  'socks5.events.empty': 'No events yet.',
+  'socks5.event.started': 'started',
+  'socks5.event.stopped': 'stopped',
+  'socks5.event.error': 'error',
+  'socks5.event.session': 'session',
+  'socks5.event.session-failed': 'rejected',
+
+  'socks5.sessions.eyebrow': 'Sessions',
+  'socks5.sessions.title': 'Connection attempts',
+  'socks5.sessions.empty': 'No connection attempts yet.',
+  'socks5.sessions.activeHint':
+    'The SOCKS5 runtime reports session establishment, not byte counters or close events. Established sessions may already be closed.',
+  'socks5.session.established': 'established',
+  'socks5.session.failed': 'failed',
+
+  'socks5.notify.created': 'SOCKS5 server created',
+  'socks5.notify.createFailed': 'Could not create the SOCKS5 server',
+  'socks5.notify.startFailed': 'Could not start the SOCKS5 server',
+  'socks5.notify.stopFailed': 'Could not stop the SOCKS5 server',
+  'socks5.notify.deleteFailed': 'Could not delete the SOCKS5 server',
+  'socks5.notify.deleted': 'SOCKS5 server deleted',
+  'socks5.notify.hostRequired': 'Host and port are required',
+  'socks5.notify.credentialsRequired': 'Provide both a username and a password, or neither',
+  'socks5.confirm.delete': 'Delete this SOCKS5 server? Its configuration will be removed.',
+}
+
+const zh: Record<string, string> = {
+  'nav.socks5': 'SOCKS5 服务端',
+
+  'socks5.eyebrow': 'SOCKS5 运行时',
+  'socks5.title': '给代理开一扇门。',
+  'socks5.lead':
+    '运行本地 SOCKS5 服务端，可选用户名密码认证。CONNECT、BIND 与 UDP ASSOCIATE 均由 libuvcpp 提供，每个服务端独占一条事件循环。',
+
+  'socks5.create.eyebrow': '新建服务端',
+  'socks5.create.title': '绑定 SOCKS5 端口',
+  'socks5.create.name': '名称',
+  'socks5.create.namePlaceholder': '本地代理',
+  'socks5.create.host': '地址',
+  'socks5.create.port': '端口',
+  'socks5.create.username': '用户名',
+  'socks5.create.usernamePlaceholder': '留空表示免认证',
+  'socks5.create.password': '密码',
+  'socks5.create.passwordPlaceholder': '以 PBKDF2 哈希保存',
+  'socks5.create.authHint': '两个字段都留空即免认证；填写用户名时必须同时填写密码。',
+  'socks5.create.autoStart': '随守护进程启动',
+  'socks5.create.startNow': '立即启动',
+  'socks5.create.action': '创建 SOCKS5 服务端',
+  'socks5.create.creating': '创建中…',
+
+  'socks5.list.eyebrow': '服务端',
+  'socks5.list.title': '已配置的代理',
+  'socks5.list.refresh': '刷新服务端',
+  'socks5.list.empty': '还没有 SOCKS5 服务端。',
+  'socks5.list.select': '选择一个 SOCKS5 服务端',
+
+  'socks5.state.stopped': '已停止',
+  'socks5.state.starting': '启动中',
+  'socks5.state.listening': '监听中',
+  'socks5.state.stopping': '停止中',
+  'socks5.state.error': '错误',
+
+  'socks5.action.start': '启动',
+  'socks5.action.stop': '停止',
+  'socks5.action.delete': '删除',
+
+  'socks5.facts.active': '活跃',
+  'socks5.facts.total': '已建立',
+  'socks5.facts.rejected': '已拒绝',
+  'socks5.facts.auth': '认证',
+  'socks5.facts.autoStart': '自动启动',
+  'socks5.facts.startedAt': '启动时间',
+  'socks5.facts.yes': '是',
+  'socks5.facts.no': '否',
+  'socks5.facts.authEnabled': '用户名密码',
+  'socks5.facts.authNone': '免认证',
+
+  'socks5.events.eyebrow': '服务端',
+  'socks5.events.empty': '还没有事件。',
+  'socks5.event.started': '已启动',
+  'socks5.event.stopped': '已停止',
+  'socks5.event.error': '错误',
+  'socks5.event.session': '会话',
+  'socks5.event.session-failed': '已拒绝',
+
+  'socks5.sessions.eyebrow': '会话',
+  'socks5.sessions.title': '连接尝试',
+  'socks5.sessions.empty': '还没有连接尝试。',
+  'socks5.sessions.activeHint':
+    'SOCKS5 运行时只报告会话是否建立，不提供字节计数或关闭事件；已建立的会话可能已经关闭。',
+  'socks5.session.established': '已建立',
+  'socks5.session.failed': '失败',
+
+  'socks5.notify.created': 'SOCKS5 服务端已创建',
+  'socks5.notify.createFailed': '无法创建 SOCKS5 服务端',
+  'socks5.notify.startFailed': '无法启动 SOCKS5 服务端',
+  'socks5.notify.stopFailed': '无法停止 SOCKS5 服务端',
+  'socks5.notify.deleteFailed': '无法删除 SOCKS5 服务端',
+  'socks5.notify.deleted': 'SOCKS5 服务端已删除',
+  'socks5.notify.hostRequired': '请填写地址和端口',
+  'socks5.notify.credentialsRequired': '用户名和密码要么都填，要么都留空',
+  'socks5.confirm.delete': '删除这个 SOCKS5 服务端？它的配置会被移除。',
+}
+
+export default { en, zh }

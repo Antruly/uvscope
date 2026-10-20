@@ -19,6 +19,12 @@ All notable changes to uvscope are documented here. The format is based on
   sessions, UDP datagram timelines, per-session/per-datagram send, and a dedicated
   `TCP / UDP Servers` page.
 - `/api/transport/listeners` routes for listener lifecycle, events, accepted sessions and sends.
+- SOCKS5 servers (CONNECT / BIND / UDP ASSOCIATE) with no-auth or RFC 1929 username/password
+  authentication, persisted `autoStart`, start/stop/delete, event and session logs, and a dedicated
+  `SOCKS5 Server` page. Passwords are stored as PBKDF2 hashes.
+- `/api/socks5/servers` routes for lifecycle, events and connection attempts.
+- Smoke coverage for SOCKS5 CONNECT through a local tunnel, `curl --socks5-hostname`, wrong-password
+  rejection and an authenticated round-trip.
 
 ## [0.2.0] - 2026-10-20
 

@@ -175,6 +175,7 @@ Application::Application(AppOptions options)
 Application::~Application() {
   if (update_thread_.joinable()) update_thread_.join();
 
+  socks5_.reset();
   transport_.reset();
 
   if (proxies_) proxies_->stop_all();
@@ -200,6 +201,11 @@ bool Application::initialize() {
       if (!transport_->add_listener(listener, nullptr)) continue;
       if (listener.auto_start) transport_->start_listener(listener.id, nullptr);
     }
+  }
+  socks5_.reset(new Socks5Manager());
+  for (const auto& server : store_.socks5_servers()) {
+    if (!socks5_->add_server(server, nullptr)) continue;
+    if (server.auto_start) socks5_->start_server(server.id, nullptr);
   }
   web_root_ = options_.web_root.string();
   if (!web_root_.empty()) {
@@ -231,6 +237,7 @@ bool Application::initialize() {
   register_auth_routes();
   register_dashboard_routes();
   register_debug_routes();
+  register_socks5_routes();
   register_proxy_routes();
   register_admin_routes();
   register_update_routes();
@@ -1083,6 +1090,182 @@ void Application::register_debug_routes() {
     add_history(*principal, "tls", "Certificate " + info.value("subject", std::string()), info);
     info["ok"] = true;
     send_json(resp, 200, info);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// SOCKS5 servers
+// ---------------------------------------------------------------------------
+void Application::register_socks5_routes() {
+  app_.get("/api/socks5/servers", [this](uvcpp::uvcpp_web_request& req,
+                                         uvcpp::uvcpp_web_response& resp,
+                                         uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    if (!socks5_) {
+      send_error(resp, 503, "SOCKS5 runtime is unavailable", "unavailable");
+      return;
+    }
+    send_json(resp, 200, socks5_->servers());
+  });
+
+  app_.post("/api/socks5/servers", [this](uvcpp::uvcpp_web_request& req,
+                                          uvcpp::uvcpp_web_response& resp,
+                                          uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    if (!socks5_) {
+      send_error(resp, 503, "SOCKS5 runtime is unavailable", "unavailable");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    Socks5ServerConfig config;
+    config.id = make_id();
+    config.name = string_field(*body, "name");
+    config.host = string_field(*body, "host", "127.0.0.1");
+    config.port = int_field(*body, "port", 0);
+    config.auto_start = bool_field(*body, "autoStart", false);
+    config.username = string_field(*body, "username");
+    const std::string password = string_field(*body, "password");
+    config.auth_required = !config.username.empty() || !password.empty();
+    if (config.host.empty() || config.port <= 0 || config.port > 65535) {
+      send_error(resp, 400, "host and port are required", "bad_request");
+      return;
+    }
+    if (config.auth_required && (config.username.empty() || password.empty())) {
+      send_error(resp, 400, "username and password are both required", "bad_request");
+      return;
+    }
+    if (config.auth_required) config.password_hash = password_hash(password);
+    config.created_at = now_iso8601();
+
+    std::string error;
+    if (!socks5_->add_server(config, &error)) {
+      send_error(resp, 400, error, "socks5_server_failed");
+      return;
+    }
+    if (!store_.save_socks5_server(config, &error)) {
+      socks5_->remove_server(config.id, nullptr);
+      send_error(resp, 500, error, "persist_failed");
+      return;
+    }
+    if (bool_field(*body, "start", true)) {
+      if (!socks5_->start_server(config.id, &error)) {
+        socks5_->remove_server(config.id, nullptr);
+        store_.delete_socks5_server(config.id, nullptr);
+        send_error(resp, 400, error, "socks5_server_failed");
+        return;
+      }
+    }
+    send_json(resp, 200, {{"ok", true}, {"server", config.id}});
+  });
+
+  app_.get("/api/socks5/servers/:id", [this](uvcpp::uvcpp_web_request& req,
+                                             uvcpp::uvcpp_web_response& resp,
+                                             uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !socks5_) {
+      send_error(resp, 404, "SOCKS5 server not found", "not_found");
+      return;
+    }
+    const auto result = socks5_->server(*id);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("SOCKS5 server not found")),
+                 "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.post("/api/socks5/servers/:id/start", [this](uvcpp::uvcpp_web_request& req,
+                                                    uvcpp::uvcpp_web_response& resp,
+                                                    uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::string error;
+    if (!id || !socks5_ || !socks5_->start_server(*id, &error)) {
+      send_error(resp, 400, error.empty() ? "SOCKS5 server not found" : error,
+                 "socks5_server_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.post("/api/socks5/servers/:id/stop", [this](uvcpp::uvcpp_web_request& req,
+                                                   uvcpp::uvcpp_web_response& resp,
+                                                   uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::string error;
+    if (!id || !socks5_ || !socks5_->stop_server(*id, &error)) {
+      send_error(resp, 400, error.empty() ? "SOCKS5 server not found" : error,
+                 "socks5_server_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.del("/api/socks5/servers/:id", [this](uvcpp::uvcpp_web_request& req,
+                                             uvcpp::uvcpp_web_response& resp,
+                                             uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !socks5_ || !socks5_->remove_server(*id, nullptr)) {
+      send_error(resp, 404, "SOCKS5 server not found", "not_found");
+      return;
+    }
+    store_.delete_socks5_server(*id, nullptr);
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.get("/api/socks5/servers/:id/events", [this](uvcpp::uvcpp_web_request& req,
+                                                    uvcpp::uvcpp_web_response& resp,
+                                                    uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !socks5_) {
+      send_error(resp, 404, "SOCKS5 server not found", "not_found");
+      return;
+    }
+    std::uint64_t after = 0;
+    if (const std::string* value = req.query("after")) {
+      after = std::strtoull(value->c_str(), nullptr, 10);
+    }
+    int limit = 200;
+    if (const std::string* value = req.query("limit")) limit = std::atoi(value->c_str());
+    const auto result = socks5_->server_events(*id, after, limit);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("SOCKS5 server not found")),
+                 "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/socks5/servers/:id/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                                      uvcpp::uvcpp_web_response& resp,
+                                                      uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !socks5_) {
+      send_error(resp, 404, "SOCKS5 server not found", "not_found");
+      return;
+    }
+    const auto result = socks5_->server_sessions(*id);
+    if (!result.value("ok", false)) {
+      send_error(resp, 404, result.value("error", std::string("SOCKS5 server not found")),
+                 "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
   });
 }
 

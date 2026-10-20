@@ -50,6 +50,21 @@ struct ListenerConfig {
   std::string updated_at;
 };
 
+struct Socks5ServerConfig {
+  std::string id;
+  std::string name;
+  std::string host = "127.0.0.1";
+  int port = 0;
+  bool auto_start = false;
+  bool auth_required = false;
+  std::string username;
+  // PBKDF2 hash produced by password_hash(); the plaintext password is never
+  // persisted or returned by the API.
+  std::string password_hash;
+  std::string created_at;
+  std::string updated_at;
+};
+
 struct ProxyConfig {
   std::string id;
   std::string name;
@@ -119,6 +134,11 @@ class Store {
   std::optional<ListenerConfig> listener(const std::string& id) const;
   bool save_listener(const ListenerConfig& listener, std::string* error);
   bool delete_listener(const std::string& id, std::string* error);
+
+  std::vector<Socks5ServerConfig> socks5_servers() const;
+  std::optional<Socks5ServerConfig> socks5_server(const std::string& id) const;
+  bool save_socks5_server(const Socks5ServerConfig& server, std::string* error);
+  bool delete_socks5_server(const std::string& id, std::string* error);
 
   std::vector<ProxyConfig> proxies() const;
   std::optional<ProxyConfig> proxy(const std::string& id) const;

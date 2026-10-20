@@ -536,6 +536,104 @@ bool Store::clear_all_history(std::string* error) {
   return exec("DELETE FROM history", error);
 }
 
+std::vector<Socks5ServerConfig> Store::socks5_servers() const {
+  std::vector<Socks5ServerConfig> out;
+  const nlohmann::json parsed =
+      nlohmann::json::parse(setting("socks5.servers", "[]"), nullptr, false);
+  if (!parsed.is_array()) return out;
+  for (const auto& item : parsed) {
+    if (!item.is_object()) continue;
+    Socks5ServerConfig server;
+    server.id = item.value("id", std::string());
+    server.name = item.value("name", std::string());
+    server.host = item.value("host", std::string("127.0.0.1"));
+    server.port = item.value("port", 0);
+    server.auto_start = item.value("autoStart", false);
+    server.auth_required = item.value("authRequired", false);
+    server.username = item.value("username", std::string());
+    server.password_hash = item.value("passwordHash", std::string());
+    server.created_at = item.value("createdAt", std::string());
+    server.updated_at = item.value("updatedAt", std::string());
+    if (server.id.empty() || server.host.empty() || server.port <= 0 ||
+        server.port > 65535 || (server.auth_required && server.password_hash.empty())) {
+      continue;
+    }
+    out.push_back(std::move(server));
+  }
+  return out;
+}
+
+std::optional<Socks5ServerConfig> Store::socks5_server(const std::string& id) const {
+  for (const auto& server : socks5_servers()) {
+    if (server.id == id) return server;
+  }
+  return std::nullopt;
+}
+
+bool Store::save_socks5_server(const Socks5ServerConfig& entry, std::string* error) {
+  if (entry.id.empty() || entry.host.empty() || entry.port <= 0 || entry.port > 65535 ||
+      (entry.auth_required && entry.password_hash.empty())) {
+    if (error) *error = "invalid SOCKS5 server";
+    return false;
+  }
+  auto list = socks5_servers();
+  bool found = false;
+  for (auto& item : list) {
+    if (item.id != entry.id) continue;
+    item = entry;
+    if (item.created_at.empty()) item.created_at = now_iso8601();
+    item.updated_at = now_iso8601();
+    found = true;
+    break;
+  }
+  if (!found) {
+    Socks5ServerConfig copy = entry;
+    if (copy.created_at.empty()) copy.created_at = now_iso8601();
+    copy.updated_at = now_iso8601();
+    list.push_back(std::move(copy));
+  }
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& item : list) {
+    out.push_back({{"id", item.id},
+                   {"name", item.name},
+                   {"host", item.host},
+                   {"port", item.port},
+                   {"autoStart", item.auto_start},
+                   {"authRequired", item.auth_required},
+                   {"username", item.username},
+                   {"passwordHash", item.password_hash},
+                   {"createdAt", item.created_at},
+                   {"updatedAt", item.updated_at}});
+  }
+  return set_setting("socks5.servers", out.dump(), error);
+}
+
+bool Store::delete_socks5_server(const std::string& id, std::string* error) {
+  auto list = socks5_servers();
+  const auto before = list.size();
+  list.erase(std::remove_if(list.begin(), list.end(),
+                            [&](const Socks5ServerConfig& item) { return item.id == id; }),
+             list.end());
+  if (list.size() == before) {
+    if (error) *error = "SOCKS5 server not found";
+    return false;
+  }
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& item : list) {
+    out.push_back({{"id", item.id},
+                   {"name", item.name},
+                   {"host", item.host},
+                   {"port", item.port},
+                   {"autoStart", item.auto_start},
+                   {"authRequired", item.auth_required},
+                   {"username", item.username},
+                   {"passwordHash", item.password_hash},
+                   {"createdAt", item.created_at},
+                   {"updatedAt", item.updated_at}});
+  }
+  return set_setting("socks5.servers", out.dump(), error);
+}
+
 std::vector<ProxyConfig> Store::proxies() const {
   std::vector<ProxyConfig> out;
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"

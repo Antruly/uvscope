@@ -34,6 +34,12 @@ export const router = createRouter({
       meta: { title: 'TCP / UDP Servers', titleKey: 'nav.listeners', icon: 'server', componentName: 'ListenersView', module: 'tcpudp' },
     },
     {
+      path: '/socks5',
+      name: 'socks5',
+      component: () => import('./views/Socks5View.vue'),
+      meta: { title: 'SOCKS5 Server', titleKey: 'nav.socks5', icon: 'key', componentName: 'Socks5View', module: 'tcpudp' },
+    },
+    {
       path: '/soap',
       name: 'soap',
       component: () => import('./views/SoapView.vue'),

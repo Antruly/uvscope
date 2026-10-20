@@ -8,6 +8,8 @@ PROXY_PORT="${3:-18788}"
 TCP_PORT="${4:-18789}"
 TCP_LISTEN_PORT="${5:-18790}"
 UDP_LISTEN_PORT="${6:-18791}"
+SOCKS5_PORT="${7:-18792}"
+SOCKS5_AUTH_PORT="${8:-18793}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -182,11 +184,14 @@ print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP se
 PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
-TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" python3 - <<'PY'
+TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
+SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
+TCP_PORT="${TCP_PORT}" python3 - <<'PY'
 import http.cookiejar
 import json
 import os
 import socket
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -296,9 +301,125 @@ if udp_listener:
     status, deleted = call("DELETE", f"/api/transport/listeners/{udp_listener}")
     check(status == 200 and deleted.get("ok") is True, f"UDP listener delete failed: {deleted}")
 
+def recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise EOFError("connection closed")
+        data += chunk
+    return data
+
+
+def socks5_connect(port, target_host, target_port, username=None, password=None):
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    if username is None:
+        sock.sendall(b"\x05\x01\x00")
+        method = recv_exact(sock, 2)
+        if method != b"\x05\x00":
+            sock.close()
+            raise RuntimeError(f"method selection failed: {method.hex()}")
+    else:
+        sock.sendall(b"\x05\x01\x02")
+        method = recv_exact(sock, 2)
+        if method != b"\x05\x02":
+            sock.close()
+            raise RuntimeError(f"auth method not selected: {method.hex()}")
+        user = username.encode()
+        pw = password.encode()
+        sock.sendall(b"\x01" + bytes([len(user)]) + user + bytes([len(pw)]) + pw)
+        status = recv_exact(sock, 2)
+        if status[1] != 0:
+            sock.close()
+            raise RuntimeError(f"authentication rejected: {status.hex()}")
+    host = target_host.encode()
+    sock.sendall(b"\x05\x01\x00\x03" + bytes([len(host)]) + host +
+                 target_port.to_bytes(2, "big"))
+    reply = recv_exact(sock, 4)
+    if reply[1] != 0:
+        sock.close()
+        raise RuntimeError(f"CONNECT rejected: {reply.hex()}")
+    atyp = reply[3]
+    if atyp == 1:
+        recv_exact(sock, 4)
+    elif atyp == 4:
+        recv_exact(sock, 16)
+    elif atyp == 3:
+        recv_exact(sock, recv_exact(sock, 1)[0])
+    else:
+        sock.close()
+        raise RuntimeError(f"unexpected address type: {atyp}")
+    recv_exact(sock, 2)
+    return sock
+
+
+def create_socks5(port, body):
+    status, created = call("POST", "/api/socks5/servers", dict(body, port=port, start=True))
+    check(status == 200 and created.get("ok") is True, f"SOCKS5 create failed: {created}")
+    return created.get("server", "")
+
+
+def wait_socks5(server_id, timeout=5):
+    end = time.time() + timeout
+    while time.time() < end:
+        status, payload = call("GET", f"/api/socks5/servers/{server_id}")
+        if payload.get("server", {}).get("state") == "listening":
+            return True
+        time.sleep(0.1)
+    return False
+
+
+socks5_server = create_socks5(int(os.environ["SOCKS5_PORT"]), {"name": "smoke-socks5"})
+if socks5_server:
+    check(wait_socks5(socks5_server), "SOCKS5 server did not start")
+    try:
+        tunnel = socks5_connect(int(os.environ["SOCKS5_PORT"]), "127.0.0.1",
+                                int(os.environ["TCP_PORT"]))
+        tunnel.sendall(b"through-socks5")
+        reply = recv_exact(tunnel, len(b"echo:through-socks5"))
+        check(reply == b"echo:through-socks5", f"SOCKS5 tunnel reply mismatch: {reply}")
+        tunnel.close()
+    except (OSError, RuntimeError, EOFError) as error:
+        check(False, f"SOCKS5 tunnel failed: {error}")
+    status, sessions = call("GET", f"/api/socks5/servers/{socks5_server}/sessions")
+    established = [item for item in sessions.get("sessions", [])
+                   if item.get("state") == "established"]
+    check(bool(established), "SOCKS5 server did not record the established session")
+    curl = subprocess.run(
+        ["curl", "-fsS", "--max-time", "5", "--socks5-hostname",
+         f"127.0.0.1:{os.environ['SOCKS5_PORT']}", f"{base}/api/health"],
+        capture_output=True)
+    check(curl.returncode == 0,
+          f"curl --socks5-hostname failed: {curl.stderr.decode(errors='replace')}")
+    status, deleted = call("DELETE", f"/api/socks5/servers/{socks5_server}")
+    check(status == 200 and deleted.get("ok") is True, f"SOCKS5 delete failed: {deleted}")
+
+auth_server = create_socks5(int(os.environ["SOCKS5_AUTH_PORT"]),
+                            {"name": "smoke-socks5-auth", "username": "smoke",
+                             "password": "smoke-pass"})
+if auth_server:
+    check(wait_socks5(auth_server), "authenticated SOCKS5 server did not start")
+    try:
+        socks5_connect(int(os.environ["SOCKS5_AUTH_PORT"]), "127.0.0.1",
+                       int(os.environ["TCP_PORT"]), "smoke", "wrong")
+        check(False, "SOCKS5 accepted a wrong password")
+    except RuntimeError as error:
+        check("rejected" in str(error), f"unexpected auth failure: {error}")
+    try:
+        tunnel = socks5_connect(int(os.environ["SOCKS5_AUTH_PORT"]), "127.0.0.1",
+                                int(os.environ["TCP_PORT"]), "smoke", "smoke-pass")
+        tunnel.sendall(b"auth-socks5")
+        reply = recv_exact(tunnel, len(b"echo:auth-socks5"))
+        check(reply == b"echo:auth-socks5", f"authenticated tunnel mismatch: {reply}")
+        tunnel.close()
+    except (OSError, RuntimeError, EOFError) as error:
+        check(False, f"authenticated SOCKS5 tunnel failed: {error}")
+    status, deleted = call("DELETE", f"/api/socks5/servers/{auth_server}")
+    check(status == 200 and deleted.get("ok") is True, f"SOCKS5 auth delete failed: {deleted}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP accept/send and UDP datagram/reply)")
+print("smoke test OK (listener TCP/UDP, SOCKS5 CONNECT and authentication)")
 PY

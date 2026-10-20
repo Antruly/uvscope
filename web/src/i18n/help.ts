@@ -26,6 +26,9 @@ const en: Record<string, string> = {
   'help.modules.listeners.title': 'TCP / UDP servers',
   'help.modules.listeners.text':
     'Bind a local TCP or UDP port, inspect accepted sessions or datagrams, and send replies from the workbench. Listener configs persist and can auto-start with the daemon.',
+  'help.modules.socks5.title': 'SOCKS5 server',
+  'help.modules.socks5.text':
+    'Run a local SOCKS5 proxy with optional username/password authentication. Each server has its own loop; sessions show the command, target, peer and rejection reason. Byte counters are not available from the runtime, so none are shown.',
   'help.modules.tcpudp.title': 'TCP / UDP bench',
   'help.modules.tcpudp.text':
     'One-shot probes through libuvcpp, plus persistent TCP sessions with repeated sends and a per-session event log. Hex mode accepts spaced, colon-separated or plain hex payloads.',
@@ -119,6 +122,9 @@ const zh: Record<string, string> = {
   'help.modules.listeners.title': 'TCP / UDP 服务端',
   'help.modules.listeners.text':
     '绑定本地 TCP 或 UDP 端口，检查接入会话或数据报，并在工作台内直接回复。监听配置会持久化，并随守护进程自动启动。',
+  'help.modules.socks5.title': 'SOCKS5 服务端',
+  'help.modules.socks5.text':
+    '运行本地 SOCKS5 代理，可选用户名密码认证。每个服务端独占一条事件循环；会话显示命令、目标、来源与拒绝原因。运行时没有字节计数，因此界面不显示。',
   'help.modules.tcpudp.title': 'TCP / UDP 调试台',
   'help.modules.tcpudp.text':
     '通过 libuvcpp 执行一次性探测，并支持可连续发送、带逐会话事件日志的持久 TCP 会话。十六进制模式支持带空格、冒号分隔或纯十六进制负载。',

@@ -51,6 +51,14 @@ Each module must be enabled in Settings and the role must have `debug`.
 | GET | `/api/transport/listeners/:id/sessions/:sid/events?after=&limit=` | Accepted session event log |
 | POST | `/api/transport/listeners/:id/send` | TCP: `{sessionId, payload, encoding}`; UDP: `{peerHost, peerPort, payload, encoding}` |
 | DELETE | `/api/transport/listeners/:id/sessions/:sid` | Close one accepted TCP session |
+| GET | `/api/socks5/servers` | List configured SOCKS5 servers and runtime state |
+| POST | `/api/socks5/servers` | `{name, host, port, username, password, autoStart, start}` |
+| GET | `/api/socks5/servers/:id` | One SOCKS5 server snapshot |
+| POST | `/api/socks5/servers/:id/start` | Start a SOCKS5 server |
+| POST | `/api/socks5/servers/:id/stop` | Stop a SOCKS5 server |
+| DELETE | `/api/socks5/servers/:id` | Stop and delete a SOCKS5 server |
+| GET | `/api/socks5/servers/:id/events?after=&limit=` | Server event log |
+| GET | `/api/socks5/servers/:id/sessions` | CONNECT / BIND / UDP ASSOCIATE attempts |
 | POST | `/api/tls/inspect` | `{pem}` → certificate profile |
 | POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, autoStart, tls, certPath, keyPath, start}` |
 | POST | `/api/proxies/:id/start` | Start a proxy |
@@ -98,6 +106,13 @@ Limits: 64 live sessions, 1 MiB per payload, 1 MiB queued per session, 512 KiB /
 retained per session. Closed sessions remain visible until the retained list exceeds 128.
 
 ## TCP / UDP listeners
+
+`POST /api/socks5/servers` binds a local SOCKS5 port. Leaving `username` and `password` empty
+enables no-auth; providing both enables RFC 1929 username/password authentication. The password is
+stored as a PBKDF2 hash and is never returned. SOCKS5 servers default to `127.0.0.1` and must be
+moved to a LAN address explicitly. Sessions report the requested command, target, peer, status and
+error; the runtime does not expose per-session byte counters or close events, so those fields are
+omitted (`bytesAvailable` is `false`) rather than reported as zero.
 
 `POST /api/transport/listeners` binds a local port; `transport` is `tcp` or `udp`. TCP listeners
 produce accepted-session records with `peer`, `state`, byte counters and a per-session event log.

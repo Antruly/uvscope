@@ -14,8 +14,9 @@ import dashboard from './i18n/dashboard'
 import about from './i18n/about'
 import help from './i18n/help'
 import listeners from './i18n/listeners'
+import socks5 from './i18n/socks5'
 
-const fragments = [http, ws, transport, soap, tls, proxy, users, settings, dashboard, about, help, listeners]
+const fragments = [http, ws, transport, soap, tls, proxy, users, settings, dashboard, about, help, listeners, socks5]
 
 const en: Dictionary = {
   'app.warming': 'Warming up the protocol workbench',

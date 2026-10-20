@@ -396,6 +396,9 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 
 ### S5 — SOCKS5 客户端与服务端
 
+状态：服务端已实现（`/api/socks5/servers`、独立服务端页、认证、会话与事件日志、
+smoke 覆盖 CONNECT 与错误密码）；客户端代理接入仍在进行中。
+
 边界：请求字段与校验、`/api/socks5/*`、运行时管理器、UI、Help/API/smoke。
 
 内容：

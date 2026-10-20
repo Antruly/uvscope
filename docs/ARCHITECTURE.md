@@ -19,6 +19,7 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 │   ├─ /api/http, /api/tcp, /api/udp, /api/tls                         │
 │   ├─ /api/tcp/sessions (persistent transport sessions)               │
 │   ├─ /api/transport/listeners (TCP/UDP server listeners)              │
+│   ├─ /api/socks5/servers (SOCKS5 CONNECT/BIND/UDP ASSOCIATE)          │
 │   ├─ /api/proxies, /api/history, /api/settings                      │
 │   └─ static SPA (web/ dist)                                         │
 │                                                                     │
@@ -27,6 +28,8 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 │   └─ one uvcpp_web_app per proxy (dedicated event loop)             │
 │  TransportManager                                                   │
 │   └─ one libuv loop thread; TCP sessions + command queue            │
+│  Socks5Manager                                                      │
+│   └─ one libuv loop thread per running SOCKS5 server                │
 │                                                                     │
 │  libuvcpp 1.8.0 + patch (TLS SNI)                                   │
 └───────────────────────────────┬─────────────────────────────────────┘
@@ -50,6 +53,8 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
   `uv_udp_t` sockets. TCP accepted clients stay server-owned; the manager only observes them and
   queues writes. Listener configs live in SQLite; runtime state and bounded event logs live in the
   manager.
+- **SOCKS5 servers**: each running server is a `uvcpp_socks5_server` with its own loop and thread.
+  Commands are marshaled through `uvcpp_async`; snapshots and bounded logs are mutex-protected.
 - **Static assets**: served by the same `uvcpp_web_app`; SPA fallback is enabled so deep links work.
 
 The roadmap moves persistent proxy/transport services into explicit child processes with a
@@ -125,6 +130,20 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
   when requested.
 - Stopping a listener closes the listener handle and all accepted clients; the server object is
   retired and deleted by the 500 ms sweep after its close callbacks have run.
+
+## SOCKS5 server runtime
+
+- Configs persist under the `socks5.servers` settings key. Passwords are stored as PBKDF2 hashes;
+  the plaintext never reaches SQLite.
+- `uvcpp_socks5_server` owns its event loop, so each running server gets one dedicated thread.
+  Start/stop commands cross threads through `uvcpp_async` and are executed on the loop thread.
+- Server handshakes, CONNECT/BIND upstreams and UDP relays all stay inside libuvcpp. The control
+  plane only reads snapshots and the bounded event/session logs.
+- A watchdog `start` wait fails after five seconds; port conflicts land in `state: error` with the
+  OS message, and deleting the config stops the runtime first.
+- libuvcpp reports a session once, when the requested command is established or rejected. It does
+  not expose per-session byte counters or close notifications, so the UI states that limitation
+  instead of guessing counters.
 
 ## Response preview safety
 

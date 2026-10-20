@@ -3391,6 +3391,12 @@ button.nav-item {
 .listener-sessions__head strong {
   font-size: 11px;
 }
+.socks5-session-hint {
+  display: block;
+  margin-top: 9px;
+  font-size: 9px;
+  line-height: 1.5;
+}
 .listener-session-list {
   display: flex;
   flex-direction: column;
