@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -323,6 +324,7 @@ struct TerminalManager::Impl {
     if (buf != nullptr && buf->base != nullptr) {
       if (nread > 0 && session != nullptr) {
         append_output(*session, buf->base, static_cast<std::size_t>(nread));
+        std::fprintf(stderr, "uvscope: terminal output read %zd bytes\n", nread);
       }
       delete[] buf->base;
     }
@@ -359,10 +361,13 @@ struct TerminalManager::Impl {
     if (offset < data.size()) {
       session.pending_input = data.substr(offset) + session.pending_input;
     }
+    std::fprintf(stderr, "uvscope: terminal input wrote %zu/%zu bytes\n", offset,
+                 data.size());
   }
 
-  static void drain_remaining_output(Session& session) {
-    if (session.drain_handle == nullptr) return;
+  static std::size_t drain_remaining_output(Session& session) {
+    if (session.drain_handle == nullptr) return 0;
+    std::size_t total = 0;
     char buffer[16384];
     for (;;) {
       DWORD available = 0;
@@ -380,9 +385,11 @@ struct TerminalManager::Impl {
         break;
       }
       append_output_unlocked(session, buffer, read);
+      total += read;
     }
     CloseHandle(static_cast<HANDLE>(session.drain_handle));
     session.drain_handle = nullptr;
+    return total;
   }
 
   static void close_windows_session(Session& session) {
@@ -640,7 +647,9 @@ struct TerminalManager::Impl {
     // Stop the libuv reader, then drain whatever is still in the pipe
     // through the duplicated handle before closing the pseudoconsole.
     close_pipe(session.out_pipe);
-    drain_remaining_output(session);
+    const std::size_t drained = drain_remaining_output(session);
+    std::fprintf(stderr, "uvscope: terminal exit code=%lu drained=%zu bytes\n",
+                 static_cast<unsigned long>(code), drained);
     if (session.hpc != nullptr) {
       if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
       session.hpc = nullptr;
