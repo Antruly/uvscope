@@ -269,10 +269,11 @@ include(CPack)
 # ---------------------------------------------------------------------------
 if(UVSCOPE_BUILD_TESTS)
   enable_testing()
+  string(REPLACE "." "\\." UVSCOPE_VERSION_REGEX "${PROJECT_VERSION}")
   add_test(NAME uvscope_version
     COMMAND uvscope --version)
   set_tests_properties(uvscope_version PROPERTIES
-    PASS_REGULAR_EXPRESSION "uvscope 0\\.2\\.0")
+    PASS_REGULAR_EXPRESSION "uvscope ${UVSCOPE_VERSION_REGEX}")
 
   add_test(NAME uvscope_selfcheck
     COMMAND uvscope --self-check)

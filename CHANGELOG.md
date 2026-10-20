@@ -31,7 +31,8 @@ All notable changes to uvscope are documented here. The format is based on
   RFC 1929 credentials. Proxy failures are classified (`proxy_unreachable`, `auth_failed`,
   `target_rejected`, `timeout`, `protocol_error`) and never fall back to a direct connection.
 - Upstream patch `0004-socks5-proxy-stage` exposes whether a SOCKS5 failure happened while
-  connecting to the proxy or after it replied.
+  connecting to the proxy or after it replied (libuvcpp PR
+  [#42](https://github.com/Antruly/libuvcpp/pull/42)).
 - Smoke coverage for TCP, HTTP and UDP through a local SOCKS5 server plus error classification and
   no-direct-fallback assertions.
 
