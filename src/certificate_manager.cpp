@@ -255,9 +255,9 @@ nlohmann::json CertificateManager::generate(const GenerateCertificateInput& inpu
   X509_gmtime_adj(X509_getm_notAfter(cert.get()),
                   static_cast<long>(days) * 24 * 60 * 60);
   X509_set_pubkey(cert.get(), key.get());
-  // `subject` is a macro in some Windows SDK header combinations; use a
-  // distinct local name and inline the issuer update.
-  X509_NAME* cert_name = X509_get_subject_name(cert.get());
+  // <wincred.h> (pulled in by uv.h) defines X509_NAME as a credential type,
+  // so the typedef is unusable after that include. Use the struct tag directly.
+  struct X509_name_st* cert_name = X509_get_subject_name(cert.get());
   if (cert_name == nullptr ||
       X509_NAME_add_entry_by_txt(
           cert_name, "CN", MBSTRING_ASC,
