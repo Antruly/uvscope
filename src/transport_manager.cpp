@@ -1415,6 +1415,10 @@ bool TransportManager::add_listener(const ListenerConfig& config,
     existing->config = config;
     return true;
   }
+  if (impl_->listeners.size() >= 32) {
+    if (error) *error = "too many listeners";
+    return false;
+  }
   auto listener = std::make_shared<Impl::Listener>();
   listener->config = config;
   impl_->listeners[config.id] = listener;

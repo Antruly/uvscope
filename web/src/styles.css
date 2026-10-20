@@ -3500,6 +3500,8 @@ button.nav-item {
 }
 .session-card__dot--connected { background: var(--ok); box-shadow: 0 0 0 3px rgba(var(--ok-rgb), 0.14); }
 .session-card__dot--connecting { background: var(--warn); }
+.session-card__dot--starting { background: var(--warn); }
+.session-card__dot--stopping { background: var(--warn); }
 .session-card__dot--closing { background: var(--warn); }
 .session-card__dot--error { background: var(--danger); }
 .session-card__dot--closed { background: var(--faint); }
