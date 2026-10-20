@@ -190,6 +190,10 @@ struct TerminalManager::Impl {
     std::string shell;
     std::string cwd;
     std::string state = "starting";  // starting | running | closing | exited | error
+    // Set by DELETE: hide the session at once, reap the child, then drop it
+    // from the registry. Exited sessions that were not deleted stay visible so
+    // their scrollback can still be inspected.
+    bool remove_on_close = false;
     std::string error;
     std::string created_at;
     std::string exited_at;
@@ -267,7 +271,12 @@ struct TerminalManager::Impl {
 
   std::shared_ptr<Session> session_locked(const std::string& id) const {
     const auto it = sessions.find(id);
-    return it == sessions.end() ? nullptr : it->second;
+    if (it == sessions.end()) return nullptr;
+    // A deleted terminal is already gone from the API's point of view; the
+    // sweep timer keeps its shared_ptr alive only long enough to reap the
+    // child and close the PTY.
+    if (it->second->state == "closing") return nullptr;
+    return it->second;
   }
 
   static void append_output_unlocked(Session& session, const char* data,
@@ -706,8 +715,8 @@ struct TerminalManager::Impl {
 
   void sweep() {
     std::lock_guard<std::mutex> lock(state_mutex);
-    for (auto& item : sessions) {
-      Session& session = *item.second;
+    for (auto it = sessions.begin(); it != sessions.end();) {
+      Session& session = *it->second;
       if (session.state == "running" || session.state == "closing") reap(session);
 #if defined(_WIN32)
       if (session.hpc != nullptr &&
@@ -722,6 +731,19 @@ struct TerminalManager::Impl {
         }
       }
 #endif
+      // DELETE: once the child is reaped and the PTY handles are closed the
+      // session has no resources left, so drop it from the registry.
+      const bool reaped =
+#if defined(_WIN32)
+          session.process == nullptr && session.out_pipe == nullptr;
+#else
+          session.pid <= 0;
+#endif
+      if (session.remove_on_close && reaped) {
+        it = sessions.erase(it);
+        continue;
+      }
+      ++it;
     }
     // Keep a short history of exited sessions without unbounded growth.
     while (sessions.size() > kMaxRetainedSessions) {
@@ -1106,6 +1128,7 @@ nlohmann::json TerminalManager::sessions(std::int64_t owner_id, bool all) const 
   std::lock_guard<std::mutex> lock(impl_->state_mutex);
   nlohmann::json out = nlohmann::json::array();
   for (const auto& item : impl_->sessions) {
+    if (item.second->state == "closing") continue;
     if (!all && item.second->owner_id != owner_id) continue;
     out.push_back(Impl::snapshot_locked(*item.second));
   }
@@ -1167,6 +1190,17 @@ bool TerminalManager::close(const std::string& id, std::string* error) {
       })) {
     if (error) *error = "terminal manager is stopping";
     return false;
+  }
+  // DELETE removes the terminal: hide it from listings immediately and let
+  // the sweep timer reap the child and drop the registry entry once the PTY
+  // handles are closed. The posted cleanup owns the teardown through the
+  // shared_ptr captured above.
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    session->remove_on_close = true;
+    if (session->state == "running" || session->state == "starting") {
+      session->state = "closing";
+    }
   }
   return true;
 }

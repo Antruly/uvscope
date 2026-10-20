@@ -14,6 +14,9 @@ All notable changes to uvscope are documented here. The format is based on
 - The daemon no longer selects Vite's development `web/index.html` (which loads `/src/main.ts`)
   as its document root when a built `web/dist` exists, so the UI and preview frames load when
   running from a repository checkout.
+- Deleting a terminal now stops the shell, reaps the child, closes the PTY and removes the
+  session from the list. It previously stayed in a closing state, reappeared after refresh and
+  could leave a zombie process behind.
 
 ## [0.4.0] - 2026-10-21
 

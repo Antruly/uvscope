@@ -175,6 +175,29 @@ if ! curl -fsS "http://127.0.0.1:${PORT}/preview/${PREVIEW_ID}" | grep -q "previ
 fi
 curl -fsS -b "${COOKIE_JAR}" -X DELETE "http://127.0.0.1:${PORT}/api/preview/${PREVIEW_ID}" >/dev/null
 
+# DELETE must remove the terminal, not leave a closing/exited ghost behind.
+curl -fsS -b "${COOKIE_JAR}" -X PUT "http://127.0.0.1:${PORT}/api/settings" \
+  -H 'content-type: application/json' -d '{"modules":{"terminal":true}}' >/dev/null
+TERM_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/terminal/sessions" \
+  -H 'content-type: application/json' -d '{"name":"smoke-delete","cols":80,"rows":24}')"
+TERM_ID="$(printf '%s' "${TERM_RESULT}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("session",{}).get("id",""))')"
+if [[ -z "${TERM_ID}" ]]; then
+  echo "terminal creation failed: ${TERM_RESULT}" >&2
+  exit 1
+fi
+curl -fsS -b "${COOKIE_JAR}" -X DELETE "http://127.0.0.1:${PORT}/api/terminal/sessions/${TERM_ID}" >/dev/null
+TERM_LIST="$(curl -fsS -b "${COOKIE_JAR}" "http://127.0.0.1:${PORT}/api/terminal/sessions")"
+if printf '%s' "${TERM_LIST}" | grep -q "${TERM_ID}"; then
+  echo "deleted terminal still appears in the session list" >&2
+  exit 1
+fi
+TERM_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -b "${COOKIE_JAR}" \
+  "http://127.0.0.1:${PORT}/api/terminal/sessions/${TERM_ID}")"
+if [[ "${TERM_CODE}" != "404" ]]; then
+  echo "deleted terminal should return 404, got ${TERM_CODE}" >&2
+  exit 1
+fi
+
 PROXY_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/proxies" \
   -H 'content-type: application/json' \
   -d "{\"name\":\"smoke\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${PROXY_PORT},\"target\":\"http://127.0.0.1:${PORT}\",\"start\":true,\"rules\":[{\"name\":\"redirect\",\"matchType\":\"exact\",\"pattern\":\"/smoke-redirect\",\"action\":\"redirect\",\"status\":301,\"destination\":\"/api/health\",\"preserveQuery\":true},{\"name\":\"rewrite\",\"matchType\":\"prefix\",\"pattern\":\"/smoke-rewrite\",\"action\":\"rewrite\",\"destination\":\"/api\$rest\",\"preserveQuery\":true}]}")"
