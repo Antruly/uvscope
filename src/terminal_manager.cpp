@@ -207,6 +207,7 @@ struct TerminalManager::Impl {
     void* process = nullptr;
     void* input_write = nullptr;
     uv_pipe_t* out_pipe = nullptr;
+    void* drain_handle = nullptr;
     std::int64_t hpc_close_at_ms = 0;
 #endif
   };
@@ -262,10 +263,9 @@ struct TerminalManager::Impl {
     return it == sessions.end() ? nullptr : it->second;
   }
 
-  static void append_output(Session& session, const char* data, std::size_t len) {
+  static void append_output_unlocked(Session& session, const char* data,
+                                     std::size_t len) {
     if (len == 0) return;
-    std::unique_lock<std::mutex> lock;
-    if (session.state_mutex != nullptr) lock = std::unique_lock<std::mutex>(*session.state_mutex);
     session.chunks.push_back({session.next_seq++, std::string(data, len)});
     session.buffered_bytes += len;
     while (session.buffered_bytes > kMaxScrollback) {
@@ -274,6 +274,12 @@ struct TerminalManager::Impl {
       session.chunks.pop_front();
     }
     session.last_activity = now_iso8601();
+  }
+
+  static void append_output(Session& session, const char* data, std::size_t len) {
+    std::unique_lock<std::mutex> lock;
+    if (session.state_mutex != nullptr) lock = std::unique_lock<std::mutex>(*session.state_mutex);
+    append_output_unlocked(session, data, len);
   }
 
   static void close_fd(int& fd) {
@@ -355,6 +361,30 @@ struct TerminalManager::Impl {
     }
   }
 
+  static void drain_remaining_output(Session& session) {
+    if (session.drain_handle == nullptr) return;
+    char buffer[16384];
+    for (;;) {
+      DWORD available = 0;
+      if (!PeekNamedPipe(static_cast<HANDLE>(session.drain_handle), nullptr, 0,
+                         nullptr, &available, nullptr) ||
+          available == 0) {
+        break;
+      }
+      const DWORD want =
+          available < sizeof(buffer) ? available : static_cast<DWORD>(sizeof(buffer));
+      DWORD read = 0;
+      if (!ReadFile(static_cast<HANDLE>(session.drain_handle), buffer, want, &read,
+                    nullptr) ||
+          read == 0) {
+        break;
+      }
+      append_output_unlocked(session, buffer, read);
+    }
+    CloseHandle(static_cast<HANDLE>(session.drain_handle));
+    session.drain_handle = nullptr;
+  }
+
   static void close_windows_session(Session& session) {
     if (session.process != nullptr) {
       TerminateProcess(session.process, 1);
@@ -364,6 +394,10 @@ struct TerminalManager::Impl {
     if (session.input_write != nullptr) {
       CloseHandle(static_cast<HANDLE>(session.input_write));
       session.input_write = nullptr;
+    }
+    if (session.drain_handle != nullptr) {
+      CloseHandle(static_cast<HANDLE>(session.drain_handle));
+      session.drain_handle = nullptr;
     }
     close_pipe(session.out_pipe);
     if (session.hpc != nullptr) {
@@ -466,11 +500,15 @@ struct TerminalManager::Impl {
     }
     CloseHandle(process_info.hThread);
 
+    HANDLE drain_handle = nullptr;
+    DuplicateHandle(GetCurrentProcess(), output_read, GetCurrentProcess(),
+                    &drain_handle, 0, FALSE, DUPLICATE_SAME_ACCESS);
     const int out_fd = _open_osfhandle(
         reinterpret_cast<intptr_t>(output_read), _O_RDONLY | _O_BINARY);
     if (out_fd < 0) {
       CloseHandle(output_read);
       CloseHandle(input_write);
+      if (drain_handle) CloseHandle(drain_handle);
       TerminateProcess(process_info.hProcess, 1);
       CloseHandle(process_info.hProcess);
       conpty_api().close(hpc);
@@ -485,6 +523,7 @@ struct TerminalManager::Impl {
         uv_pipe_open(out_pipe, out_fd) != 0) {
       delete out_pipe;
       _close(out_fd);
+      if (drain_handle) CloseHandle(drain_handle);
       CloseHandle(input_write);
       TerminateProcess(process_info.hProcess, 1);
       CloseHandle(process_info.hProcess);
@@ -498,6 +537,7 @@ struct TerminalManager::Impl {
     session->process = process_info.hProcess;
     session->input_write = input_write;
     session->out_pipe = out_pipe;
+    session->drain_handle = drain_handle;
     session->state = "running";
     session->created_at = now_iso8601();
     session->last_activity = session->created_at;
@@ -597,13 +637,15 @@ struct TerminalManager::Impl {
       CloseHandle(static_cast<HANDLE>(session.input_write));
       session.input_write = nullptr;
     }
-    // Let the pipe reader drain the final output before closing the
-    // pseudoconsole; ClosePseudoConsole also closes the output pipe.
-    session.hpc_close_at_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count() +
-        300;
+    // Stop the libuv reader, then drain whatever is still in the pipe
+    // through the duplicated handle before closing the pseudoconsole.
+    close_pipe(session.out_pipe);
+    drain_remaining_output(session);
+    if (session.hpc != nullptr) {
+      if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
+      session.hpc = nullptr;
+    }
+    session.hpc_close_at_ms = 0;
 #else
     if (session.pid <= 0) return;
     int status = 0;
