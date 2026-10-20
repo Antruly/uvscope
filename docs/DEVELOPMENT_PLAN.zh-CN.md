@@ -296,6 +296,9 @@
 - 0001 TLS SNI、0002 同步 I/O 超时、0003 `cmake --install` 完整性；
 - 已提 PR：Antruly/libuvcpp #38 / #39 / #40；
 - 验收：补丁可应用到 `v1.8.0` 与 `master`，uvscope 用新 SDK 通过 self-check 与 smoke。
+- 后续：0.3 / 0.4 所需的 libuvcpp 改动已提交上游，跟踪
+  [libuvcpp#55](https://github.com/Antruly/libuvcpp/issues/55)；1.8.2 发布后切换到发布版 SDK
+  并删除本地补丁。
 
 ### S1 — HTTP 响应预览（前端，已实现）
 

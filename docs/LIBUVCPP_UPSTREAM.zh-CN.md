@@ -24,6 +24,28 @@ SDK 构建的 uvscope 也通过了 `--self-check` 与 `scripts/smoke-test.sh`。
 
 ---
 
+## 待上游处理：1.8.2 批次
+
+2026-10-20 按 uvscope 0.3 / 0.4 的需求提交了上游 issue 批次，跟踪页：
+[#55](https://github.com/Antruly/libuvcpp/issues/55)。
+
+建议进入 1.8.2：
+
+| Issue | 主题 | uvscope 影响 |
+| --- | --- | --- |
+| [#44](https://github.com/Antruly/libuvcpp/issues/44) | 域名解析 `AF_UNSPEC` / IPv6 | 所有出站；IPv6-only 目标 |
+| [#45](https://github.com/Antruly/libuvcpp/issues/45) | peer 证书链与校验错误 | 0.4 TLS 实时证书检查 |
+| [#46](https://github.com/Antruly/libuvcpp/issues/46) | SOCKS5 会话结束 / 字节数 | 0.3 服务端页面完整性 |
+| [#47](https://github.com/Antruly/libuvcpp/issues/47) | 客户端 br 解压 / 阈值 | 0.4 body 解码 |
+| [#48](https://github.com/Antruly/libuvcpp/issues/48) | 同步 `*_wait` 总 deadline | 0.3 `timeoutMs` 契约 |
+| [#49](https://github.com/Antruly/libuvcpp/issues/49) | UDP 域名解析 / IPv6 connect | 0.3 UDP 探测 |
+| [#54](https://github.com/Antruly/libuvcpp/issues/54) | ws client 的 SOCKS5 阶段 | 0.4 WS 代理错误分类 |
+
+后续版本：#50 WebSocket 逐帧接口、#51 HTTP 客户端流式响应、#52 HTTP/2 帧事件、
+#53 HTTP/3 / QUIC 能力清单。1.8.2 发布后，uvscope 的 0001–0004 补丁应可全部删除。
+
+---
+
 ## 1. TLS SNI 缺失（P0，已修复）
 
 ### 现象
