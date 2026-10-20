@@ -385,18 +385,32 @@ std::filesystem::path executable_dir(const char* argv0) {
 
 std::filesystem::path default_web_root(const std::filesystem::path& exe_dir) {
   const std::string env_root = env_string("UVSCOPE_WEB_ROOT");
+  // A repository checkout has two `index.html` files: the Vite dev shell in
+  // `web/` (it loads /src/main.ts) and the built SPA in `web/dist/`. The dev
+  // shell must never become the daemon's document root, or the whole UI and
+  // its preview frames fail to load. Prefer dist, then installed layouts, and
+  // skip any candidate whose index still points at the dev entry.
   const std::vector<std::filesystem::path> candidates = {
       env_root.empty() ? std::filesystem::path() : std::filesystem::path(env_root),
       exe_dir / "web",
-      exe_dir / ".." / "web",
+      std::filesystem::current_path() / "web" / "dist",
       exe_dir / ".." / "share" / "uvscope" / "web",
       exe_dir / ".." / "share" / "uvscope",
-      std::filesystem::current_path() / "web" / "dist",
+      exe_dir / ".." / "web",
       std::filesystem::current_path() / "web"};
+  auto is_dev_shell = [](const std::filesystem::path& index) {
+    std::ifstream in(index, std::ios::binary);
+    if (!in) return false;
+    std::string head(4096, '\0');
+    in.read(&head[0], static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(in.gcount()));
+    return head.find("/src/main.ts") != std::string::npos;
+  };
   for (const auto& candidate : candidates) {
     if (candidate.empty()) continue;
     std::error_code ec;
-    if (std::filesystem::exists(candidate / "index.html", ec)) {
+    const auto index = candidate / "index.html";
+    if (std::filesystem::exists(index, ec) && !is_dev_shell(index)) {
       return std::filesystem::weakly_canonical(candidate, ec);
     }
   }

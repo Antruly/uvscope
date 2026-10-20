@@ -26,8 +26,13 @@ const method = ref('GET')
 const url = ref('https://httpbin.org/anything')
 const protocol = ref<'http1' | 'http2' | 'http3'>('http1')
 const headers = ref<HttpHeader[]>([
-  { name: 'accept', value: 'application/json' },
-  { name: 'user-agent', value: `uvscope/${auth.version}` },
+  { name: 'accept', value: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' },
+  {
+    name: 'user-agent',
+    value:
+      `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ` +
+      `Chrome/131.0.0.0 Safari/537.36 uvscope/${auth.version}`,
+  },
 ])
 const body = ref('')
 const bodyType = ref('application/json')

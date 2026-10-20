@@ -235,7 +235,27 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
     req.set_header(header.name, header.value);
   }
   if (!has_host) req.set_header("host", url.port == (tls ? 443 : 80) ? url.host : url.host + ":" + std::to_string(url.port));
-  if (!has_user_agent) req.set_header("user-agent", "uvscope/" UVSCOPE_VERSION);
+  if (!has_user_agent) {
+    // Many sites serve a JS/meta redirect shim (or a bot page) to clients whose
+    // UA does not look like a browser; with scripts disabled the preview would
+    // be blank. Present a current browser UA and keep uvscope's own token at
+    // the end so server logs can still identify the client. An explicit
+    // User-Agent header from the request editor always wins.
+#if defined(_WIN32)
+    constexpr const char* kBrowserUa =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+#elif defined(__APPLE__)
+    constexpr const char* kBrowserUa =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+#else
+    constexpr const char* kBrowserUa =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+#endif
+    req.set_header("user-agent", std::string(kBrowserUa) + " uvscope/" UVSCOPE_VERSION);
+  }
   req.body.clone_data(input.body.data(), input.body.size());
 
   std::unique_ptr<uvcpp::uvcpp_ssl_context> ssl;

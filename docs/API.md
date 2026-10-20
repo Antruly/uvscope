@@ -78,7 +78,10 @@ Each module must be enabled in Settings and the role must have `debug`.
 `encoding` is `text` or `hex`. Probe results always include `ok`; protocol failures are reported in
 the result rather than as an API error.
 
-`/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). With
+`/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). A request
+without an explicit `user-agent` is sent with a current browser UA plus a `uvscope/<version>`
+token, so sites that serve bot or JS-redirect shims to unknown clients still return their normal
+HTML; an explicit header always wins. With
 `protocol: "http2"` over `https://`, the daemon negotiates ALPN `h2` and also returns
 `goaway: {received, errorCode, lastStreamId}` plus a frame summary:
 

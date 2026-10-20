@@ -148,6 +148,33 @@ else
   echo "skipping HTTP/2 smoke: node or openssl is not available" >&2
 fi
 
+# The daemon must serve the built SPA, not Vite's dev index (which loads
+# /src/main.ts and leaves the UI blank when served statically).
+ROOT_HTML="$(curl -fsS "http://127.0.0.1:${PORT}/")"
+if grep -q "/src/main.ts" <<<"${ROOT_HTML}"; then
+  echo "daemon served the Vite dev index instead of web/dist" >&2
+  exit 1
+fi
+if ! grep -q "/assets/index-" <<<"${ROOT_HTML}"; then
+  echo "daemon did not serve the built SPA shell" >&2
+  exit 1
+fi
+
+# Preview tokens round-trip through /preview/:id.
+PREVIEW_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/preview" \
+  -H 'content-type: application/json' \
+  -d '{"html":"<html><body><p>preview-ok</p></body></html>","baseUrl":"http://127.0.0.1/","mode":"safe"}')"
+PREVIEW_ID="$(printf '%s' "${PREVIEW_RESULT}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+if [[ -z "${PREVIEW_ID}" ]]; then
+  echo "preview token creation failed: ${PREVIEW_RESULT}" >&2
+  exit 1
+fi
+if ! curl -fsS "http://127.0.0.1:${PORT}/preview/${PREVIEW_ID}" | grep -q "preview-ok"; then
+  echo "preview document did not round-trip" >&2
+  exit 1
+fi
+curl -fsS -b "${COOKIE_JAR}" -X DELETE "http://127.0.0.1:${PORT}/api/preview/${PREVIEW_ID}" >/dev/null
+
 PROXY_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/proxies" \
   -H 'content-type: application/json' \
   -d "{\"name\":\"smoke\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${PROXY_PORT},\"target\":\"http://127.0.0.1:${PORT}\",\"start\":true,\"rules\":[{\"name\":\"redirect\",\"matchType\":\"exact\",\"pattern\":\"/smoke-redirect\",\"action\":\"redirect\",\"status\":301,\"destination\":\"/api/health\",\"preserveQuery\":true},{\"name\":\"rewrite\",\"matchType\":\"prefix\",\"pattern\":\"/smoke-rewrite\",\"action\":\"rewrite\",\"destination\":\"/api\$rest\",\"preserveQuery\":true}]}")"

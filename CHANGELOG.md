@@ -4,6 +4,17 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- HTTP Studio previews now load sites that gate on the User-Agent (for example `baidu.com`):
+  requests without an explicit `user-agent` use a current browser UA with a `uvscope/<version>`
+  token, and the editor's default `accept` header matches a browser. Explicit headers still win.
+- The daemon no longer selects Vite's development `web/index.html` (which loads `/src/main.ts`)
+  as its document root when a built `web/dist` exists, so the UI and preview frames load when
+  running from a repository checkout.
+
 ## [0.4.0] - 2026-10-21
 
 ### Changed
