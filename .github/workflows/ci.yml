@@ -187,6 +187,7 @@ jobs:
           if status != 200 or not session.get("id"):
               raise SystemExit(f"ConPTY session failed: {payload}")
           session_id = session["id"]
+          time.sleep(1.0)
           status, payload = call(
               "POST", f"/api/terminal/sessions/{session_id}/input",
               {"data": "Write-Output conpty-ok\r\nexit\r\n"})
