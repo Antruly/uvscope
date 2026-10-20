@@ -366,6 +366,30 @@ def socks5_connect(port, target_host, target_port, username=None, password=None)
     return sock
 
 
+def read_reply(sock):
+    head = recv_exact(sock, 4)
+    atyp = head[3]
+    if atyp == 1:
+        host = socket.inet_ntoa(recv_exact(sock, 4))
+    elif atyp == 4:
+        host = socket.inet_ntop(socket.AF_INET6, recv_exact(sock, 16))
+    elif atyp == 3:
+        host = recv_exact(sock, recv_exact(sock, 1)[0]).decode()
+    else:
+        raise RuntimeError(f"unexpected address type: {atyp}")
+    port = int.from_bytes(recv_exact(sock, 2), "big")
+    return head[1], host, port
+
+
+def socks5_greeting(port):
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+    sock.sendall(b"\x05\x01\x00")
+    if recv_exact(sock, 2) != b"\x05\x00":
+        sock.close()
+        raise RuntimeError("no-auth was not selected")
+    return sock
+
+
 def create_socks5(port, body):
     status, created = call("POST", "/api/socks5/servers", dict(body, port=port, start=True))
     check(status == 200 and created.get("ok") is True, f"SOCKS5 create failed: {created}")
@@ -434,6 +458,40 @@ if socks5_server:
     if udp_probe.get("ok"):
         check(udp_probe.get("received", {}).get("text") == "udp:udp-client-socks5",
               f"UDP probe through SOCKS5 got {udp_probe.get('received')}")
+
+    # BIND: the server listens, a peer connects, and the control connection
+    # becomes the data tunnel after the second reply.
+    try:
+        ctrl = socks5_greeting(int(os.environ["SOCKS5_PORT"]))
+        ctrl.sendall(b"\x05\x02\x00\x01" + socket.inet_aton("127.0.0.1") +
+                     (0).to_bytes(2, "big"))
+        rep, bind_host, bind_port = read_reply(ctrl)
+        check(rep == 0, f"BIND request was rejected: {rep}")
+        if rep == 0:
+            peer = socket.create_connection((bind_host, bind_port), timeout=5)
+            rep2, peer_host, peer_port = read_reply(ctrl)
+            check(rep2 == 0, f"BIND peer reply was rejected: {rep2}")
+            peer.sendall(b"bind-hello")
+            echoed = recv_exact(ctrl, len(b"bind-hello"))
+            check(echoed == b"bind-hello", f"BIND inbound mismatch: {echoed}")
+            ctrl.sendall(b"bind-reply")
+            echoed = recv_exact(peer, len(b"bind-reply"))
+            check(echoed == b"bind-reply", f"BIND outbound mismatch: {echoed}")
+            peer.close()
+        ctrl.close()
+    except (OSError, RuntimeError, EOFError) as error:
+        check(False, f"BIND round-trip failed: {error}")
+
+    # An unsupported command must be rejected, not silently accepted.
+    try:
+        ctrl = socks5_greeting(int(os.environ["SOCKS5_PORT"]))
+        ctrl.sendall(b"\x05\x04\x00\x01" + socket.inet_aton("127.0.0.1") +
+                     (80).to_bytes(2, "big"))
+        rep, _, _ = read_reply(ctrl)
+        check(rep == 7, f"unsupported command returned REP={rep}, expected 7")
+        ctrl.close()
+    except (OSError, RuntimeError, EOFError) as error:
+        check(False, f"unsupported command probe failed: {error}")
 
     status, unreachable = call("POST", "/api/tcp/probe", {
         "host": "127.0.0.1", "port": int(os.environ["TCP_PORT"]),

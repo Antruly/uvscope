@@ -23,8 +23,8 @@ All notable changes to uvscope are documented here. The format is based on
   authentication, persisted `autoStart`, start/stop/delete, event and session logs, and a dedicated
   `SOCKS5 Server` page. Passwords are stored as PBKDF2 hashes.
 - `/api/socks5/servers` routes for lifecycle, events and connection attempts.
-- Smoke coverage for SOCKS5 CONNECT through a local tunnel, `curl --socks5-hostname`, wrong-password
-  rejection and an authenticated round-trip.
+- Smoke coverage for SOCKS5 CONNECT and BIND round-trips, `curl --socks5-hostname`, wrong-password
+  rejection, an unsupported command (`REP=7`) and an authenticated round-trip.
 - SOCKS5 outbound proxy for HTTP, TCP and UDP probes and persistent TCP sessions, with optional
   RFC 1929 credentials. Proxy failures are classified (`proxy_unreachable`, `auth_failed`,
   `target_rejected`, `timeout`, `protocol_error`) and never fall back to a direct connection.
