@@ -75,10 +75,8 @@ struct Socks5Manager::Impl {
     std::uint64_t next_seq = 1;
     std::deque<StoredEvent> events;
     std::deque<nlohmann::json> sessions;
-#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
     // peer endpoint -> session id, used to attach the end callback's stats.
     std::map<std::string, std::string> session_by_peer;
-#endif
 
     std::thread thread;
     std::atomic<bool> stop_requested{false};
@@ -129,13 +127,9 @@ struct Socks5Manager::Impl {
             {"totalSessions", server.total_sessions},
             {"rejectedSessions", server.rejected_sessions},
             {"nextSeq", server.next_seq - 1}};
-#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
     // Counters arrive with the session-end callback; active sessions
     // legitimately have no numbers yet.
     out["bytesAvailable"] = true;
-#else
-    out["bytesAvailable"] = false;
-#endif
     return out;
   }
 
@@ -189,12 +183,9 @@ struct Socks5Manager::Impl {
     while (server->sessions.size() > kMaxRetainedSessions) {
       server->sessions.pop_front();
     }
-#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
     if (!peer.empty()) server->session_by_peer[peer] = session_id;
-#endif
   }
 
-#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
   static void on_session_end(const std::shared_ptr<Server>& server,
                              const uvcpp::uvcpp_socks5_session_info& info,
                              const uvcpp::uvcpp_socks5_session_stats& stats) {
@@ -268,7 +259,6 @@ struct Socks5Manager::Impl {
                         {"udpDatagrams", stats.udp_datagrams},
                         {"udpBytes", stats.udp_bytes}});
   }
-#endif
 
   static void run_server(const std::shared_ptr<Server>& server) {
     auto runtime = std::make_unique<uvcpp::uvcpp_socks5_server>();
@@ -338,13 +328,11 @@ struct Socks5Manager::Impl {
       return;
     }
 
-#ifdef UVSCOPE_HAS_SOCKS5_SESSION_END
     runtime->set_session_end_callback(
         [server](const uvcpp::uvcpp_socks5_session_info& info,
                  const uvcpp::uvcpp_socks5_session_stats& stats) {
           on_session_end(server, info, stats);
         });
-#endif
     const int listen_rc = runtime->listen(
         [server](const uvcpp::uvcpp_socks5_session_info& info) {
           on_session(server, info);

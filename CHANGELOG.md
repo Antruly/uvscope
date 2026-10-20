@@ -6,6 +6,14 @@ All notable changes to uvscope are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Build against the libuvcpp 1.8.2 release SDK. The local `patches/upstream/` set (TLS SNI,
+  POSIX sync I/O timeouts, complete `cmake --install`, SOCKS5 proxy stage) is retired because
+  1.8.1/1.8.2 ship those fixes. Configure now fails early when the detected SDK is older than
+  1.8.2, and the TLS live-chain / SOCKS5 session-stat paths are always compiled instead of
+  depending on a capability probe.
+
 ### Added
 
 - Virtual terminal UI with xterm.js (truecolor, alternate screen, mouse, bracketed paste),
@@ -28,12 +36,12 @@ All notable changes to uvscope are documented here. The format is based on
   chain in input order with per-certificate validity and fingerprints.
 - TLS Inspector can fetch a live `https://` URL and show the peer chain, ALPN, verification
   result/error and handshake error. Invalid certificates are still displayed with the OpenSSL
-  reason. Requires libuvcpp 1.8.2; older SDKs disable the action at build time.
+  reason. Requires the libuvcpp 1.8.2 SDK (the build minimum).
 - TLS certificate vault: generate self-signed RSA/ECDSA server certificates with SANs, import
   certificate/key pairs (encrypted keys supported), list/inspect/download/delete, 0600 key files
   and in-use protection. The reverse proxy editor can select a managed certificate.
-- SOCKS5 server sessions now show per-session bytes, UDP datagram counts and duration when the
-  build uses libuvcpp 1.8.2 (`bytesAvailable: true`); older SDKs keep the previous limitation.
+- SOCKS5 server sessions show per-session bytes, UDP datagram counts and duration
+  (`bytesAvailable: true`).
 - HTML preview has an opt-in “Run scripts (unsafe)” mode backed by short-lived `/preview/:id`
   documents with `CSP: sandbox allow-scripts`. It renders JS-driven pages and remote CSS/JS on an
   opaque origin without uvscope cookies; the default sandbox still blocks scripts.

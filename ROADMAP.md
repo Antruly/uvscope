@@ -74,6 +74,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 
 ## Post-0.4 additions
 
+- [x] Build against the libuvcpp 1.8.2 release SDK and retire the local upstream patches
 - [x] Reverse proxy exact/prefix/regex redirect and rewrite rules
 - [x] Live TLS peer-chain probe and managed certificate vault (generate/import/delete)
 - [x] Unix virtual terminal with WebSocket, xterm.js, persistent sessions and admin control

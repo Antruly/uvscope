@@ -45,7 +45,6 @@ nlohmann::json run_tls_probe(const TlsProbeInput& input) {
   result["host"] = url.host;
   result["port"] = url.port;
 
-#ifdef UVSCOPE_HAS_PEER_CERT_CHAIN
   const int timeout_ms = std::max(1000, std::min(input.timeout_ms, 60000));
   uvcpp::uvcpp_ssl_context ssl(uvcpp::tls_mode::CLIENT, uvcpp::tls_version::TLS_1_2);
   const std::string ca = find_ca_bundle(executable_dir(nullptr));
@@ -96,12 +95,6 @@ nlohmann::json run_tls_probe(const TlsProbeInput& input) {
   result["ok"] = true;
   result["live"]["certificateCount"] = chain.size();
   return result;
-#else
-  (void)input;
-  result["error"] = "live certificate fetch requires libuvcpp 1.8.2 or newer";
-  result["code"] = "unsupported";
-  return result;
-#endif
 }
 
 }  // namespace uvscope

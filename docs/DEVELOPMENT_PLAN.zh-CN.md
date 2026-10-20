@@ -1,7 +1,7 @@
 # uvscope 开发计划
 
 > 版本：0.3.0 发布收尾
-> 技术底座：libuvcpp 1.8.0 + Vue 3 + SQLite + libuvcpp WSDL/SOAP  
+> 技术底座：libuvcpp 1.8.2 + Vue 3 + SQLite + libuvcpp WSDL/SOAP  
 > 目标：做一款覆盖 Web 调试、协议探测与可编程反向代理的本地瑞士军刀，并保持单机、可审计、可离线部署。
 
 ---
@@ -38,9 +38,9 @@
   - 代理与主服务共享 libuvcpp 技术栈。
 - 开源运营能力：关于页、GitHub 链接、star 数、版本检查、更新说明、帮助页。
 - 跨平台构建基础：CMake、MinGW-w64、CPack、GitHub Actions 工作流、Windows Inno Setup 安装脚本。
-- libuvcpp 上游修复：TLS SNI（`patches/upstream/0001-tls-sni.patch`），否则现代虚拟主机 HTTPS 握手失败；
-  另有同步 I/O 超时（`0002`）与 `cmake --install` 完整性（`0003`）补丁，见
-  [`LIBUVCPP_UPSTREAM.zh-CN.md`](LIBUVCPP_UPSTREAM.zh-CN.md)。
+- libuvcpp 上游修复：TLS SNI、同步 I/O 超时、install 完整性与 SOCKS5 失败阶段；这些改动
+  已在 libuvcpp v1.8.1 / v1.8.2 发布，uvscope 现直接使用 1.8.2 发布版 SDK，不再携带本地补丁。
+  历史复现记录见 [`LIBUVCPP_UPSTREAM.zh-CN.md`](LIBUVCPP_UPSTREAM.zh-CN.md)。
 
 ### 1.2 0.1.0 明确不承诺的能力
 
@@ -291,14 +291,14 @@
 
 按顺序推进；每个切片单独提交、单独验证。除 S0 外不跨切片合并改动。
 
-### S0 — libuvcpp 上游补丁（已完成）
+### S0 — libuvcpp 上游补丁（已完成并退役）
 
-- 0001 TLS SNI、0002 同步 I/O 超时、0003 `cmake --install` 完整性；
-- 已提 PR：Antruly/libuvcpp #38 / #39 / #40；
-- 验收：补丁可应用到 `v1.8.0` 与 `master`，uvscope 用新 SDK 通过 self-check 与 smoke。
-- 后续：0.3 / 0.4 所需的 libuvcpp 改动已提交上游，跟踪
-  [libuvcpp#55](https://github.com/Antruly/libuvcpp/issues/55)；1.8.2 发布后切换到发布版 SDK
-  并删除本地补丁。
+- 0001 TLS SNI、0002 同步 I/O 超时、0003 `cmake --install` 完整性、0004 SOCKS5 失败阶段；
+- 已提 PR：Antruly/libuvcpp #38 / #39 / #40 / #42；
+- 2026-10-21：libuvcpp v1.8.2 发布后切换到发布版 SDK，删除 `patches/upstream/`，
+  CMake 在 SDK < 1.8.2 时直接失败；
+- 验收：`./scripts/build-libuvcpp.sh` 只克隆 `v1.8.2`，uvscope 用该 SDK 通过
+  `--self-check` 与 `scripts/smoke-test.sh`。
 
 ### S1 — HTTP 响应预览（前端，已实现）
 
@@ -452,7 +452,9 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 
 ### 构建事实
 
-- libuvcpp 1.8.0 的上游 TLS 客户端缺少 SNI。uvscope 携带补丁，CI 构建时应用到 libuvcpp 源码。
+- libuvcpp 1.8.2 是发布版 SDK，uvscope 不再携带本地补丁；低于 1.8.2 的 SDK 在 configure
+  阶段被拒绝。1.8.2 已包含 AF_UNSPEC、TLS 证书链、SOCKS5 会话统计、总 deadline、WebSocket
+  逐帧、HTTP 流式响应与 h2/h3 事件，是 0.4 协议深度切片的上游基础。
 - 0.3.0 发布构建默认关闭 libuvcpp 的 HTTP/2、QUIC、HTTP/3 选项，避免发布“能选但不可用”的协议路径。
 - 本地开发可以打开这些选项做实验，但不应把它们写进稳定版发行说明。
 - Windows 使用 MinGW-w64，不使用 MSVC 作为默认工具链。

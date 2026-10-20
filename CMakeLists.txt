@@ -25,7 +25,7 @@ option(UVSCOPE_PACKAGE_RUNTIME "Install the libuvcpp runtime beside uvscope" ON)
 # https://github.com/Antruly/libuvcpp/releases). No package manager or
 # additional networking library is required.
 # ---------------------------------------------------------------------------
-set(UVCPP_ROOT "" CACHE PATH "Path to an extracted libuvcpp 1.8.0 SDK")
+set(UVCPP_ROOT "" CACHE PATH "Path to an extracted libuvcpp 1.8.2 SDK")
 set(_uvcpp_hints "")
 if(UVCPP_ROOT)
   list(APPEND _uvcpp_hints "${UVCPP_ROOT}")
@@ -46,13 +46,44 @@ find_library(UVCPP_LIBRARY
   DOC "libuvcpp library")
 if(NOT UVCPP_INCLUDE_DIR OR NOT UVCPP_LIBRARY)
   message(FATAL_ERROR
-    "libuvcpp 1.8.0 was not found.\n"
-    "Download a release SDK and configure with -DUVCPP_ROOT=/path/to/libuvcpp-1.8.0-<platform>,\n"
+    "libuvcpp 1.8.2 was not found.\n"
+    "Download a release SDK and configure with -DUVCPP_ROOT=/path/to/libuvcpp-1.8.2-<platform>,\n"
     "or set the UVCPP_ROOT environment variable. See docs/BUILDING.md.")
 endif()
 get_filename_component(UVCPP_LIBRARY_DIR "${UVCPP_LIBRARY}" DIRECTORY)
 message(STATUS "libuvcpp headers: ${UVCPP_INCLUDE_DIR}")
 message(STATUS "libuvcpp library: ${UVCPP_LIBRARY}")
+
+# uvscope requires the 1.8.2 SDK: TLS peer chains, SOCKS5 session statistics,
+# AF_UNSPEC resolution and the blocking-I/O deadline are all part of it. Fail
+# here instead of silently building a runtime that is missing those paths.
+set(_uvcpp_version_header "${UVCPP_INCLUDE_DIR}/uvcpp/uvcpp_version.h")
+if(NOT EXISTS "${_uvcpp_version_header}")
+  message(FATAL_ERROR
+    "libuvcpp version header missing from ${UVCPP_INCLUDE_DIR}; use a 1.8.2 release SDK.")
+endif()
+file(STRINGS "${_uvcpp_version_header}" _uvcpp_version_major
+  REGEX "^#define UVCPP_VERSION_MAJOR ([0-9]+)$")
+file(STRINGS "${_uvcpp_version_header}" _uvcpp_version_minor
+  REGEX "^#define UVCPP_VERSION_MINOR ([0-9]+)$")
+file(STRINGS "${_uvcpp_version_header}" _uvcpp_version_patch
+  REGEX "^#define UVCPP_VERSION_PATCH ([0-9]+)$")
+string(REGEX REPLACE ".* ([0-9]+)$" "\\1" UVCPP_VERSION_MAJOR "${_uvcpp_version_major}")
+string(REGEX REPLACE ".* ([0-9]+)$" "\\1" UVCPP_VERSION_MINOR "${_uvcpp_version_minor}")
+string(REGEX REPLACE ".* ([0-9]+)$" "\\1" UVCPP_VERSION_PATCH "${_uvcpp_version_patch}")
+if(NOT UVCPP_VERSION_MAJOR MATCHES "^[0-9]+$"
+   OR NOT UVCPP_VERSION_MINOR MATCHES "^[0-9]+$"
+   OR NOT UVCPP_VERSION_PATCH MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "Could not parse the libuvcpp version from ${_uvcpp_version_header}.")
+endif()
+set(UVCPP_DETECTED_VERSION
+  "${UVCPP_VERSION_MAJOR}.${UVCPP_VERSION_MINOR}.${UVCPP_VERSION_PATCH}")
+message(STATUS "libuvcpp version: ${UVCPP_DETECTED_VERSION}")
+if(UVCPP_DETECTED_VERSION VERSION_LESS "1.8.2")
+  message(FATAL_ERROR
+    "libuvcpp ${UVCPP_DETECTED_VERSION} is too old; uvscope requires 1.8.2 or newer.\n"
+    "Rebuild the SDK with ./scripts/build-libuvcpp.sh or point UVCPP_ROOT at a 1.8.2 release.")
+endif()
 
 # libuvcpp.dll is required next to the executable on Windows. The archive's
 # import library and DLL live in predictable places; locate them for install.
@@ -100,43 +131,6 @@ find_library(UVSCOPE_LIBUV_LIBRARY
   DOC "libuv runtime library")
 if(NOT UVSCOPE_LIBUV_LIBRARY)
   message(FATAL_ERROR "libuv library was not found; install libuv development files")
-endif()
-
-# ---------------------------------------------------------------------------
-# libuvcpp 1.8.2 capabilities
-#
-# uvscope remains buildable against the pinned 1.8.0 SDK while the next
-# upstream release is prepared. These compile checks enable the TLS chain and
-# SOCKS5 session-stat paths automatically once a 1.8.2 SDK is used.
-# ---------------------------------------------------------------------------
-include(CheckCXXSourceCompiles)
-set(_uvscope_try_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
-set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-set(CMAKE_REQUIRED_INCLUDES "${UVCPP_INCLUDE_DIR}" ${UVCPP_LIBUV_INCLUDE_DIRS})
-check_cxx_source_compiles(
-  "#include <web/uvcpp_http_client.h>
-   int main() {
-     uvcpp::uvcpp_http_client client;
-     auto chain = client.peer_cert_chain_der();
-     (void)chain;
-     return 0;
-   }"
-  UVSCOPE_HAS_PEER_CERT_CHAIN)
-check_cxx_source_compiles(
-  "#include <net/uvcpp_socks5_server.h>
-   int main() {
-     uvcpp::uvcpp_socks5_server server;
-     server.set_session_end_callback(nullptr);
-     return 0;
-   }"
-  UVSCOPE_HAS_SOCKS5_SESSION_END)
-set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_uvscope_try_type}")
-unset(CMAKE_REQUIRED_INCLUDES)
-if(UVSCOPE_HAS_PEER_CERT_CHAIN)
-  message(STATUS "libuvcpp 1.8.2+: peer certificate chain available")
-endif()
-if(UVSCOPE_HAS_SOCKS5_SESSION_END)
-  message(STATUS "libuvcpp 1.8.2+: SOCKS5 session statistics available")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -199,12 +193,6 @@ target_compile_definitions(uvscope PRIVATE
   UVSCOPE_VERSION="${PROJECT_VERSION}"
   UVSCOPE_GITHUB_OWNER="${UVSCOPE_GITHUB_OWNER}"
   UVSCOPE_GITHUB_REPO="${UVSCOPE_GITHUB_REPO}")
-if(UVSCOPE_HAS_PEER_CERT_CHAIN)
-  target_compile_definitions(uvscope PRIVATE UVSCOPE_HAS_PEER_CERT_CHAIN=1)
-endif()
-if(UVSCOPE_HAS_SOCKS5_SESSION_END)
-  target_compile_definitions(uvscope PRIVATE UVSCOPE_HAS_SOCKS5_SESSION_END=1)
-endif()
 
 if(MSVC)
   target_compile_options(uvscope PRIVATE /W4 /permissive-)

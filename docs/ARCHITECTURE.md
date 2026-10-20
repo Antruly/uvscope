@@ -31,7 +31,7 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 │  Socks5Manager                                                      │
 │   └─ one libuv loop thread per running SOCKS5 server                │
 │                                                                     │
-│  libuvcpp 1.8.0 + patch (TLS SNI)                                   │
+│  libuvcpp 1.8.2                                                     │
 └───────────────────────────────┬─────────────────────────────────────┘
                                 │
                      HTTP(S) / TCP / UDP / TLS targets
@@ -177,10 +177,8 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
   `set_socks5_proxy()` (CONNECT); UDP uses `uvcpp_socks5_client` with UDP ASSOCIATE.
 - Target hostnames are passed to the proxy as `ATYP=DOMAIN`; no local resolution is performed.
 - There is no direct fallback: any configured proxy failure ends the request.
-- A small upstream patch (`patches/upstream/0004-socks5-proxy-stage.patch`) exposes whether the
-  last SOCKS5 failure happened while connecting to the proxy or after the proxy replied. Without
-  it, "connection refused" from the proxy and from the target are indistinguishable; the patch
-  makes `proxy_unreachable` and `target_rejected` reliable.
+- libuvcpp 1.8.2 exposes whether the last SOCKS5 failure happened while connecting to the proxy
+  or after the proxy replied, so `proxy_unreachable` and `target_rejected` are distinguishable.
 
 ## SOCKS5 server runtime
 
@@ -253,7 +251,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 
 ## Dependencies
 
-- **libuvcpp 1.8.0** — HTTP server/client, WebSocket, SQLite wrapper, WSDL/SOAP, SSL.
+- **libuvcpp 1.8.2** — HTTP server/client, WebSocket, SQLite wrapper, WSDL/SOAP, SSL.
 - **OpenSSL** — password hashing, certificate parsing and TLS (libuvcpp uses it for transport).
 - **SQLite** — local state.
 - **Vue 3 / Vite / Pinia / Vue Router** — SPA.

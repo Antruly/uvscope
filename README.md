@@ -22,7 +22,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 - **Local-first security** — SQLite, server-side sessions, PBKDF2 password hashing, RBAC and a
   first-run administrator flow. No telemetry and no cloud account.
 - **One network stack** — every outbound connection is driven by
-  [libuvcpp](https://github.com/Antruly/libuvcpp) 1.8.0. One event-driven C++ stack from socket
+  [libuvcpp](https://github.com/Antruly/libuvcpp) 1.8.2. One event-driven C++ stack from socket
   to UI.
 - **A UI that keeps context** — collapsible navigation, cached multi-tab workspaces and live
   telemetry built with Vue 3, Pinia and Vite.
@@ -100,10 +100,10 @@ cd uvscope
 ./build/uvscope --port 8787 --open
 ```
 
-`build.sh` clones libuvcpp v1.8.0 into `.deps/`, applies the upstream fixes from
-[`patches/upstream/`](patches/upstream/), builds the frontend, then builds uvscope.
+`build.sh` clones the libuvcpp v1.8.2 release into `.deps/`, builds the frontend, then builds
+uvscope. No local upstream patches are applied.
 
-If you already have a patched libuvcpp SDK:
+If you already have a libuvcpp 1.8.2 SDK:
 
 ```sh
 npm --prefix web ci && npm --prefix web run build

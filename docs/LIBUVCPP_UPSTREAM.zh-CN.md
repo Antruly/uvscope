@@ -1,48 +1,48 @@
 # libuvcpp 上游问题与 PR 方案
 
+> **状态（2026-10-21）**：libuvcpp `v1.8.2` 已发布，uvscope 已切换到发布版 SDK，
+> `patches/upstream/` 下的 0001–0004 已删除。1.8.1 收进了 SNI、POSIX 同步 I/O 超时与
+> install 完整性；1.8.2 收进了 SOCKS5 会话统计、TLS 证书链、AF_UNSPEC、总 deadline、
+> WebSocket 逐帧、HTTP 流式响应、h2 逐帧事件与 h3/QUIC 事件。本文保留为问题复现与验证的
+> 历史记录，不再描述当前构建方式。
+
 基线：`Antruly/libuvcpp` `v1.8.0`（提交 `13685c1`）。
 本文只记录**在当前仓库与机器上复现过**的问题、对应补丁和验证方式。没有复现证据的
 内容标为“待验证”，不写成结论。
 
-补丁位于 [`patches/upstream/`](../patches/upstream/)，按文件名顺序应用：
+历史上补丁位于 `patches/upstream/`，按文件名顺序应用（现已随 1.8.2 发布移除）：
 
-| 补丁 | 主题 | 风险 |
+| 补丁 | 主题 | 去向 |
 | --- | --- | --- |
-| `0001-tls-sni.patch` | TLS SNI；IP 字面量不发 SNI | 低 |
-| `0002-sync-io-timeouts.patch` | POSIX 同步 I/O 超时；超时/EOF 区分；失败状态码 | 中 |
-| `0003-install-complete.patch` | `cmake --install` 产出可用的 SDK | 低 |
-| `0004-socks5-proxy-stage.patch` | 区分"连代理失败"与代理应答后的失败（PR #42，已合并） | 低 |
+| `0001-tls-sni.patch` | TLS SNI；IP 字面量不发 SNI | 已包含于 v1.8.1 |
+| `0002-sync-io-timeouts.patch` | POSIX 同步 I/O 超时；超时/EOF 区分；失败状态码 | 已包含于 v1.8.1 |
+| `0003-install-complete.patch` | `cmake --install` 产出可用的 SDK | 已包含于 v1.8.1 |
+| `0004-socks5-proxy-stage.patch` | 区分"连代理失败"与代理应答后的失败（PR #42） | 已包含于 v1.8.2 |
 
-四个补丁按顺序可以干净应用到 `v1.8.0`（`13685c1`）。当前 `master`
-（`48c65bf`）已经包含全部四项等价改动：0001–0003（SNI、POSIX 同步超时、install
-完整性）在合并前已进入 master，0004 由 PR
-[#42](https://github.com/Antruly/libuvcpp/pull/42) 合并。因此这些补丁只用于
-`v1.8.0`；对 master 不应再应用（会冲突或重复）。v1.8.1 早于 0004 的合并，
-在下一个 libuvcpp 发布前，uvscope 仍以 “v1.8.0 + 四个补丁” 构建。补丁在 Linux x64
-上编译、安装、被一个 `find_package(uvcpp CONFIG)` 的消费者程序链接运行；用这套
-SDK 构建的 uvscope 也通过了 `--self-check` 与 `scripts/smoke-test.sh`。
+切换后 `scripts/build-libuvcpp.sh` 只克隆发布 tag，不再打补丁；CMake 在检测到低于
+1.8.2 的 SDK 时直接失败。验证方式仍是 `--self-check` 与 `scripts/smoke-test.sh`。
 
 ---
 
-## 待上游处理：1.8.2 批次
+## 已随 1.8.2 发布（原计划批次）
 
 2026-10-20 按 uvscope 0.3 / 0.4 的需求提交了上游 issue 批次，跟踪页：
-[#55](https://github.com/Antruly/libuvcpp/issues/55)。
+[#55](https://github.com/Antruly/libuvcpp/issues/55)。v1.8.2（2026-10-20 发布）
+已包含下列全部改动：
 
-建议进入 1.8.2：
+| Issue | 主题 | uvscope 影响 | 状态 |
+| --- | --- | --- | --- |
+| [#44](https://github.com/Antruly/libuvcpp/issues/44) | 域名解析 `AF_UNSPEC` / IPv6 | 所有出站；IPv6-only 目标 | 1.8.2 已发布 |
+| [#45](https://github.com/Antruly/libuvcpp/issues/45) | peer 证书链与校验错误 | 0.4 TLS 实时证书检查 | 1.8.2 已发布 |
+| [#46](https://github.com/Antruly/libuvcpp/issues/46) | SOCKS5 会话结束 / 字节数 | 0.3 服务端页面完整性 | 1.8.2 已发布 |
+| [#47](https://github.com/Antruly/libuvcpp/issues/47) | 客户端 br 解压 / 阈值 | 0.4 body 解码 | 1.8.2 已发布 |
+| [#48](https://github.com/Antruly/libuvcpp/issues/48) | 同步 `*_wait` 总 deadline | 0.3 `timeoutMs` 契约 | 1.8.2 已发布 |
+| [#49](https://github.com/Antruly/libuvcpp/issues/49) | UDP 域名解析 / IPv6 connect | 0.3 UDP 探测 | 1.8.2 已发布 |
+| [#54](https://github.com/Antruly/libuvcpp/issues/54) | ws client 的 SOCKS5 阶段 | 0.4 WS 代理错误分类 | 1.8.2 已发布 |
 
-| Issue | 主题 | uvscope 影响 |
-| --- | --- | --- |
-| [#44](https://github.com/Antruly/libuvcpp/issues/44) | 域名解析 `AF_UNSPEC` / IPv6 | 所有出站；IPv6-only 目标 |
-| [#45](https://github.com/Antruly/libuvcpp/issues/45) | peer 证书链与校验错误 | 0.4 TLS 实时证书检查 |
-| [#46](https://github.com/Antruly/libuvcpp/issues/46) | SOCKS5 会话结束 / 字节数 | 0.3 服务端页面完整性 |
-| [#47](https://github.com/Antruly/libuvcpp/issues/47) | 客户端 br 解压 / 阈值 | 0.4 body 解码 |
-| [#48](https://github.com/Antruly/libuvcpp/issues/48) | 同步 `*_wait` 总 deadline | 0.3 `timeoutMs` 契约 |
-| [#49](https://github.com/Antruly/libuvcpp/issues/49) | UDP 域名解析 / IPv6 connect | 0.3 UDP 探测 |
-| [#54](https://github.com/Antruly/libuvcpp/issues/54) | ws client 的 SOCKS5 阶段 | 0.4 WS 代理错误分类 |
-
-后续版本：#50 WebSocket 逐帧接口、#51 HTTP 客户端流式响应、#52 HTTP/2 帧事件、
-#53 HTTP/3 / QUIC 能力清单。1.8.2 发布后，uvscope 的 0001–0004 补丁应可全部删除。
+同批发布的还有 #50 WebSocket 逐帧接口、#51 HTTP 客户端流式响应、#52 HTTP/2 帧事件、
+#53 HTTP/3 / QUIC 能力清单；它们是 0.4 后续切片的输入，uvscope 尚未接入。
+0001–0004 补丁已随本次切换删除。
 
 ---
 

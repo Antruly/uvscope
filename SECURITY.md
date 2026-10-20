@@ -47,5 +47,5 @@ Treat access to uvscope as equivalent to code execution with the daemon user's n
 
 ## Dependency vulnerabilities
 
-uvscope pins libuvcpp 1.8.0 and carries a minimal SNI patch. If a dependency advisory applies,
+uvscope pins libuvcpp 1.8.2 (release SDK, no local patches). If a dependency advisory applies,
 open a normal issue for non-sensitive reports or use private reporting for exploit details.

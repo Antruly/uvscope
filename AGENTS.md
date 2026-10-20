@@ -35,7 +35,7 @@ dependent DLLs next to the executable.
 ## libuvcpp changes
 
 Put the patch under `patches/`, keep it minimal, and record the failure and verification. The
-existing SNI patch is the reference example.
+patches retired with libuvcpp 1.8.2 in `docs/LIBUVCPP_UPSTREAM.zh-CN.md` are the reference format.
 
 ## Release checklist
 

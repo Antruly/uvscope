@@ -10,32 +10,23 @@
 
 Node.js 20+ is required for the frontend.
 
-## The libuvcpp patches
+## The libuvcpp SDK
 
-uvscope builds against libuvcpp 1.8.0. The repository carries three minimal upstream fixes in
-[`patches/upstream/`](../patches/upstream/), applied in name order:
+uvscope requires the libuvcpp **1.8.2** release SDK. Earlier releases lack the fixes uvscope used
+to carry as local patches (TLS SNI, POSIX blocking-I/O timeouts, a complete `cmake --install`
+tree and the SOCKS5 proxy failure stage); those are all part of 1.8.1/1.8.2. Configure fails
+early when the detected SDK is older than 1.8.2.
 
-- `0001-tls-sni.patch` — set TLS SNI (and skip it for IP literals). Without it almost every modern
-  HTTPS virtual host fails or serves an unrelated default certificate.
-- `0002-sync-io-timeouts.patch` — honour `timeout_ms` in the blocking `*_wait` paths on POSIX,
-  distinguish a timeout from a clean EOF, and stop reporting `200 OK` on a failed synchronous
-  response.
-- `0003-install-complete.patch` — install the shared dependency libraries, set `$ORIGIN` /
-  `@loader_path` RPATH, and expose bundled libuv headers to `find_package(uvcpp)` consumers.
-
-See [`LIBUVCPP_UPSTREAM.zh-CN.md`](LIBUVCPP_UPSTREAM.zh-CN.md) for the reproduction, root cause and
-verification of each patch.
-
-Build a patched SDK automatically:
+Build the SDK from the release tag:
 
 ```sh
 ./scripts/build-libuvcpp.sh
 ```
 
-This clones `v1.8.0` into `.deps/libuvcpp-src`, applies every patch under `patches/upstream/`, builds
-a lean runtime (HTTP/1.1, WebSocket, webapp, SSL, SQLite, WSDL) and installs it to `.deps/libuvcpp`.
-The script fails closed if a patch neither applies nor is already present. If you have a cached
-source tree from 0.1.0, delete `.deps/libuvcpp-src` once and rerun.
+This clones `v1.8.2` into `.deps/libuvcpp-src`, builds a lean runtime (HTTP/1.1, WebSocket,
+webapp, SSL, SQLite, WSDL) and installs it to `.deps/libuvcpp`. A cached source tree on an older
+tag is moved to the requested release automatically. Set `LIBUVCPP_TAG=vX.Y.Z` to pin another
+release.
 
 To use an existing SDK:
 
@@ -100,7 +91,7 @@ The RPM equivalent is `openssl-libs`, `libuv`, `zlib`, `sqlite-libs`.
 
 ## Windows
 
-Build in an MSYS2 MINGW64 shell. Use the patched SDK from `scripts/build-libuvcpp.sh` (adapt paths
+Build in an MSYS2 MINGW64 shell. Use the SDK from `scripts/build-libuvcpp.sh` (adapt paths
 for MSYS2) and configure with the MinGW generator:
 
 ```sh
@@ -171,7 +162,7 @@ export LD_LIBRARY_PATH="$UVCPP_ROOT/lib:$LD_LIBRARY_PATH"
 The installed uvscope binary uses `$ORIGIN/../lib/uvscope`, so packages do not need this.
 
 **HTTPS handshake fails**  
-The SDK was built without the SNI patch, or the CA bundle is not reachable. Set
+The CA bundle is not reachable, or the target presents a certificate that does not validate. Set
 `UVSCOPE_CA_FILE=/path/to/cacert.pem` or `SSL_CERT_FILE`.
 
 **Frontend is a 503 page**  
