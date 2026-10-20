@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import Icon from '../components/Icon.vue'
+import { useRouter } from 'vue-router'
 import { del, errorMessage, get, post } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { useI18nStore } from '../stores/i18n'
@@ -40,6 +41,7 @@ interface Live {
 const auth = useAuthStore()
 const ui = useUiStore()
 const i18n = useI18nStore()
+const router = useRouter()
 const t = i18n.t
 
 const sessions = ref<TerminalSession[]>([])
@@ -51,6 +53,17 @@ const createOpen = ref(false)
 const creating = ref(false)
 const form = ref({ name: '', shell: '', cwd: '' })
 const wsStates = ref<Record<string, string>>({})
+const quickCommands = ref<Array<{
+  id: number
+  command: string
+  nameEn: string
+  nameZh: string
+  descriptionEn: string
+  descriptionZh: string
+  category: string
+}>>([])
+const hostPlatform = /Windows/i.test(navigator.userAgent) ? 'windows' : 'linux'
+const pendingInput = new Map<string, string>()
 
 const terminals = new Map<string, Terminal>()
 const fits = new Map<string, FitAddon>()
@@ -184,7 +197,6 @@ async function loadSessions() {
     }
     if (activeId.value && !known.has(activeId.value)) activeId.value = openIds.value[0] || ''
     if (!activeId.value && openIds.value.length) activeId.value = openIds.value[0]
-    saveOpen()
   } catch {
     // Polling is best-effort.
   } finally {
@@ -261,6 +273,11 @@ function connect(id: string) {
     setWsState(id, 'connected')
     fitTerminal(id)
     sendResize(id)
+    const pending = pendingInput.get(id)
+    if (pending) {
+      pendingInput.delete(id)
+      socket.send(JSON.stringify({ type: 'input', data: pending }))
+    }
     terminals.get(id)?.focus()
   }
   socket.onmessage = (event) => {
@@ -332,7 +349,10 @@ function disconnect(id: string, permanent = false) {
 
 function sendInput(id: string, data: string) {
   const socket = live.get(id)?.ws
-  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    pendingInput.set(id, (pendingInput.get(id) || '') + data)
+    return
+  }
   socket.send(JSON.stringify({ type: 'input', data }))
 }
 
@@ -463,6 +483,72 @@ function reconnect(id: string) {
   connect(id)
 }
 
+async function loadQuickCommands() {
+  try {
+    const response = await get<{ ok: boolean; commands: Array<Record<string, unknown>> }>(
+      `/api/terminal/commands?platform=${hostPlatform}`,
+    )
+    if (!response.ok) return
+    quickCommands.value = response.commands
+      .filter((item) => item.quick === true && typeof item.id === 'number')
+      .map((item) => ({
+        id: item.id as number,
+        command: String(item.command || ''),
+        nameEn: String(item.nameEn || item.command || ''),
+        nameZh: String(item.nameZh || item.nameEn || item.command || ''),
+        descriptionEn: String(item.descriptionEn || ''),
+        descriptionZh: String(item.descriptionZh || item.descriptionEn || ''),
+        category: String(item.category || ''),
+      }))
+      .slice(0, 18)
+  } catch {
+    quickCommands.value = []
+  }
+}
+
+function commandName(command: { nameEn: string; nameZh: string }) {
+  return i18n.locale === 'zh-CN' ? command.nameZh || command.nameEn : command.nameEn || command.nameZh
+}
+
+function runQuick(command: { command: string }) {
+  const id = activeId.value
+  const text = command.command.endsWith('\n') ? command.command : `${command.command}\n`
+  if (id) {
+    sendInput(id, text)
+    terminals.get(id)?.focus()
+    return
+  }
+  void navigator.clipboard.writeText(command.command).then(
+    () => ui.notify('success', t('terminal.commands.copied'), command.command),
+    () => ui.notify('warning', t('terminal.commands.copyFailed')),
+  )
+}
+
+function openCommandLibrary() {
+  void router.push('/commands')
+}
+
+function consumePendingCommand() {
+  let pending = ''
+  try {
+    pending = localStorage.getItem('uvscope-terminal-pending-command') || ''
+    if (pending) localStorage.removeItem('uvscope-terminal-pending-command')
+  } catch {
+    return
+  }
+  if (!pending) return
+  const id = activeId.value
+  if (!id) {
+    void navigator.clipboard.writeText(pending).then(
+      () => ui.notify('success', t('terminal.commands.copied'), pending),
+      () => ui.notify('warning', t('terminal.commands.copyFailed')),
+    )
+    return
+  }
+  sendInput(id, pending.endsWith('\n') ? pending : `${pending}\n`)
+  void nextTick(() => terminals.get(id)?.focus())
+}
+
 function openCreate() {
   form.value = { name: '', shell: '', cwd: '' }
   createOpen.value = true
@@ -488,15 +574,18 @@ async function restoreSessions() {
 }
 
 onMounted(() => {
-  void restoreSessions()
+  void restoreSessions().then(consumePendingCommand)
+  void loadQuickCommands()
   pollTimer = window.setInterval(() => void loadSessions(), 1800)
 })
 onActivated(() => {
+  void loadQuickCommands()
   void loadSessions().then(() => {
     for (const id of openIds.value) {
       if (!live.get(id)?.ws) connect(id)
     }
     if (activeId.value) void nextTick(() => fitTerminal(activeId.value))
+    consumePendingCommand()
   })
   if (!pollTimer) pollTimer = window.setInterval(() => void loadSessions(), 1800)
 })
@@ -608,6 +697,20 @@ watch(activeId, (id) => {
             {{ t('terminal.reconnect') }}
           </button>
           <span class="muted terminal-statusbar__hint">{{ t('terminal.openHint') }}</span>
+        </div>
+
+        <div class="terminal-quickbar">
+          <span class="eyebrow">{{ t('terminal.quick.title') }}</span>
+          <button
+            v-for="command in quickCommands"
+            :key="command.id"
+            class="quick-chip"
+            :title="i18n.locale === 'zh-CN' ? command.descriptionZh : command.descriptionEn"
+            @click="runQuick(command)"
+          >{{ commandName(command) }}</button>
+          <button class="link-button terminal-quickbar__library" @click="openCommandLibrary">
+            <Icon name="search" :size="13" />{{ t('terminal.commands.open') }}
+          </button>
         </div>
 
         <div class="terminal-panes">

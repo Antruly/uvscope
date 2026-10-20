@@ -51,6 +51,23 @@ struct ListenerConfig {
   std::string updated_at;
 };
 
+struct TerminalCommand {
+  std::int64_t id = 0;
+  std::string command;
+  std::string name_en;
+  std::string name_zh;
+  std::string description_en;
+  std::string description_zh;
+  std::string category;
+  std::string platform;  // linux | windows | both
+  std::string tags;
+  bool quick = false;
+  bool builtin = false;
+  std::int64_t owner_id = 0;
+  std::string created_at;
+  std::string updated_at;
+};
+
 struct Socks5ServerConfig {
   std::string id;
   std::string name;
@@ -79,6 +96,7 @@ struct ProxyRule {
 };
 
 nlohmann::json proxy_rules_json(const std::vector<ProxyRule>& rules);
+nlohmann::json terminal_command_json(const TerminalCommand& command);
 
 struct ProxyConfig {
   std::string id;
@@ -150,6 +168,17 @@ class Store {
   std::optional<ListenerConfig> listener(const std::string& id) const;
   bool save_listener(const ListenerConfig& listener, std::string* error);
   bool delete_listener(const std::string& id, std::string* error);
+
+  std::vector<TerminalCommand> terminal_commands(
+      std::int64_t owner_id, const std::string& platform,
+      const std::string& category, const std::string& search, bool all) const;
+  std::optional<TerminalCommand> terminal_command(std::int64_t id) const;
+  bool add_terminal_command(TerminalCommand& command, std::string* error);
+  bool update_terminal_command(const TerminalCommand& command, std::int64_t owner_id,
+                               bool admin, std::string* error);
+  bool delete_terminal_command(std::int64_t id, std::int64_t owner_id, bool admin,
+                               std::string* error);
+  bool restore_terminal_commands(std::string* error);
 
   std::vector<Socks5ServerConfig> socks5_servers() const;
   std::optional<Socks5ServerConfig> socks5_server(const std::string& id) const;

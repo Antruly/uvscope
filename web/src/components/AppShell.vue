@@ -39,6 +39,7 @@ const sections = computed(() => {
     { label: t('nav.listeners'), icon: 'server', to: '/listeners', module: 'tcpudp' },
     { label: t('nav.socks5'), icon: 'key', to: '/socks5', module: 'tcpudp' },
     { label: t('nav.terminal'), icon: 'terminal', to: '/terminal', module: 'terminal' },
+    { label: t('nav.commands'), icon: 'search', to: '/commands', module: 'terminal' },
     { label: t('nav.soap'), icon: 'braces', to: '/soap', module: 'soap' },
     { label: t('nav.tls'), icon: 'shield', to: '/tls', module: 'tls' },
   ].filter((item) => !item.module || auth.moduleEnabled(item.module as keyof typeof auth.modules))

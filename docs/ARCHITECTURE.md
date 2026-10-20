@@ -143,6 +143,17 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
   only metadata and local paths. Deleting an in-use certificate is refused.
 - The reverse proxy editor can pick a managed certificate and fills its local cert/key paths.
 
+## Command catalog
+
+- `terminal_commands` is seeded once on first migration from `src/command_seed.cpp` (about 100
+  Linux and 70 Windows entries across system, CPU/memory, disk, network, process, users, files,
+  packages, services, logs, security, containers and development).
+- Built-ins have `builtin=1, owner_id=0`; user snippets are per-creator. The API filters by
+  platform (`linux` / `windows` / `both`), category and a LIKE search over command/name/description/
+  tags.
+- `quick` marks entries for the terminal quick bar; admins can pin built-ins, users can pin their
+  own snippets. Deleted built-ins can be restored without duplicating existing entries.
+
 ## Virtual terminal runtime
 
 - `TerminalManager` owns one libuv loop thread for PTY masters; web handlers only enqueue

@@ -46,6 +46,12 @@ export const router = createRouter({
       meta: { title: 'Terminal', titleKey: 'nav.terminal', icon: 'terminal', componentName: 'TerminalView', module: 'terminal' },
     },
     {
+      path: '/commands',
+      name: 'commands',
+      component: () => import('./views/CommandLibraryView.vue'),
+      meta: { title: 'Command library', titleKey: 'nav.commands', icon: 'search', componentName: 'CommandLibraryView', module: 'terminal' },
+    },
+    {
       path: '/soap',
       name: 'soap',
       component: () => import('./views/SoapView.vue'),

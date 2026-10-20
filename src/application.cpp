@@ -197,6 +197,62 @@ void terminal_ws_tick(uv_timer_t* timer) {
   }
 }
 
+
+void apply_terminal_command(const nlohmann::json& body, TerminalCommand* command) {
+  if (body.contains("command")) command->command = string_field(body, "command");
+  const std::string generic_name = string_field(body, "name");
+  if (!generic_name.empty()) {
+    command->name_en = generic_name;
+    command->name_zh = generic_name;
+  }
+  if (body.contains("nameEn")) command->name_en = string_field(body, "nameEn");
+  if (body.contains("nameZh")) command->name_zh = string_field(body, "nameZh");
+  const std::string generic_desc = string_field(body, "description");
+  if (!generic_desc.empty()) {
+    command->description_en = generic_desc;
+    command->description_zh = generic_desc;
+  }
+  if (body.contains("descriptionEn")) {
+    command->description_en = string_field(body, "descriptionEn");
+  }
+  if (body.contains("descriptionZh")) {
+    command->description_zh = string_field(body, "descriptionZh");
+  }
+  if (body.contains("category")) command->category = string_field(body, "category");
+  if (body.contains("platform")) command->platform = lower(string_field(body, "platform"));
+  if (body.contains("tags")) command->tags = string_field(body, "tags");
+  if (body.contains("quick")) command->quick = bool_field(body, "quick", false);
+}
+
+bool validate_terminal_command(const TerminalCommand& command, std::string* error) {
+  if (command.command.empty() || command.command.size() > 2048) {
+    if (error) *error = "command must be 1-2048 characters";
+    return false;
+  }
+  if (command.name_en.empty() && command.name_zh.empty()) {
+    if (error) *error = "name is required";
+    return false;
+  }
+  if (command.name_en.size() > 120 || command.name_zh.size() > 120) {
+    if (error) *error = "name must be at most 120 characters";
+    return false;
+  }
+  if (command.description_en.size() > 2000 || command.description_zh.size() > 2000) {
+    if (error) *error = "description must be at most 2000 characters";
+    return false;
+  }
+  if (command.category.empty() || command.category.size() > 40) {
+    if (error) *error = "category must be 1-40 characters";
+    return false;
+  }
+  if (command.platform != "linux" && command.platform != "windows" &&
+      command.platform != "both") {
+    if (error) *error = "platform must be linux, windows or both";
+    return false;
+  }
+  return true;
+}
+
 std::vector<ProxyRule> proxy_rules_field(const nlohmann::json& body, std::string* error) {
   std::vector<ProxyRule> rules;
   if (!body.contains("rules")) return rules;
@@ -1745,6 +1801,112 @@ void Application::register_terminal_routes() {
              }
              send_json(resp, 200, terminal_->output(*id, after, limit));
            });
+
+
+  app_.get("/api/terminal/commands", [this](uvcpp::uvcpp_web_request& req,
+                                             uvcpp::uvcpp_web_response& resp,
+                                             uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+    if (!principal) return;
+    std::string platform;
+    if (const std::string* value = req.query("platform")) platform = lower(*value);
+    std::string category;
+    if (const std::string* value = req.query("category")) category = *value;
+    std::string search;
+    if (const std::string* value = req.query("q")) search = *value;
+    const bool all = principal->user.role == "admin" && req.query("all") != nullptr;
+    nlohmann::json commands = nlohmann::json::array();
+    for (const auto& command : store_.terminal_commands(principal->user.id, platform,
+                                                        category, search, all)) {
+      commands.push_back(terminal_command_json(command));
+    }
+    send_json(resp, 200, {{"ok", true}, {"commands", commands}});
+  });
+
+  app_.post("/api/terminal/commands", [this](uvcpp::uvcpp_web_request& req,
+                                              uvcpp::uvcpp_web_response& resp,
+                                              uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    TerminalCommand command;
+    command.owner_id = principal->user.id;
+    command.category = "custom";
+    command.platform = "both";
+    apply_terminal_command(*body, &command);
+    std::string error;
+    if (!validate_terminal_command(command, &error) ||
+        !store_.add_terminal_command(command, &error)) {
+      send_error(resp, 400, error, "command_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}, {"command", terminal_command_json(command)}});
+  });
+
+  app_.patch("/api/terminal/commands/:id",
+             [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                    uvcpp::uvcpp_web_next) {
+               const auto principal =
+                   auth_.require_module(req, resp, "terminal", "terminal");
+               if (!principal) return;
+               const std::string* id = req.param("id");
+               if (!id) {
+                 send_error(resp, 400, "command id is required", "bad_request");
+                 return;
+               }
+               auto existing = store_.terminal_command(std::strtoll(id->c_str(), nullptr, 10));
+               if (!existing) {
+                 send_error(resp, 404, "command not found", "not_found");
+                 return;
+               }
+               const auto body = parse_json(req, resp);
+               if (!body) return;
+               apply_terminal_command(*body, &*existing);
+               std::string error;
+               if (!validate_terminal_command(*existing, &error) ||
+                   !store_.update_terminal_command(*existing, principal->user.id,
+                                                   principal->user.role == "admin", &error)) {
+                 send_error(resp, 400, error, "command_failed");
+                 return;
+               }
+               send_json(resp, 200, {{"ok", true},
+                                     {"command", terminal_command_json(*existing)}});
+             });
+
+  app_.del("/api/terminal/commands/:id",
+           [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                  uvcpp::uvcpp_web_next) {
+             const auto principal = auth_.require_module(req, resp, "terminal", "terminal");
+             if (!principal) return;
+             const std::string* id = req.param("id");
+             if (!id) {
+               send_error(resp, 400, "command id is required", "bad_request");
+               return;
+             }
+             std::string error;
+             if (!store_.delete_terminal_command(std::strtoll(id->c_str(), nullptr, 10),
+                                                 principal->user.id,
+                                                 principal->user.role == "admin", &error)) {
+               send_error(resp, 400, error, "command_failed");
+               return;
+             }
+             send_json(resp, 200, {{"ok", true}});
+           });
+
+  app_.post("/api/terminal/commands/restore",
+            [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                   uvcpp::uvcpp_web_next) {
+              const auto principal =
+                  auth_.require_module(req, resp, "terminal", "admin.settings");
+              if (!principal) return;
+              std::string error;
+              if (!store_.restore_terminal_commands(&error)) {
+                send_error(resp, 500, error, "command_failed");
+                return;
+              }
+              send_json(resp, 200, {{"ok", true}});
+            });
 
   app_.websocket("/api/terminal/ws/:id",
                  [this](uvcpp::uvcpp_web_ws_request& ws) {

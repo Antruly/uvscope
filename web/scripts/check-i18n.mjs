@@ -79,7 +79,7 @@ const dynamicPrefixes = [
   'help.modules.', 'help.shortcut.', 'settings.modules.',
   'transport.session.state.', 'transport.session.event.',
   'listeners.state.', 'listeners.sessionState.', 'listeners.event.', 'listeners.sessionEvent.',
-  'socks5.state.', 'socks5.session.', 'socks5.event.', 'terminal.state.', 'terminal.ws.',
+  'socks5.state.', 'socks5.session.', 'socks5.event.', 'terminal.state.', 'terminal.ws.', 'terminal.category.',
 ]
 const unused = [...en].filter(
   (key) => !used.has(key) && !dynamicPrefixes.some((prefix) => key.startsWith(prefix)),

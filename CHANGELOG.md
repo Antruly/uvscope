@@ -12,6 +12,9 @@ All notable changes to uvscope are documented here. The format is based on
   multiple terminal tabs, session restore after refresh, automatic reconnect and admin
   all-users view. A WebSocket stream (`/api/terminal/ws/:id`) carries binary output and JSON
   input/resize frames; the PTY is SIGWINCH-nudged on attach so TUI apps repaint.
+- Virtual terminal quick bar and command library: a seeded SQLite catalog of ~100 Linux and ~70
+  Windows commands with categories, bilingual descriptions, search, copy/run actions, per-user
+  custom snippets, pin-to-quick-bar and admin restore/edit/delete.
 - Virtual terminal backend (Unix): persistent per-user PTY sessions with sequenced 256 KiB
   scrollback, input/resize/output APIs, owner/admin access and a 200 ms reaper. The `terminal`
   module is disabled by default and limited to admin/operator roles; sessions survive browser

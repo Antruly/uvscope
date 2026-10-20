@@ -28,7 +28,7 @@ const en: Record<string, string> = {
     'Bind a local TCP or UDP port, inspect accepted sessions or datagrams, and send replies from the workbench. Listener configs persist and can auto-start with the daemon.',
   'help.modules.terminal.title': 'Virtual terminal',
   'help.modules.terminal.text':
-    'A real server-side PTY per user. Sessions keep running when you refresh or switch menus; use Ctrl+Shift+C/V for copy and paste. Admins can list and close every user terminal. The module is off by default because it grants shell access.',
+    'A real server-side PTY per user. Sessions keep running when you refresh or switch menus; use Ctrl+Shift+C/V for copy and paste. The quick bar and command library provide searchable Linux/Windows snippets that can be pinned, edited or extended. Admins can list and close every user terminal. The module is off by default because it grants shell access.',
   'help.modules.socks5.title': 'SOCKS5 server',
   'help.modules.socks5.text':
     'Run a local SOCKS5 proxy with optional username/password authentication. Each server has its own loop; sessions show the command, target, peer and rejection reason. Byte counters are not available from the runtime, so none are shown.',
@@ -127,7 +127,7 @@ const zh: Record<string, string> = {
     '绑定本地 TCP 或 UDP 端口，检查接入会话或数据报，并在工作台内直接回复。监听配置会持久化，并随守护进程自动启动。',
   'help.modules.terminal.title': '虚拟终端',
   'help.modules.terminal.text':
-    '每个用户一个真实的服务端 PTY。刷新或切换菜单不会终止会话；复制粘贴使用 Ctrl+Shift+C/V。管理员可列出并关闭所有用户的终端。该模块默认关闭，因为开启等于授予 Shell 权限。',
+    '每个用户一个真实的服务端 PTY。刷新或切换菜单不会终止会话；复制粘贴使用 Ctrl+Shift+C/V。快捷栏与命令库提供可搜索的 Linux/Windows 命令，可固定、编辑或扩展。管理员可列出并关闭所有用户的终端。该模块默认关闭，因为开启等于授予 Shell 权限。',
   'help.modules.socks5.title': 'SOCKS5 服务端',
   'help.modules.socks5.text':
     '运行本地 SOCKS5 代理，可选用户名密码认证。每个服务端独占一条事件循环；会话显示命令、目标、来源与拒绝原因。运行时没有字节计数，因此界面不显示。',

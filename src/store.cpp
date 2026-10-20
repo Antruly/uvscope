@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "command_seed.h"
 #include "crypto.h"
 #include "util.h"
 
@@ -151,7 +152,7 @@ std::optional<uvcpp::uvcpp_db_table> Store::query(
 }
 
 bool Store::migrate(std::string* error) {
-  const std::array<const char*, 8> statements = {
+  const std::array<const char*, 10> statements = {
       R"(CREATE TABLE IF NOT EXISTS meta (
            key TEXT PRIMARY KEY,
            value TEXT NOT NULL
@@ -206,7 +207,25 @@ bool Store::migrate(std::string* error) {
          ))",
       R"(CREATE TABLE IF NOT EXISTS meta_schema (
            version INTEGER NOT NULL
-         ))"};
+         ))",
+      R"(CREATE TABLE IF NOT EXISTS terminal_commands (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           command TEXT NOT NULL,
+           name_en TEXT NOT NULL,
+           name_zh TEXT NOT NULL,
+           description_en TEXT NOT NULL DEFAULT '',
+           description_zh TEXT NOT NULL DEFAULT '',
+           category TEXT NOT NULL,
+           platform TEXT NOT NULL,
+           tags TEXT NOT NULL DEFAULT '',
+           quick INTEGER NOT NULL DEFAULT 0,
+           builtin INTEGER NOT NULL DEFAULT 0,
+           owner_id INTEGER NOT NULL DEFAULT 0,
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL
+         ))",
+      R"(CREATE INDEX IF NOT EXISTS idx_terminal_commands_platform
+           ON terminal_commands(platform, category))"};
   for (const char* sql : statements) {
     if (!exec(sql, error)) return false;
   }
@@ -225,6 +244,28 @@ bool Store::migrate(std::string* error) {
     if (!exec("ALTER TABLE proxies ADD COLUMN rules_json TEXT NOT NULL DEFAULT '[]'", error)) {
       return false;
     }
+  }
+  if (setting("terminal.commands.seeded", "0") != "1") {
+    exec("BEGIN", nullptr);
+    bool seeded = true;
+    for (const auto& seed : terminal_command_seeds()) {
+      if (!exec("INSERT INTO terminal_commands(command,name_en,name_zh,description_en,"
+                "description_zh,category,platform,tags,quick,builtin,owner_id,created_at,"
+                "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                {seed.command, seed.name_en, seed.name_zh, seed.description_en,
+                 seed.description_zh, seed.category, seed.platform, seed.tags,
+                 seed.quick ? 1 : 0, 1, 0, now_iso8601(), now_iso8601()},
+                error)) {
+        seeded = false;
+        break;
+      }
+    }
+    if (!seeded) {
+      exec("ROLLBACK", nullptr);
+      return false;
+    }
+    exec("COMMIT", nullptr);
+    set_setting("terminal.commands.seeded", "1", nullptr);
   }
   exec("INSERT INTO meta(key, value) VALUES('feature.defaults', ?) ON CONFLICT(key) DO NOTHING",
        {feature_defaults()}, nullptr);
@@ -829,6 +870,152 @@ bool Store::delete_listener(const std::string& id, std::string* error) {
   return set_setting("transport.listeners", out.dump(), error);
 }
 
+
+static TerminalCommand row_to_terminal_command(const uvcpp::uvcpp_db_row& row) {
+  TerminalCommand command;
+  command.id = row["id"].to_int64();
+  command.command = row["command"].to_text();
+  command.name_en = row["name_en"].to_text();
+  command.name_zh = row["name_zh"].to_text();
+  command.description_en = row["description_en"].to_text();
+  command.description_zh = row["description_zh"].to_text();
+  command.category = row["category"].to_text();
+  command.platform = row["platform"].to_text();
+  command.tags = row["tags"].to_text();
+  command.quick = row["quick"].to_bool();
+  command.builtin = row["builtin"].to_bool();
+  command.owner_id = row["owner_id"].to_int64();
+  command.created_at = row["created_at"].to_text();
+  command.updated_at = row["updated_at"].to_text();
+  return command;
+}
+
+std::vector<TerminalCommand> Store::terminal_commands(
+    std::int64_t owner_id, const std::string& platform,
+    const std::string& category, const std::string& search, bool all) const {
+  std::vector<TerminalCommand> out;
+  std::string sql =
+      "SELECT id,command,name_en,name_zh,description_en,description_zh,category,"
+      "platform,tags,quick,builtin,owner_id,created_at,updated_at "
+      "FROM terminal_commands WHERE ";
+  uvcpp::uvcpp_db_params params;
+  if (all) {
+    sql += "1=1";
+  } else {
+    sql += "(builtin = 1 OR owner_id = ?)";
+    params.add(owner_id);
+  }
+  if (!platform.empty()) {
+    sql += " AND (platform = ? OR platform = 'both')";
+    params.add(platform);
+  }
+  if (!category.empty()) {
+    sql += " AND category = ?";
+    params.add(category);
+  }
+  if (!search.empty()) {
+    sql +=
+        " AND (command LIKE ? OR name_en LIKE ? OR name_zh LIKE ? OR "
+        "description_en LIKE ? OR description_zh LIKE ? OR tags LIKE ?)";
+    const std::string like = "%" + search + "%";
+    for (int i = 0; i < 6; ++i) params.add(like);
+  }
+  sql += " ORDER BY builtin DESC, category, name_en LIMIT 500";
+  const auto table = query(sql, params);
+  if (!table) return out;
+  for (const auto& row : table->rows()) out.push_back(row_to_terminal_command(row));
+  return out;
+}
+
+std::optional<TerminalCommand> Store::terminal_command(std::int64_t id) const {
+  const auto table = query(
+      "SELECT id,command,name_en,name_zh,description_en,description_zh,category,"
+      "platform,tags,quick,builtin,owner_id,created_at,updated_at "
+      "FROM terminal_commands WHERE id = ?",
+      {id});
+  if (!table || table->empty()) return std::nullopt;
+  return row_to_terminal_command(table->rows().front());
+}
+
+bool Store::add_terminal_command(TerminalCommand& command, std::string* error) {
+  const std::string now = now_iso8601();
+  if (!exec("INSERT INTO terminal_commands(command,name_en,name_zh,description_en,"
+            "description_zh,category,platform,tags,quick,builtin,owner_id,created_at,"
+            "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            {command.command, command.name_en, command.name_zh, command.description_en,
+             command.description_zh, command.category, command.platform, command.tags,
+             command.quick ? 1 : 0, 0, command.owner_id, now, now},
+            error)) {
+    return false;
+  }
+  command.id = db_.last_insert_id().to_int64();
+  command.builtin = false;
+  command.created_at = now;
+  command.updated_at = now;
+  return true;
+}
+
+bool Store::update_terminal_command(const TerminalCommand& command,
+                                    std::int64_t owner_id, bool admin,
+                                    std::string* error) {
+  const auto table = query(
+      "SELECT builtin,owner_id FROM terminal_commands WHERE id = ?", {command.id});
+  if (!table || table->empty()) {
+    if (error) *error = "command not found";
+    return false;
+  }
+  const bool builtin = table->rows().front()["builtin"].to_bool();
+  const std::int64_t current_owner = table->rows().front()["owner_id"].to_int64();
+  if (!admin && (builtin || current_owner != owner_id)) {
+    if (error) *error = "you can only edit your own custom commands";
+    return false;
+  }
+  return exec("UPDATE terminal_commands SET command=?, name_en=?, name_zh=?, "
+              "description_en=?, description_zh=?, category=?, platform=?, tags=?, "
+              "quick=?, updated_at=? WHERE id=?",
+              {command.command, command.name_en, command.name_zh, command.description_en,
+               command.description_zh, command.category, command.platform, command.tags,
+               command.quick ? 1 : 0, now_iso8601(), command.id},
+              error);
+}
+
+bool Store::delete_terminal_command(std::int64_t id, std::int64_t owner_id,
+                                    bool admin, std::string* error) {
+  const auto table = query(
+      "SELECT builtin,owner_id FROM terminal_commands WHERE id = ?", {id});
+  if (!table || table->empty()) {
+    if (error) *error = "command not found";
+    return false;
+  }
+  const bool builtin = table->rows().front()["builtin"].to_bool();
+  const std::int64_t current_owner = table->rows().front()["owner_id"].to_int64();
+  if (!admin && (builtin || current_owner != owner_id)) {
+    if (error) *error = "you can only delete your own custom commands";
+    return false;
+  }
+  return exec("DELETE FROM terminal_commands WHERE id = ?", {id}, error);
+}
+
+bool Store::restore_terminal_commands(std::string* error) {
+  const std::string now = now_iso8601();
+  for (const auto& seed : terminal_command_seeds()) {
+    const auto existing = query(
+        "SELECT id FROM terminal_commands WHERE command = ? AND platform = ? LIMIT 1",
+        {seed.command, seed.platform});
+    if (existing && !existing->empty()) continue;
+    if (!exec("INSERT INTO terminal_commands(command,name_en,name_zh,description_en,"
+              "description_zh,category,platform,tags,quick,builtin,owner_id,created_at,"
+              "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              {seed.command, seed.name_en, seed.name_zh, seed.description_en,
+               seed.description_zh, seed.category, seed.platform, seed.tags,
+               seed.quick ? 1 : 0, 1, 0, now, now},
+              error)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::int64_t Store::user_count() const {
   const auto table = query("SELECT COUNT(*) AS c FROM users");
   return table && !table->empty() ? table->value("c").to_int64() : 0;
@@ -843,6 +1030,24 @@ User Store::row_to_user(const uvcpp::uvcpp_db_row& row) {
   user.created_at = row["created_at"].to_text();
   user.last_login = row.has("last_login") ? row["last_login"].to_text() : std::string();
   return user;
+}
+
+
+nlohmann::json terminal_command_json(const TerminalCommand& command) {
+  return {{"id", command.id},
+          {"command", command.command},
+          {"nameEn", command.name_en},
+          {"nameZh", command.name_zh},
+          {"descriptionEn", command.description_en},
+          {"descriptionZh", command.description_zh},
+          {"category", command.category},
+          {"platform", command.platform},
+          {"tags", command.tags},
+          {"quick", command.quick},
+          {"builtin", command.builtin},
+          {"ownerId", command.owner_id},
+          {"createdAt", command.created_at},
+          {"updatedAt", command.updated_at}};
 }
 
 nlohmann::json proxy_rules_json(const std::vector<ProxyRule>& rules) {

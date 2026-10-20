@@ -244,11 +244,22 @@ survive browser disconnects for the lifetime of the daemon.
 | POST | `/api/terminal/sessions/:id/resize` | `{cols, rows}` |
 | GET | `/api/terminal/sessions/:id/output?after=&limit=` | Ordered output chunks, base64 encoded |
 | WS | `/api/terminal/ws/:id` | Live stream: binary output frames, JSON control/input frames |
+| GET | `/api/terminal/commands?platform=&category=&q=&all=` | Command catalog (seeded + own custom) |
+| POST | `/api/terminal/commands` | Add a custom command `{name, command, category, platform, description, quick}` |
+| PATCH | `/api/terminal/commands/:id` | Edit a command or toggle `quick` |
+| DELETE | `/api/terminal/commands/:id` | Delete a command |
+| POST | `/api/terminal/commands/restore` | Re-insert deleted built-in commands (admin) |
 
 Session states are `starting`, `running`, `closing`, `exited` and `error`. Output chunks carry
 `seq` and base64 `data`; `nextSeq`, `firstSeq`, `truncated` and `missed` describe the bounded
 scrollback (256 KiB). `shell` must be an absolute executable; `cwd` must be an absolute directory.
 Limits: 4 running sessions per user, 32 total.
+
+The daemon seeds a command catalog into SQLite on first migration (Linux and Windows, grouped by
+system/CPU/disk/network/process/users/files/packages/services/logs/security/containers/development).
+Built-ins and custom snippets are searchable by command, name, description and tags. Custom
+commands belong to their creator; admins can edit/delete any entry and restore deleted built-ins.
+`quick: true` pins an entry to the terminal quick bar.
 
 The WebSocket upgrade checks the session cookie, module flag, role, terminal ownership and the
 `Origin` header. Server messages:

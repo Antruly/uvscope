@@ -624,6 +624,26 @@ if cert_meta:
 status, settings = call("PUT", "/api/settings", {"modules": {"terminal": True}})
 check(status == 200 and settings.get("ok") is True,
       f"could not enable the terminal module: {settings}")
+status, catalog = call("GET", "/api/terminal/commands?platform=linux")
+check(status == 200 and len(catalog.get("commands", [])) > 50,
+      f"terminal command catalog was not seeded: {len(catalog.get('commands', []))}")
+check(any(item.get("quick") for item in catalog.get("commands", [])),
+      "terminal command catalog has no quick entries")
+status, added_command = call("POST", "/api/terminal/commands", {
+    "name": "smoke command", "command": "echo smoke-command",
+    "category": "custom", "platform": "linux", "description": "smoke",
+    "quick": True,
+})
+check(status == 200 and added_command.get("ok") is True,
+      f"terminal command add failed: {added_command}")
+command_id = added_command.get("command", {}).get("id")
+if command_id:
+    status, edited = call("PATCH", f"/api/terminal/commands/{command_id}", {"quick": False})
+    check(status == 200 and edited.get("command", {}).get("quick") is False,
+          f"terminal command edit failed: {edited}")
+    status, removed = call("DELETE", f"/api/terminal/commands/{command_id}")
+    check(status == 200 and removed.get("ok") is True,
+          f"terminal command delete failed: {removed}")
 status, created = call("POST", "/api/terminal/sessions",
                        {"name": "smoke", "cols": 80, "rows": 24})
 check(status == 200 and created.get("session", {}).get("state") == "running",

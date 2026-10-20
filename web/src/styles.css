@@ -4365,6 +4365,143 @@ button.nav-item {
 }
 
 /* --------------------------------------------------------------------------
+   Command library
+   -------------------------------------------------------------------------- */
+.command-library-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.command-library-toolbar .command-search {
+  flex: 1 1 260px;
+  flex-direction: row;
+}
+.command-library-toolbar .select {
+  width: 180px;
+  flex: none;
+}
+.command-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+.command-search input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  font-size: 10px;
+}
+.command-search svg {
+  color: var(--faint);
+  flex: none;
+}
+.command-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.command-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.command-card:hover {
+  border-color: var(--border-strong);
+  background: var(--panel-hover);
+}
+.command-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.command-card__head strong {
+  font-size: 11px;
+  margin-right: auto;
+}
+.command-card__code {
+  display: block;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--accent);
+  font-size: 9.5px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.command-card__desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+.command-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
+}
+.command-card__actions .button {
+  font-size: 9px;
+  padding: 4px 7px;
+}
+.terminal-quickbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-soft) 45%, transparent);
+}
+.terminal-quickbar .eyebrow {
+  margin-right: 3px;
+}
+.quick-chip {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-size: 8.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.quick-chip:hover {
+  border-color: color-mix(in srgb, var(--accent) 44%, transparent);
+  color: var(--accent);
+}
+.terminal-quickbar__library {
+  margin-left: auto;
+  font-size: 8.5px;
+}
+@media (max-width: 900px) {
+  .command-list {
+    grid-template-columns: 1fr;
+  }
+  .command-library-toolbar {
+    flex-wrap: wrap;
+  }
+}
+
+/* --------------------------------------------------------------------------
    Terminal
    -------------------------------------------------------------------------- */
 .terminal-shell {
