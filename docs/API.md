@@ -68,6 +68,10 @@ Each module must be enabled in Settings and the role must have `debug`.
 `encoding` is `text` or `hex`. Probe results always include `ok`; protocol failures are reported in
 the result rather than as an API error.
 
+`/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). Builds with
+HTTP/2 enabled also return `goaway: {received, errorCode, lastStreamId}`; it is omitted on
+HTTP/3-only builds.
+
 ## Persistent TCP sessions
 
 A session is created with `POST /api/tcp/sessions` and stays open until `DELETE` or the peer closes

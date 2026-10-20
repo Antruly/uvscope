@@ -165,6 +165,8 @@ def check(condition, message):
 http = json.loads(os.environ["HTTP_RESULT"])
 check(http.get("ok") is True, f"HTTP probe failed: {http.get('error')}")
 check(http.get("status") == 200, f"HTTP probe status was {http.get('status')}")
+check(http.get("streamId") == 0, f"HTTP/1.1 streamId should be 0: {http.get('streamId')}")
+check(http.get("retryable") is False, f"HTTP/1.1 retryable should be false: {http.get('retryable')}")
 
 proxy = json.loads(os.environ["PROXY_RESULT"])
 check(proxy.get("ok") is True, f"proxy creation failed: {proxy.get('error')}")

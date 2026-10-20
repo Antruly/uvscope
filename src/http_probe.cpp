@@ -115,6 +115,25 @@ struct AsyncState {
   std::string alpn;
 };
 
+void add_protocol_metadata(nlohmann::json& result,
+                           const uvcpp::uvcpp_http_response& response,
+                           const uvcpp::uvcpp_http_client& client,
+                           bool include_goaway) {
+  // HTTP/1.1 leaves these at 0 / false; HTTP/2 and HTTP/3 populate them.
+  result["streamId"] = response.stream_id;
+  result["retryable"] = response.retryable;
+#if UVCPP_NGHTTP2_ENABLE
+  if (include_goaway) {
+    result["goaway"] = {{"received", client.peer_goaway_received()},
+                        {"errorCode", client.peer_goaway_error_code()},
+                        {"lastStreamId", client.peer_goaway_last_stream_id()}};
+  }
+#else
+  (void)client;
+  (void)include_goaway;
+#endif
+}
+
 nlohmann::json base_result(const HttpProbeInput& input, const ParsedUrl& url,
                            const std::chrono::steady_clock::time_point& start) {
   nlohmann::json result;
@@ -256,6 +275,7 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
       result["timing"] = {{"totalMs", connect_ms}, {"connectMs", connect_ms}};
       return result;
     }
+    add_protocol_metadata(result, response, client, protocol != "http3");
     result["timing"] = {{"connectMs", connect_ms},
                         {"totalMs", std::chrono::duration_cast<std::chrono::milliseconds>(
                                         std::chrono::steady_clock::now() - started)
@@ -331,6 +351,7 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
     }
     response = state.response;
     alpn = state.alpn;
+    add_protocol_metadata(result, response, client, protocol != "http3");
     const auto connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - connect_started)
                                 .count();

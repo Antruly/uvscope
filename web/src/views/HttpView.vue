@@ -516,6 +516,14 @@ onBeforeUnmount(() => {
                 <div><span>{{ t('http.timing.protocol') }}</span><strong>{{ result.httpVersion || '—' }}</strong></div>
                 <div><span>ALPN</span><strong class="mono">{{ result.alpn || '—' }}</strong></div>
                 <div><span>{{ t('http.timing.bodyBytes') }}</span><strong>{{ result.bodySize ?? 0 }}</strong></div>
+                <div><span>{{ t('http.timing.streamId') }}</span><strong class="mono">{{ result.streamId ?? 0 }}</strong></div>
+                <div><span>{{ t('http.timing.retryable') }}</span><strong>{{ result.retryable ? t('http.timing.yes') : t('http.timing.no') }}</strong></div>
+                <div v-if="result.goaway">
+                  <span>{{ t('http.timing.goaway') }}</span>
+                  <strong class="mono">
+                    {{ result.goaway.received ? `${result.goaway.errorCode} / ${result.goaway.lastStreamId}` : t('http.timing.no') }}
+                  </strong>
+                </div>
                 <div><span>{{ t('http.timing.sentAt') }}</span><strong class="mono">{{ result.startedAt }}</strong></div>
               </div>
             </div>

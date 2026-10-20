@@ -6,6 +6,11 @@ All notable changes to uvscope are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- HTTP probe results now expose the negotiated stream ID and `retryable`, plus GOAWAY state when
+  the build enables HTTP/2. The timing panel shows both; HTTP/1.1 reports 0 / false.
+
 ## [0.3.0] - 2026-10-20
 
 ### Added

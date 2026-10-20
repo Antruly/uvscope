@@ -130,6 +130,9 @@ export interface HttpResult {
   bodyText?: string
   bodyBase64?: string
   timing?: { connectMs?: number; totalMs?: number }
+  streamId?: number
+  retryable?: boolean
+  goaway?: { received: boolean; errorCode: number; lastStreamId: number }
   startedAt?: string
   finishedAt?: string
 }
