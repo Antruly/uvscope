@@ -756,6 +756,26 @@ bool TerminalManager::resize(const std::string& id, int cols, int rows,
   });
 }
 
+bool TerminalManager::redraw(const std::string& id, std::string* error) {
+  std::shared_ptr<Impl::Session> session;
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    session = impl_->session_locked(id);
+    if (!session) {
+      if (error) *error = "terminal not found";
+      return false;
+    }
+  }
+  return impl_->post([this, session] {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+#if !defined(_WIN32)
+    if (session->pid > 0 && session->state == "running") {
+      kill(session->pid, SIGWINCH);
+    }
+#endif
+  });
+}
+
 nlohmann::json TerminalManager::output(const std::string& id, std::uint64_t after,
                                        int limit) const {
   std::lock_guard<std::mutex> lock(impl_->state_mutex);

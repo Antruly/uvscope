@@ -22,6 +22,7 @@
 #include <web/uvcpp_http_client.h>
 #include <web/uvcpp_http_request.h>
 #include <web/uvcpp_http_response.h>
+#include <web/uvcpp_ws_connection.h>
 #include <webapp/uvcpp_web_static.h>
 
 #include "certificate.h"
@@ -132,6 +133,68 @@ Socks5Proxy proxy_field(const nlohmann::json& body) {
   proxy.username = string_field(value, "username");
   proxy.password = string_field(value, "password");
   return proxy;
+}
+
+struct TerminalWsAttachment {
+  TerminalManager* manager = nullptr;
+  std::string id;
+  uvcpp::uvcpp_ws_connection* conn = nullptr;
+  uv_timer_t* timer = nullptr;
+  std::uint64_t last_seq = 0;
+  bool exit_sent = false;
+  bool closing = false;
+};
+
+void terminal_ws_cleanup(uv_timer_t* timer) {
+  auto* att = static_cast<TerminalWsAttachment*>(timer->data);
+  if (att == nullptr) return;
+  if (att->closing) return;
+  att->closing = true;
+  att->conn = nullptr;
+  uv_timer_stop(timer);
+  uv_close(reinterpret_cast<uv_handle_t*>(timer), [](uv_handle_t* handle) {
+    delete static_cast<TerminalWsAttachment*>(handle->data);
+  });
+}
+
+void terminal_ws_tick(uv_timer_t* timer) {
+  auto* att = static_cast<TerminalWsAttachment*>(timer->data);
+  if (att == nullptr || att->conn == nullptr || att->manager == nullptr) {
+    uv_timer_stop(timer);
+    return;
+  }
+  const auto result = att->manager->output(att->id, att->last_seq, 200);
+  if (!result.value("ok", false)) {
+    att->conn->close(uvcpp::ws_close_code::INTERNAL_ERROR, "terminal not found");
+    return;
+  }
+  if (result.value("missed", false)) {
+    static const std::string reset = R"({"type":"reset"})";
+    att->conn->send_text(reset.data(), reset.size());
+    att->last_seq = 0;
+  }
+  std::size_t sent_bytes = 0;
+  for (const auto& chunk : result["chunks"]) {
+    const auto decoded = base64_decode(chunk.value("data", std::string()));
+    if (!decoded) continue;
+    if (att->conn->send_binary(decoded->data(), decoded->size()) != 0) break;
+    att->last_seq = chunk.value("seq", att->last_seq);
+    sent_bytes += decoded->size();
+    if (sent_bytes >= 128 * 1024) break;
+  }
+  const auto session = result["session"];
+  const std::string state = session.value("state", std::string());
+  const std::uint64_t next_seq = result.value("nextSeq", std::uint64_t{0});
+  if (!att->exit_sent && (state == "exited" || state == "error") &&
+      att->last_seq >= next_seq) {
+    nlohmann::json message = {{"type", "exit"},
+                              {"state", state},
+                              {"code", session.value("exitCode", -1)}};
+    const std::string text = message.dump();
+    att->conn->send_text(text.data(), text.size());
+    att->exit_sent = true;
+    uv_timer_stop(timer);
+  }
 }
 
 std::vector<ProxyRule> proxy_rules_field(const nlohmann::json& body, std::string* error) {
@@ -1680,6 +1743,128 @@ void Application::register_terminal_routes() {
              }
              send_json(resp, 200, terminal_->output(*id, after, limit));
            });
+
+  app_.websocket("/api/terminal/ws/:id",
+                 [this](uvcpp::uvcpp_web_ws_request& ws) {
+                   auto* conn = ws.connection();
+                   if (conn == nullptr) return;
+                   auto principal = auth_.current(ws.request());
+                   if (!principal || !role_can(principal->user.role, "terminal") ||
+                       !store_.module_enabled("terminal") || !terminal_ ||
+                       !terminal_->available()) {
+                     conn->close(uvcpp::ws_close_code::POLICY_VIOLATION,
+                                 "terminal is unavailable");
+                     return;
+                   }
+                   const std::string* id = ws.param("id");
+                   if (id == nullptr) {
+                     conn->close(uvcpp::ws_close_code::PROTOCOL_ERROR,
+                                 "terminal id is required");
+                     return;
+                   }
+                   if (principal->user.role != "admin") {
+                     std::int64_t owner = 0;
+                     if (!terminal_->owner_of(*id, &owner) || owner != principal->user.id) {
+                       conn->close(uvcpp::ws_close_code::POLICY_VIOLATION,
+                                   "terminal does not belong to this user");
+                       return;
+                     }
+                   } else if (!terminal_->session(*id).value("ok", false)) {
+                     conn->close(uvcpp::ws_close_code::POLICY_VIOLATION,
+                                 "terminal not found");
+                     return;
+                   }
+                   // WebSocket is not covered by the same-origin policy; reject
+                   // cross-site upgrades explicitly.
+                   const std::string origin = ws.header("origin");
+                   if (!origin.empty()) {
+                     const std::size_t scheme = origin.find("://");
+                     const std::string authority =
+                         scheme == std::string::npos ? origin : origin.substr(scheme + 3);
+                     if (authority != ws.header("host")) {
+                       conn->close(uvcpp::ws_close_code::POLICY_VIOLATION,
+                                   "origin mismatch");
+                       return;
+                     }
+                   }
+
+                   auto* attachment = new TerminalWsAttachment();
+                   attachment->manager = terminal_.get();
+                   attachment->id = *id;
+                   attachment->conn = conn;
+                   auto* timer = new uv_timer_t();
+                   timer->data = attachment;
+                   attachment->timer = timer;
+                   uvcpp::uvcpp_loop* loop = app_.loop();
+                   if (loop == nullptr ||
+                       uv_timer_init(reinterpret_cast<uv_loop_t*>(loop->get_handle()),
+                                     timer) != 0) {
+                     delete timer;
+                     delete attachment;
+                     conn->close(uvcpp::ws_close_code::INTERNAL_ERROR,
+                                 "cannot start terminal stream");
+                     return;
+                   }
+
+                   conn->on_text([attachment](const std::string& text) {
+                     if (attachment->conn == nullptr) return;
+                     auto message = nlohmann::json::parse(text, nullptr, false);
+                     if (!message.is_object()) {
+                       std::string error;
+                       attachment->manager->input(attachment->id, text, &error);
+                       return;
+                     }
+                     const std::string type = message.value("type", std::string());
+                     if (type == "input") {
+                       std::string data = message.value("data", std::string());
+                       const std::string encoding =
+                           lower(message.value("encoding", std::string("text")));
+                       if (encoding == "hex") {
+                         const auto decoded = hex_decode(data);
+                         if (!decoded) return;
+                         data = *decoded;
+                       } else if (encoding == "base64") {
+                         const auto decoded = base64_decode(data);
+                         if (!decoded) return;
+                         data = *decoded;
+                       }
+                       std::string error;
+                       if (!attachment->manager->input(attachment->id, data, &error)) {
+                         nlohmann::json reply = {{"type", "error"}, {"error", error}};
+                         const std::string payload = reply.dump();
+                         attachment->conn->send_text(payload.data(), payload.size());
+                       }
+                     } else if (type == "resize") {
+                       attachment->manager->resize(
+                           attachment->id, message.value("cols", 100),
+                           message.value("rows", 30), nullptr);
+                     } else if (type == "ping") {
+                       static const std::string pong = R"({"type":"pong"})";
+                       attachment->conn->send_text(pong.data(), pong.size());
+                     }
+                   });
+                   conn->on_binary([attachment](const std::uint8_t* data, std::size_t len) {
+                     if (attachment->conn == nullptr || data == nullptr) return;
+                     attachment->manager->input(
+                         attachment->id,
+                         std::string(reinterpret_cast<const char*>(data), len), nullptr);
+                   });
+                   auto cleanup = [attachment](uvcpp::ws_close_code, const std::string&) {
+                     if (attachment->timer != nullptr) {
+                       terminal_ws_cleanup(attachment->timer);
+                     }
+                   };
+                   conn->on_close(cleanup);
+                   conn->on_error([attachment](int, const std::string&) {
+                     if (attachment->timer != nullptr) {
+                       terminal_ws_cleanup(attachment->timer);
+                     }
+                   });
+                   uv_timer_start(timer, terminal_ws_tick, 25, 25);
+                   terminal_->redraw(*id, nullptr);
+                   const std::string hello = R"({"type":"attached","id":")" + *id + "\"}";
+                   conn->send_text(hello.data(), hello.size());
+                 });
 }
 
 // ---------------------------------------------------------------------------

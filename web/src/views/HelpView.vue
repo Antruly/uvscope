@@ -16,6 +16,7 @@ const modules = [
   { icon: 'layers', titleKey: 'help.modules.tcpudp.title', textKey: 'help.modules.tcpudp.text' },
   { icon: 'server', titleKey: 'help.modules.listeners.title', textKey: 'help.modules.listeners.text' },
   { icon: 'key', titleKey: 'help.modules.socks5.title', textKey: 'help.modules.socks5.text' },
+  { icon: 'terminal', titleKey: 'help.modules.terminal.title', textKey: 'help.modules.terminal.text' },
   { icon: 'eye', titleKey: 'help.modules.preview.title', textKey: 'help.modules.preview.text' },
   { icon: 'braces', titleKey: 'help.modules.soap.title', textKey: 'help.modules.soap.text' },
   { icon: 'shield', titleKey: 'help.modules.tls.title', textKey: 'help.modules.tls.text' },

@@ -226,11 +226,25 @@ survive browser disconnects for the lifetime of the daemon.
 | POST | `/api/terminal/sessions/:id/input` | `{data, encoding}` where encoding is text, hex or base64 |
 | POST | `/api/terminal/sessions/:id/resize` | `{cols, rows}` |
 | GET | `/api/terminal/sessions/:id/output?after=&limit=` | Ordered output chunks, base64 encoded |
+| WS | `/api/terminal/ws/:id` | Live stream: binary output frames, JSON control/input frames |
 
 Session states are `starting`, `running`, `closing`, `exited` and `error`. Output chunks carry
 `seq` and base64 `data`; `nextSeq`, `firstSeq`, `truncated` and `missed` describe the bounded
 scrollback (256 KiB). `shell` must be an absolute executable; `cwd` must be an absolute directory.
 Limits: 4 running sessions per user, 32 total.
+
+The WebSocket upgrade checks the session cookie, module flag, role, terminal ownership and the
+`Origin` header. Server messages:
+
+- binary frames: terminal output bytes (feed them to a UTF-8 terminal emulator);
+- `{"type":"attached","id":...}` on attach, followed by the retained scrollback;
+- `{"type":"reset"}` when the client fell behind the scrollback ring;
+- `{"type":"exit","state":"exited","code":0}` after the process exits;
+- `{"type":"error","error":"..."}` for input failures.
+
+Client messages: `{"type":"input","data":"...","encoding":"text|hex|base64"}`,
+`{"type":"resize","cols":100,"rows":30}` and `{"type":"ping"}`. The server sends SIGWINCH on
+attach so full-screen programs repaint.
 
 ## Administration
 

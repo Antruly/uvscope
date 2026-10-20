@@ -38,6 +38,9 @@ class TerminalManager {
   bool close(const std::string& id, std::string* error);
   bool input(const std::string& id, const std::string& bytes, std::string* error);
   bool resize(const std::string& id, int cols, int rows, std::string* error);
+  // Ask the shell process to redraw (SIGWINCH), used when a client reattaches
+  // so full-screen programs repaint without changing the PTY size.
+  bool redraw(const std::string& id, std::string* error);
   nlohmann::json output(const std::string& id, std::uint64_t after, int limit) const;
   void close_all();
 

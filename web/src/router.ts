@@ -40,6 +40,12 @@ export const router = createRouter({
       meta: { title: 'SOCKS5 Server', titleKey: 'nav.socks5', icon: 'key', componentName: 'Socks5View', module: 'tcpudp' },
     },
     {
+      path: '/terminal',
+      name: 'terminal',
+      component: () => import('./views/TerminalView.vue'),
+      meta: { title: 'Terminal', titleKey: 'nav.terminal', icon: 'terminal', componentName: 'TerminalView', module: 'terminal' },
+    },
+    {
       path: '/soap',
       name: 'soap',
       component: () => import('./views/SoapView.vue'),
