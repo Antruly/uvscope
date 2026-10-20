@@ -106,6 +106,8 @@ struct TransportManager::Impl {
     std::uint64_t next_seq = 1;
     std::size_t queued_writes = 0;
     std::size_t queued_bytes = 0;
+    Socks5Proxy proxy;
+    std::string proxy_error_class;
     std::deque<StoredEvent> events;
     std::size_t event_bytes = 0;
   };
@@ -247,7 +249,9 @@ struct TransportManager::Impl {
             {"receivedBytes", session.received_bytes},
             {"nextSeq", session.next_seq - 1},
             {"queuedWrites", session.queued_writes},
-            {"queuedBytes", session.queued_bytes}};
+            {"queuedBytes", session.queued_bytes},
+            {"proxy", socks5_proxy_json(session.proxy)},
+            {"proxyErrorClass", session.proxy_error_class}};
   }
 
   void append_event(std::deque<StoredEvent>& events, std::size_t& bytes,
@@ -388,7 +392,7 @@ struct TransportManager::Impl {
   }
 
   void start_connect(const std::string& id, const std::string& host, int port,
-                     int timeout_ms) {
+                     int timeout_ms, const Socks5Proxy& proxy) {
     std::shared_ptr<Session> session;
     {
       std::lock_guard<std::mutex> lock(state_mutex);
@@ -403,16 +407,40 @@ struct TransportManager::Impl {
 
     client->set_on_close([this, id]() { on_client_close(id); });
 
-    const int rc = client->connect(host.c_str(), port, [this, id](int status) {
+    if (proxy.enabled()) {
+      const int proxy_rc = client->set_socks5_proxy(
+          proxy.host, proxy.port, proxy.username, proxy.password);
+      if (proxy_rc != 0) {
+        {
+          std::lock_guard<std::mutex> lock(state_mutex);
+          auto session = session_locked(id);
+          if (session) session->proxy_error_class = "invalid_config";
+        }
+        mark_error(id, "invalid SOCKS5 proxy: " + uv_error_string(proxy_rc));
+        close_active(id, "invalid SOCKS5 proxy");
+        return;
+      }
+    }
+
+    const int rc = client->connect(host.c_str(), port, [this, id, client](int status) {
       if (status != 0) {
+        std::string message = "connect failed: " + uv_error_string(status);
+        std::string error_class;
+        if (client->socks5_enabled()) {
+          const std::string detail = client->socks5_last_error();
+          if (!detail.empty()) message = "connect failed: " + detail;
+          error_class = socks5_error_class(status, detail,
+                                           client->socks5_proxy_connect_failed());
+        }
         bool closing = false;
         {
           std::lock_guard<std::mutex> lock(state_mutex);
           auto session = session_locked(id);
           closing = session && session->state == "closing";
+          if (session && !closing) session->proxy_error_class = error_class;
         }
         if (!closing) {
-          mark_error(id, "connect failed: " + uv_error_string(status));
+          mark_error(id, message);
         }
         close_active(id, "connect failed");
         return;
@@ -430,7 +458,18 @@ struct TransportManager::Impl {
       }
     });
     if (rc != 0) {
-      mark_error(id, "connect could not start: " + uv_error_string(rc));
+      const std::string detail = client->socks5_enabled() ? client->socks5_last_error()
+                                                          : std::string();
+      {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        auto session = session_locked(id);
+        if (session && client->socks5_enabled()) {
+          session->proxy_error_class = socks5_error_class(
+              rc, detail, client->socks5_proxy_connect_failed());
+        }
+      }
+      mark_error(id, "connect could not start: " +
+                         (detail.empty() ? uv_error_string(rc) : detail));
       close_active(id, "connect could not start");
     }
     (void)timeout_ms;
@@ -1245,6 +1284,7 @@ const std::string& TransportManager::start_error() const {
 nlohmann::json TransportManager::create_tcp_session(const std::string& host,
                                                     int port,
                                                     int connect_timeout_ms,
+                                                    const Socks5Proxy& proxy,
                                                     std::string* error) {
   if (!available()) {
     if (error) *error = start_error().empty() ? "transport manager is not running" : start_error();
@@ -1254,6 +1294,11 @@ nlohmann::json TransportManager::create_tcp_session(const std::string& host,
     if (error) *error = "host and port are required";
     return {{"ok", false}, {"error", "host and port are required"}};
   }
+  std::string proxy_error;
+  if (!proxy.valid(&proxy_error)) {
+    if (error) *error = proxy_error;
+    return {{"ok", false}, {"error", proxy_error}, {"code", "invalid_proxy"}};
+  }
   const int timeout = std::max(500, std::min(connect_timeout_ms, 120000));
 
   auto session = std::make_shared<Impl::Session>();
@@ -1261,6 +1306,7 @@ nlohmann::json TransportManager::create_tcp_session(const std::string& host,
   session->host = host;
   session->port = port;
   session->connect_timeout_ms = timeout;
+  session->proxy = proxy;
   session->created_ms = now_ms();
   session->created_at = now_iso8601();
 
@@ -1291,8 +1337,8 @@ nlohmann::json TransportManager::create_tcp_session(const std::string& host,
   }
 
   const std::string id = session->id;
-  if (!impl_->post([this, id, host, port, timeout] {
-        impl_->start_connect(id, host, port, timeout);
+  if (!impl_->post([this, id, host, port, timeout, proxy] {
+        impl_->start_connect(id, host, port, timeout, proxy);
       })) {
     {
       std::lock_guard<std::mutex> lock(impl_->state_mutex);

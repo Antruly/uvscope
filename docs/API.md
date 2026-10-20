@@ -31,10 +31,10 @@ Each module must be enabled in Settings and the role must have `debug`.
 
 | Method | Path | Body / result |
 | --- | --- | --- |
-| POST | `/api/http/send` | `{url, method, protocol, headers[{name,value}], body, timeoutMs, insecure, compression}` → probe result |
-| POST | `/api/tcp/probe` | `{host, port, payload, encoding, connectTimeoutMs, readTimeoutMs}` |
-| POST | `/api/udp/probe` | `{host, port, payload, encoding, timeoutMs}` |
-| POST | `/api/tcp/sessions` | `{host, port, connectTimeoutMs}` → persistent TCP session |
+| POST | `/api/http/send` | `{url, method, protocol, headers[{name,value}], body, timeoutMs, insecure, compression, proxy}` → probe result |
+| POST | `/api/tcp/probe` | `{host, port, payload, encoding, connectTimeoutMs, readTimeoutMs, proxy}` |
+| POST | `/api/udp/probe` | `{host, port, payload, encoding, timeoutMs, proxy}` |
+| POST | `/api/tcp/sessions` | `{host, port, connectTimeoutMs, proxy}` → persistent TCP session |
 | GET | `/api/tcp/sessions` | List retained TCP sessions |
 | GET | `/api/tcp/sessions/:id` | One session snapshot |
 | GET | `/api/tcp/sessions/:id/events?after=&limit=` | Incremental session event log |
@@ -106,6 +106,26 @@ Limits: 64 live sessions, 1 MiB per payload, 1 MiB queued per session, 512 KiB /
 retained per session. Closed sessions remain visible until the retained list exceeds 128.
 
 ## TCP / UDP listeners
+
+### SOCKS5 outbound proxy
+
+`/api/http/send`, `/api/tcp/probe`, `/api/udp/probe` and `/api/tcp/sessions` accept an optional
+`proxy` object:
+
+```json
+{"proxy": {"host": "127.0.0.1", "port": 1080, "username": "", "password": ""}}
+```
+
+- HTTP and TCP use SOCKS5 CONNECT; UDP uses UDP ASSOCIATE. The target hostname is sent to the
+  proxy and never resolved locally.
+- A configured proxy is mandatory: a failed handshake fails the request and never falls back to a
+  direct connection.
+- `username` empty means no-auth. A password without a username is rejected with
+  `invalid_config` rather than silently downgrading to no-auth.
+- Failures include `proxy.errorClass`: `invalid_config`, `proxy_unreachable`, `auth_failed`,
+  `target_rejected`, `timeout`, `protocol_error` or `proxy_error`, plus `proxy.errorCode`
+  (libuv) and `proxy.error` (the proxy's own message).
+- HTTP/3 and SOCKS5 cannot be combined; that combination is rejected explicitly.
 
 `POST /api/socks5/servers` binds a local SOCKS5 port. Leaving `username` and `password` empty
 enables no-auth; providing both enables RFC 1929 username/password authentication. The password is

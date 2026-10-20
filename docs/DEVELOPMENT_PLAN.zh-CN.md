@@ -396,8 +396,10 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 
 ### S5 — SOCKS5 客户端与服务端
 
-状态：服务端已实现（`/api/socks5/servers`、独立服务端页、认证、会话与事件日志、
-smoke 覆盖 CONNECT 与错误密码）；客户端代理接入仍在进行中。
+状态：服务端与客户端均已实现。服务端提供 `/api/socks5/servers`、独立服务端页、认证、
+会话与事件日志；客户端让 HTTP / 持久 TCP / UDP 探测与会话都可选择 SOCKS5 代理，
+错误按 `proxy_unreachable` / `auth_failed` / `target_rejected` / `timeout` 等分类，
+配置代理后绝不回落到直连。
 
 边界：请求字段与校验、`/api/socks5/*`、运行时管理器、UI、Help/API/smoke。
 

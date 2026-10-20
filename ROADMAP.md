@@ -35,9 +35,9 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] TCP server listeners with session list, send and close
 - [x] UDP server listeners with datagram timeline and replies
 - [x] Listener persistence and optional auto-start
-- [ ] SOCKS5 client for HTTP/TCP/UDP with authentication and error classification
+- [x] SOCKS5 client for HTTP/TCP/UDP with authentication and error classification
 - [x] SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) with authentication and session logs
-- [ ] No silent direct fallback when a proxy is configured
+- [x] No silent direct fallback when a proxy is configured
 
 ## 0.4 — protocol depth
 

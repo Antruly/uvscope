@@ -122,6 +122,7 @@ set(UVSCOPE_SOURCES
   src/net_probe.cpp
   src/proxy_manager.cpp
   src/socks5_manager.cpp
+  src/socks5_proxy.cpp
   src/store.cpp
   src/transport_manager.cpp
   src/util.cpp)

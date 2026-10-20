@@ -10,6 +10,7 @@ TCP_LISTEN_PORT="${5:-18790}"
 UDP_LISTEN_PORT="${6:-18791}"
 SOCKS5_PORT="${7:-18792}"
 SOCKS5_AUTH_PORT="${8:-18793}"
+SOCKS5_UDP_TARGET_PORT="${9:-18794}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -55,6 +56,7 @@ import sys
 import threading
 
 port = int(sys.argv[1])
+udp_port = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 server = socket.socket()
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server.bind(("127.0.0.1", port))
@@ -75,11 +77,22 @@ def handle(conn):
         conn.close()
 
 
+if udp_port:
+    udp_echo = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_echo.bind(("127.0.0.1", udp_port))
+
+    def handle_udp():
+        while True:
+            data, peer = udp_echo.recvfrom(65536)
+            udp_echo.sendto(b"udp:" + data, peer)
+
+    threading.Thread(target=handle_udp, daemon=True).start()
+
 while True:
     connection, _ = server.accept()
     threading.Thread(target=handle, args=(connection,), daemon=True).start()
 PY
-python3 "${DATA_DIR}/echo.py" "${TCP_PORT}" >"${DATA_DIR}/echo.log" 2>&1 &
+python3 "${DATA_DIR}/echo.py" "${TCP_PORT}" "${SOCKS5_UDP_TARGET_PORT}" >"${DATA_DIR}/echo.log" 2>&1 &
 ECHO_PID=$!
 for _ in $(seq 1 80); do
   if grep -q LISTENING "${DATA_DIR}/echo.log" 2>/dev/null; then
@@ -186,7 +199,7 @@ PY
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
-TCP_PORT="${TCP_PORT}" python3 - <<'PY'
+SOCKS5_UDP_TARGET_PORT="${SOCKS5_UDP_TARGET_PORT}" TCP_PORT="${TCP_PORT}" python3 - <<'PY'
 import http.cookiejar
 import json
 import os
@@ -391,6 +404,57 @@ if socks5_server:
         capture_output=True)
     check(curl.returncode == 0,
           f"curl --socks5-hostname failed: {curl.stderr.decode(errors='replace')}")
+
+    # Outbound client paths must use the proxy and never fall back to direct.
+    proxy = {"host": "127.0.0.1", "port": int(os.environ["SOCKS5_PORT"])}
+    status, probed = call("POST", "/api/tcp/probe", {
+        "host": "127.0.0.1", "port": int(os.environ["TCP_PORT"]),
+        "payload": "client-socks5", "connectTimeoutMs": 3000,
+        "readTimeoutMs": 2000, "proxy": proxy,
+    })
+    check(status == 200 and probed.get("ok") is True,
+          f"TCP probe through SOCKS5 failed: {probed}")
+    if probed.get("ok"):
+        check(probed.get("received", {}).get("text") == "echo:client-socks5",
+              f"TCP probe through SOCKS5 got {probed.get('received')}")
+
+    status, http_probe = call("POST", "/api/http/send", {
+        "url": f"{base}/api/health", "method": "GET", "protocol": "http1",
+        "timeoutMs": 5000, "proxy": proxy,
+    })
+    check(status == 200 and http_probe.get("ok") is True and http_probe.get("status") == 200,
+          f"HTTP probe through SOCKS5 failed: {http_probe}")
+
+    status, udp_probe = call("POST", "/api/udp/probe", {
+        "host": "127.0.0.1", "port": int(os.environ["SOCKS5_UDP_TARGET_PORT"]),
+        "payload": "udp-client-socks5", "timeoutMs": 3000, "proxy": proxy,
+    })
+    check(status == 200 and udp_probe.get("ok") is True,
+          f"UDP probe through SOCKS5 failed: {udp_probe}")
+    if udp_probe.get("ok"):
+        check(udp_probe.get("received", {}).get("text") == "udp:udp-client-socks5",
+              f"UDP probe through SOCKS5 got {udp_probe.get('received')}")
+
+    status, unreachable = call("POST", "/api/tcp/probe", {
+        "host": "127.0.0.1", "port": int(os.environ["TCP_PORT"]),
+        "payload": "x", "connectTimeoutMs": 2000,
+        "proxy": {"host": "127.0.0.1", "port": int(os.environ["SOCKS5_PORT"]) + 50},
+    })
+    check(status == 200 and unreachable.get("ok") is False,
+          f"a dead proxy fell back to a direct connection: {unreachable}")
+    check(unreachable.get("proxy", {}).get("errorClass") == "proxy_unreachable",
+          f"dead proxy was not classified: {unreachable.get('proxy')}")
+
+    close_port = int(os.environ["SOCKS5_UDP_TARGET_PORT"]) + 50
+    status, refused = call("POST", "/api/tcp/probe", {
+        "host": "127.0.0.1", "port": close_port, "payload": "x",
+        "connectTimeoutMs": 3000, "proxy": proxy,
+    })
+    check(status == 200 and refused.get("ok") is False,
+          f"target refusal unexpectedly succeeded: {refused}")
+    check(refused.get("proxy", {}).get("errorClass") == "target_rejected",
+          f"target refusal was not classified: {refused.get('proxy')}")
+
     status, deleted = call("DELETE", f"/api/socks5/servers/{socks5_server}")
     check(status == 200 and deleted.get("ok") is True, f"SOCKS5 delete failed: {deleted}")
 
@@ -399,6 +463,16 @@ auth_server = create_socks5(int(os.environ["SOCKS5_AUTH_PORT"]),
                              "password": "smoke-pass"})
 if auth_server:
     check(wait_socks5(auth_server), "authenticated SOCKS5 server did not start")
+    status, rejected = call("POST", "/api/tcp/probe", {
+        "host": "127.0.0.1", "port": int(os.environ["TCP_PORT"]),
+        "payload": "x", "connectTimeoutMs": 3000,
+        "proxy": {"host": "127.0.0.1", "port": int(os.environ["SOCKS5_AUTH_PORT"]),
+                  "username": "smoke", "password": "wrong"},
+    })
+    check(status == 200 and rejected.get("ok") is False,
+          f"wrong proxy password unexpectedly connected: {rejected}")
+    check(rejected.get("proxy", {}).get("errorClass") == "auth_failed",
+          f"wrong proxy password was not classified: {rejected.get('proxy')}")
     try:
         socks5_connect(int(os.environ["SOCKS5_AUTH_PORT"]), "127.0.0.1",
                        int(os.environ["TCP_PORT"]), "smoke", "wrong")
@@ -421,5 +495,5 @@ if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5 CONNECT and authentication)")
+print("smoke test OK (listener TCP/UDP, SOCKS5 server, outbound TCP/HTTP/UDP proxy)")
 PY

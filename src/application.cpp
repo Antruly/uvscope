@@ -85,6 +85,17 @@ bool bool_field(const nlohmann::json& body, const char* key, bool fallback) {
   return body[key].get<bool>();
 }
 
+Socks5Proxy proxy_field(const nlohmann::json& body) {
+  Socks5Proxy proxy;
+  if (!body.contains("proxy") || !body["proxy"].is_object()) return proxy;
+  const auto& value = body["proxy"];
+  proxy.host = string_field(value, "host");
+  proxy.port = int_field(value, "port", 0);
+  proxy.username = string_field(value, "username");
+  proxy.password = string_field(value, "password");
+  return proxy;
+}
+
 std::vector<HttpHeaderInput> header_fields(const nlohmann::json& body) {
   std::vector<HttpHeaderInput> headers;
   if (!body.contains("headers") || !body["headers"].is_array()) return headers;
@@ -638,6 +649,7 @@ void Application::register_debug_routes() {
     input.protocol = string_field(*body, "protocol", "auto");
     input.insecure = bool_field(*body, "insecure", false);
     input.compression = bool_field(*body, "compression", false);
+    input.proxy = proxy_field(*body);
     input.max_body_bytes = 4 * 1024 * 1024;
     if (input.url.empty()) {
       send_error(resp, 400, "url is required", "bad_request");
@@ -675,6 +687,7 @@ void Application::register_debug_routes() {
     input.encoding = string_field(*body, "encoding", "text");
     input.connect_timeout_ms = int_field(*body, "connectTimeoutMs", 8000);
     input.read_timeout_ms = int_field(*body, "readTimeoutMs", 3000);
+    input.proxy = proxy_field(*body);
     if (input.host.empty() || input.port <= 0) {
       send_error(resp, 400, "host and port are required", "bad_request");
       return;
@@ -703,6 +716,7 @@ void Application::register_debug_routes() {
     input.payload = string_field(*body, "payload");
     input.encoding = string_field(*body, "encoding", "text");
     input.timeout_ms = int_field(*body, "timeoutMs", 3000);
+    input.proxy = proxy_field(*body);
     if (input.host.empty() || input.port <= 0) {
       send_error(resp, 400, "host and port are required", "bad_request");
       return;
@@ -737,7 +751,8 @@ void Application::register_debug_routes() {
       return;
     }
     std::string error;
-    const auto result = transport_->create_tcp_session(host, port, timeout_ms, &error);
+    const auto result = transport_->create_tcp_session(host, port, timeout_ms,
+                                                       proxy_field(*body), &error);
     if (!result.value("ok", false)) {
       send_error(resp, 400, error.empty() ? "could not create session" : error,
                  "session_failed");

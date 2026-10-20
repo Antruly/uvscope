@@ -5,6 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "socks5_proxy.h"
+
 namespace uvscope {
 
 struct HttpHeaderInput {
@@ -21,6 +23,7 @@ struct HttpProbeInput {
   std::string protocol = "auto";  // auto | http1 | http2 | http3
   bool insecure = false;
   bool compression = false;
+  Socks5Proxy proxy;
   std::size_t max_body_bytes = 4 * 1024 * 1024;
 };
 

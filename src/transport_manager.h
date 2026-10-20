@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "socks5_proxy.h"
 #include "store.h"
 
 namespace uvscope {
@@ -27,7 +28,9 @@ class TransportManager {
   // All methods are thread-safe. `create_tcp_session` returns immediately with
   // state "connecting"; callers poll `tcp_session_events` for progress.
   nlohmann::json create_tcp_session(const std::string& host, int port,
-                                    int connect_timeout_ms, std::string* error);
+                                    int connect_timeout_ms,
+                                    const Socks5Proxy& proxy,
+                                    std::string* error);
   nlohmann::json tcp_sessions() const;
   nlohmann::json tcp_session(const std::string& id) const;
   nlohmann::json tcp_session_events(const std::string& id, std::uint64_t after,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from '../components/Icon.vue'
+import Socks5ProxyFields from '../components/Socks5ProxyFields.vue'
 import { del, errorMessage, get, post } from '../api'
 import type { HistoryEntry, HttpHeader, HttpResult } from '../types'
 import { useUiStore } from '../stores/ui'
@@ -33,6 +34,7 @@ const bodyType = ref('application/json')
 const timeoutMs = ref(20000)
 const insecure = ref(false)
 const compression = ref(false)
+const proxy = ref({ enabled: false, host: '127.0.0.1', port: 1080, username: '', password: '' })
 const sending = ref(false)
 const result = ref<HttpResult | null>(null)
 const responseTab = ref<'body' | 'preview' | 'headers' | 'timing'>('body')
@@ -210,6 +212,14 @@ async function send() {
       timeoutMs: timeoutMs.value,
       insecure: insecure.value,
       compression: compression.value,
+      proxy: proxy.value.enabled
+        ? {
+            host: proxy.value.host.trim(),
+            port: proxy.value.port,
+            username: proxy.value.username,
+            password: proxy.value.password,
+          }
+        : undefined,
     }
     result.value = await post<HttpResult>('/api/http/send', payload)
     responseTab.value = 'body'
@@ -343,6 +353,7 @@ onBeforeUnmount(() => {
               <label class="switch-field"><span>{{ t('http.requestCompression') }}</span><button class="switch" :class="{ on: compression }" @click="compression = !compression"><i /></button></label>
             </div>
           </Transition>
+          <Socks5ProxyFields v-if="advancedOpen" v-model="proxy" />
 
           <div class="sub-tabs">
             <button :class="{ active: requestTab === 'headers' }" @click="requestTab = 'headers'">

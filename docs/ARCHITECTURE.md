@@ -131,6 +131,17 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
 - Stopping a listener closes the listener handle and all accepted clients; the server object is
   retired and deleted by the 500 ms sweep after its close callbacks have run.
 
+## SOCKS5 outbound proxy
+
+- `Socks5Proxy` is carried by HTTP/TCP/UDP probes and persistent sessions. HTTP/TCP use
+  `set_socks5_proxy()` (CONNECT); UDP uses `uvcpp_socks5_client` with UDP ASSOCIATE.
+- Target hostnames are passed to the proxy as `ATYP=DOMAIN`; no local resolution is performed.
+- There is no direct fallback: any configured proxy failure ends the request.
+- A small upstream patch (`patches/upstream/0004-socks5-proxy-stage.patch`) exposes whether the
+  last SOCKS5 failure happened while connecting to the proxy or after the proxy replied. Without
+  it, "connection refused" from the proxy and from the target are indistinguishable; the patch
+  makes `proxy_unreachable` and `target_rejected` reliable.
+
 ## SOCKS5 server runtime
 
 - Configs persist under the `socks5.servers` settings key. Passwords are stored as PBKDF2 hashes;

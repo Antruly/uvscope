@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import Icon from './Icon.vue'
+import Socks5ProxyFields from './Socks5ProxyFields.vue'
 import { del, errorMessage, get, post } from '../api'
 import { useI18nStore } from '../stores/i18n'
 import { useUiStore } from '../stores/ui'
@@ -22,6 +23,8 @@ interface TcpSessionInfo {
   nextSeq?: number
   queuedWrites?: number
   queuedBytes?: number
+  proxy?: { host: string; port: number; authenticated?: boolean } | null
+  proxyErrorClass?: string
 }
 
 interface TcpPayload {
@@ -50,6 +53,7 @@ const ui = useUiStore()
 const host = ref('127.0.0.1')
 const port = ref(9000)
 const connectTimeoutMs = ref(8000)
+const proxy = ref({ enabled: false, host: '127.0.0.1', port: 1080, username: '', password: '' })
 const creating = ref(false)
 const sessions = ref<TcpSessionInfo[]>([])
 const selectedId = ref('')
@@ -122,6 +126,14 @@ async function createSession() {
         host: host.value.trim(),
         port: port.value,
         connectTimeoutMs: connectTimeoutMs.value,
+        proxy: proxy.value.enabled
+          ? {
+              host: proxy.value.host.trim(),
+              port: proxy.value.port,
+              username: proxy.value.username,
+              password: proxy.value.password,
+            }
+          : undefined,
       },
     )
     if (!response.ok || !response.session) {
@@ -270,6 +282,7 @@ onBeforeUnmount(stopPolling)
           <input v-model.number="connectTimeoutMs" type="number" min="500" class="mono" />
         </label>
       </div>
+      <Socks5ProxyFields v-model="proxy" />
       <div class="form-actions">
         <span class="muted">{{ t('transport.session.hint') }}</span>
         <button class="button button--primary" :disabled="creating" @click="createSession">
@@ -344,9 +357,13 @@ onBeforeUnmount(stopPolling)
             <div><span>{{ t('transport.session.received') }}</span><strong>{{ formatBytes(selected.receivedBytes) }}</strong></div>
             <div><span>{{ t('transport.session.queued') }}</span><strong>{{ selected.queuedWrites ?? 0 }}</strong></div>
             <div><span>{{ t('transport.session.connectedAt') }}</span><strong class="mono">{{ formatTime(selected.connectedAt) }}</strong></div>
+            <div v-if="selected.proxy">
+              <span>{{ t('transport.session.proxy') }}</span>
+              <strong class="mono">{{ selected.proxy.host }}:{{ selected.proxy.port }}</strong>
+            </div>
           </div>
           <div v-if="selected.error" class="inline-alert inline-alert--danger">
-            <Icon name="alert" :size="16" />{{ selected.error }}
+            <Icon name="alert" :size="16" />{{ selected.error }}<template v-if="selected.proxyErrorClass"> · {{ selected.proxyErrorClass }}</template>
           </div>
 
           <div ref="eventLog" class="session-events">

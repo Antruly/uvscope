@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import TcpSessionPanel from '../components/TcpSessionPanel.vue'
+import Socks5ProxyFields from '../components/Socks5ProxyFields.vue'
 import { errorMessage, post } from '../api'
 import { useUiStore } from '../stores/ui'
 import { useI18nStore } from '../stores/i18n'
@@ -22,6 +23,17 @@ const udpTimeoutMs = ref(3000)
 const running = ref(false)
 const result = ref<Record<string, unknown> | null>(null)
 const error = ref('')
+const proxy = ref({ enabled: false, host: '127.0.0.1', port: 1080, username: '', password: '' })
+
+function proxyPayload() {
+  if (!proxy.value.enabled) return undefined
+  return {
+    host: proxy.value.host.trim(),
+    port: proxy.value.port,
+    username: proxy.value.username,
+    password: proxy.value.password,
+  }
+}
 
 const isTcp = computed(() => mode.value === 'tcp')
 const isSessionMode = computed(() => mode.value === 'session')
@@ -63,6 +75,7 @@ async function probe() {
           encoding: encoding.value,
           connectTimeoutMs: connectTimeoutMs.value,
           readTimeoutMs: readTimeoutMs.value,
+          proxy: proxyPayload(),
         }
       : {
           host: host.value.trim(),
@@ -70,6 +83,7 @@ async function probe() {
           payload: payload.value,
           encoding: encoding.value,
           timeoutMs: udpTimeoutMs.value,
+          proxy: proxyPayload(),
         }
     result.value = await post<Record<string, unknown>>(path, body)
     if (!result.value.ok) ui.notify('error', t('transport.notify.probeFailed'), String(result.value.error || ''))
@@ -135,6 +149,8 @@ function displayPayload(value: Record<string, unknown> | null) {
           <span>{{ t('transport.form.payload') }}</span>
           <textarea v-model="payload" class="code-input code-input--short" spellcheck="false" :placeholder="encoding === 'hex' ? '48 65 6c 6c 6f' : t('transport.form.payloadPlaceholder')" />
         </label>
+
+        <Socks5ProxyFields v-model="proxy" />
 
         <div class="form-actions">
           <span class="muted">{{ t('transport.form.meta', { count: payload.length }) }}</span>

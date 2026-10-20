@@ -25,6 +25,13 @@ All notable changes to uvscope are documented here. The format is based on
 - `/api/socks5/servers` routes for lifecycle, events and connection attempts.
 - Smoke coverage for SOCKS5 CONNECT through a local tunnel, `curl --socks5-hostname`, wrong-password
   rejection and an authenticated round-trip.
+- SOCKS5 outbound proxy for HTTP, TCP and UDP probes and persistent TCP sessions, with optional
+  RFC 1929 credentials. Proxy failures are classified (`proxy_unreachable`, `auth_failed`,
+  `target_rejected`, `timeout`, `protocol_error`) and never fall back to a direct connection.
+- Upstream patch `0004-socks5-proxy-stage` exposes whether a SOCKS5 failure happened while
+  connecting to the proxy or after it replied.
+- Smoke coverage for TCP, HTTP and UDP through a local SOCKS5 server plus error classification and
+  no-direct-fallback assertions.
 
 ## [0.2.0] - 2026-10-20
 

@@ -1,6 +1,16 @@
 const en: Record<string, string> = {
   'nav.socks5': 'SOCKS5 Server',
 
+  'socks5.proxy.enable': 'Route through a SOCKS5 proxy',
+  'socks5.proxy.hint':
+    'A configured proxy is mandatory: failures are reported and never fall back to a direct connection.',
+  'socks5.proxy.host': 'Proxy host',
+  'socks5.proxy.port': 'Proxy port',
+  'socks5.proxy.username': 'Username',
+  'socks5.proxy.password': 'Password',
+  'socks5.proxy.usernamePlaceholder': 'empty = no-auth',
+  'socks5.proxy.passwordPlaceholder': 'RFC 1929',
+
   'socks5.eyebrow': 'SOCKS5 runtime',
   'socks5.title': 'Give the proxy a front door.',
   'socks5.lead':
@@ -79,6 +89,15 @@ const en: Record<string, string> = {
 
 const zh: Record<string, string> = {
   'nav.socks5': 'SOCKS5 服务端',
+
+  'socks5.proxy.enable': '通过 SOCKS5 代理发送',
+  'socks5.proxy.hint': '配置代理后必须成功，失败会直接报错，绝不回落直连。',
+  'socks5.proxy.host': '代理地址',
+  'socks5.proxy.port': '代理端口',
+  'socks5.proxy.username': '用户名',
+  'socks5.proxy.password': '密码',
+  'socks5.proxy.usernamePlaceholder': '留空表示免认证',
+  'socks5.proxy.passwordPlaceholder': 'RFC 1929',
 
   'socks5.eyebrow': 'SOCKS5 运行时',
   'socks5.title': '给代理开一扇门。',

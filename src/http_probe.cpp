@@ -109,6 +109,8 @@ struct AsyncState {
   bool done = false;
   int error = 0;
   std::string error_text;
+  std::string proxy_detail;
+  bool proxy_connect_failed = false;
   uvcpp::uvcpp_http_response response;
   std::string alpn;
 };
@@ -197,6 +199,30 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
 #if UVCPP_ZLIB_ENABLE
   client.set_compression_enabled(input.compression);
 #endif
+  if (input.proxy.enabled()) {
+    std::string proxy_error;
+    if (!input.proxy.valid(&proxy_error)) {
+      result["proxy"] = socks5_failure_json(input.proxy, UV_EINVAL, proxy_error, false);
+      result["proxy"]["errorClass"] = "invalid_config";
+      result["error"] = proxy_error;
+      return result;
+    }
+    if (protocol == "http3") {
+      result["proxy"] = socks5_proxy_json(input.proxy);
+      result["proxy"]["errorClass"] = "unsupported";
+      result["error"] = "SOCKS5 proxies are not supported with HTTP/3";
+      return result;
+    }
+    const int proxy_rc = client.set_socks5_proxy(
+        input.proxy.host, input.proxy.port, input.proxy.username, input.proxy.password);
+    if (proxy_rc != 0) {
+      result["proxy"] = socks5_failure_json(input.proxy, proxy_rc, "", false);
+      result["proxy"]["errorClass"] = "invalid_config";
+      result["error"] = "invalid SOCKS5 proxy: " + uv_error(proxy_rc);
+      return result;
+    }
+    result["proxy"] = socks5_proxy_json(input.proxy);
+  }
 
   const int timeout_ms = std::max(1000, std::min(input.timeout_ms, 120000));
   int rc = 0;
@@ -212,7 +238,14 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
                                 connect_finished - connect_started)
                                 .count();
     if (rc != 0) {
-      result["error"] = "connect failed: " + uv_error(rc);
+      if (input.proxy.enabled()) {
+        const std::string detail = client.socks5_last_error();
+        result["proxy"] = socks5_failure_json(input.proxy, rc, detail,
+                                              client.socks5_proxy_connect_failed());
+        result["error"] = "connect failed: " + (detail.empty() ? uv_error(rc) : detail);
+      } else {
+        result["error"] = "connect failed: " + uv_error(rc);
+      }
       result["timing"] = {{"totalMs", connect_ms}, {"connectMs", connect_ms}};
       return result;
     }
@@ -238,7 +271,11 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
     const int connect_rc = client.connect(url.host.c_str(), url.port, [&](int status) {
       if (status != 0) {
         state.error = status;
-        state.error_text = "connect failed: " + uv_error(status);
+        state.proxy_detail = client.socks5_last_error();
+        state.proxy_connect_failed = client.socks5_proxy_connect_failed();
+        state.error_text = "connect failed: " +
+                           (state.proxy_detail.empty() ? uv_error(status)
+                                                       : state.proxy_detail);
         state.done = true;
         client.stop();
         return;
@@ -272,11 +309,19 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
     }
     if (!state.done) {
       client.stop();
+      if (input.proxy.enabled()) {
+        result["proxy"] = socks5_failure_json(input.proxy, UV_ETIMEDOUT, "timed out", false);
+      }
       result["error"] = "request timed out after " + std::to_string(timeout_ms) + " ms";
       result["timing"] = {{"connectMs", 0}, {"totalMs", timeout_ms}};
       return result;
     }
     if (state.error != 0) {
+      if (input.proxy.enabled()) {
+        result["proxy"] = socks5_failure_json(input.proxy, state.error,
+                                              state.proxy_detail,
+                                              state.proxy_connect_failed);
+      }
       result["error"] = state.error_text.empty() ? uv_error(state.error) : state.error_text;
       result["timing"] = {{"connectMs", 0},
                           {"totalMs", std::chrono::duration_cast<std::chrono::milliseconds>(

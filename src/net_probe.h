@@ -4,6 +4,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "socks5_proxy.h"
+
 namespace uvscope {
 
 struct TcpProbeInput {
@@ -14,6 +16,7 @@ struct TcpProbeInput {
   int connect_timeout_ms = 8000;
   int read_timeout_ms = 3000;
   bool close_after = true;
+  Socks5Proxy proxy;
 };
 
 struct UdpProbeInput {
@@ -22,6 +25,7 @@ struct UdpProbeInput {
   std::string payload;
   std::string encoding = "text";
   int timeout_ms = 3000;
+  Socks5Proxy proxy;
 };
 
 nlohmann::json run_tcp_probe(const TcpProbeInput& input);

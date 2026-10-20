@@ -5,6 +5,9 @@
 #include <thread>
 
 #include <uv.h>
+#include <handle/uvcpp_loop.h>
+#include <net/uvcpp_socks5_client.h>
+#include <net/uvcpp_socks5_udp.h>
 #include <net/uvcpp_tcp_client.h>
 #include <net/uvcpp_udp_client.h>
 #include <uvcpp/uvcpp_buf.h>
@@ -67,11 +70,36 @@ nlohmann::json run_tcp_probe(const TcpProbeInput& input) {
 
   const auto started = std::chrono::steady_clock::now();
   uvcpp::uvcpp_tcp_client client;
+  if (input.proxy.enabled()) {
+    std::string proxy_error;
+    if (!input.proxy.valid(&proxy_error)) {
+      result["proxy"] = socks5_failure_json(input.proxy, UV_EINVAL, proxy_error, false);
+      result["proxy"]["errorClass"] = "invalid_config";
+      result["error"] = proxy_error;
+      return result;
+    }
+    const int proxy_rc = client.set_socks5_proxy(
+        input.proxy.host, input.proxy.port, input.proxy.username, input.proxy.password);
+    if (proxy_rc != 0) {
+      result["proxy"] = socks5_failure_json(input.proxy, proxy_rc, "", false);
+      result["proxy"]["errorClass"] = "invalid_config";
+      result["error"] = "invalid SOCKS5 proxy: " + uv_error(proxy_rc);
+      return result;
+    }
+    result["proxy"] = socks5_proxy_json(input.proxy);
+  }
   const int connect_rc = client.connect_wait(input.host.c_str(), input.port,
                                               std::max(200, input.connect_timeout_ms));
   const auto connected = std::chrono::steady_clock::now();
   if (connect_rc != 0) {
-    result["error"] = "connect failed: " + uv_error(connect_rc);
+    if (input.proxy.enabled()) {
+      const std::string detail = client.socks5_last_error();
+      result["proxy"] = socks5_failure_json(input.proxy, connect_rc, detail,
+                                            client.socks5_proxy_connect_failed());
+      result["error"] = "connect failed: " + (detail.empty() ? uv_error(connect_rc) : detail);
+    } else {
+      result["error"] = "connect failed: " + uv_error(connect_rc);
+    }
     result["timing"] = {{"totalMs", std::chrono::duration_cast<std::chrono::milliseconds>(
                                       connected - started)
                                       .count()}};
@@ -133,6 +161,93 @@ nlohmann::json run_udp_probe(const UdpProbeInput& input) {
   }
 
   const auto started = std::chrono::steady_clock::now();
+  if (input.proxy.enabled()) {
+    std::string proxy_error;
+    if (!input.proxy.valid(&proxy_error)) {
+      result["proxy"] = socks5_failure_json(input.proxy, UV_EINVAL, proxy_error, false);
+      result["proxy"]["errorClass"] = "invalid_config";
+      result["error"] = proxy_error;
+      return result;
+    }
+    const int timeout = std::max(200, input.timeout_ms);
+    uvcpp::uvcpp_socks5_client client;
+    client.set_connect_timeout_ms(timeout);
+    if (!input.proxy.username.empty()) {
+      client.set_credentials(input.proxy.username, input.proxy.password);
+    }
+    int rc = client.connect_wait(input.proxy.host, input.proxy.port, timeout);
+    if (rc != 0) {
+      const std::string detail = client.last_error();
+      result["proxy"] = socks5_failure_json(input.proxy, rc, detail, true);
+      result["error"] = "proxy handshake failed: " +
+                        (detail.empty() ? uv_error(rc) : detail);
+      result["timing"] = {{"totalMs", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - started)
+                                        .count()}};
+      return result;
+    }
+    uvcpp::uvcpp_socks5_endpoint relay;
+    rc = client.udp_associate_wait(relay, timeout);
+    if (rc != 0) {
+      const std::string detail = client.last_error();
+      result["proxy"] = socks5_failure_json(input.proxy, rc, detail, false);
+      result["error"] = "UDP ASSOCIATE failed: " +
+                        (detail.empty() ? uv_error(rc) : detail);
+      result["timing"] = {{"totalMs", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - started)
+                                        .count()}};
+      client.close();
+      return result;
+    }
+    result["proxy"] = socks5_proxy_json(input.proxy);
+    result["proxy"]["relay"] = relay.host + ":" + std::to_string(relay.port);
+
+    auto* udp = client.udp();
+    if (udp == nullptr) {
+      result["error"] = "UDP relay is unavailable";
+      client.close();
+      return result;
+    }
+    std::string response;
+    std::string response_from;
+    bool received_any = false;
+    udp->recv_start([&](int, const uvcpp::uvcpp_socks5_endpoint& from,
+                        const void* data, std::size_t len) {
+      if (received_any) return;
+      received_any = true;
+      response_from = from.host + ":" + std::to_string(from.port);
+      response.assign(static_cast<const char*>(data), len);
+    });
+    rc = udp->send_to_wait(input.host, input.port, bytes.data(), bytes.size(), timeout);
+    if (rc != 0) {
+      const std::string detail = client.last_error();
+      result["error"] = "send failed: " + (detail.empty() ? uv_error(rc) : detail);
+      client.close();
+      return result;
+    }
+    result["sent"] = payload_json(bytes);
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeout);
+    while (!received_any && std::chrono::steady_clock::now() < deadline) {
+      client.get_loop()->run(UV_RUN_NOWAIT);
+      if (!received_any) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (received_any) {
+      result["received"] = payload_json(response);
+      result["receivedFrom"] = response_from;
+      result["ok"] = true;
+    } else {
+      result["received"] = {{"length", 0}, {"hex", ""}, {"encoding", "utf8"},
+                            {"text", ""}, {"base64", ""}};
+      result["ok"] = true;
+      result["readTimedOut"] = true;
+    }
+    result["timing"] = {{"totalMs", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - started)
+                                      .count()}};
+    client.close();
+    return result;
+  }
   uvcpp::uvcpp_udp_client client;
   int rc = client.bind("0.0.0.0", 0);
   if (rc != 0) {

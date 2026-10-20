@@ -11,8 +11,9 @@
 | `0001-tls-sni.patch` | TLS SNI；IP 字面量不发 SNI | 低 |
 | `0002-sync-io-timeouts.patch` | POSIX 同步 I/O 超时；超时/EOF 区分；失败状态码 | 中 |
 | `0003-install-complete.patch` | `cmake --install` 产出可用的 SDK | 低 |
+| `0004-socks5-proxy-stage.patch` | 区分"连代理失败"与代理应答后的失败 | 低 |
 
-三个补丁都已验证可以按顺序干净应用到 `v1.8.0`（`13685c1`）和当前 `master`
+四个补丁都已验证可以按顺序干净应用到 `v1.8.0`（`13685c1`）和当前 `master`
 （`d57dd47`），并在 Linux x64 上编译、安装、被一个
 `find_package(uvcpp CONFIG)` 的消费者程序链接运行；用这套 SDK 构建的 uvscope
 也通过了 `--self-check` 与 `scripts/smoke-test.sh`。
@@ -201,6 +202,40 @@ uv=1.48.0 web=1
 在 CI 里增加一个 `install + consumer` 冒烟格：安装到临时前缀，配置并运行一个
 只包含 `<uvcpp.h>`、`<net/uvcpp_tcp_client.h>` 的消费者。这样 install 规则和
 `package_release.py` 两条路径不会再次漂移。
+
+---
+
+## 3.1 SOCKS5 失败阶段不可区分（P1，已修复）
+
+### 现象
+
+配置 SOCKS5 代理后，`socks5_last_error()` 无法区分失败发生在哪一侧：
+
+- 代理端口没人监听：`uv_strerror(ECONNREFUSED)` → `connection refused`；
+- 代理已应答并拒绝 CONNECT：`reply_string(CONNECTION_REFUSED)` 也是
+  `connection refused`。
+
+`uvscope` 需要把错误分类为“代理不可达”和“目标拒绝”，两者不能混为一谈。
+
+### 补丁
+
+`0004-socks5-proxy-stage.patch`：
+
+- `uvcpp_tcp_client` 新增只读 `socks5_proxy_connect_failed()`；在异步/同步
+  的代理 TCP 连接、DNS 解析与连接超时路径置位，进入握手阶段前清零；
+- `uvcpp_http_client` 转发同名访问器。
+
+### 验证
+
+`uvscope` 的 `scripts/smoke-test.sh` 对三类失败做断言：
+
+```text
+代理端口关闭      -> proxy.proxy_unreachable
+代理应答后目标关闭 -> proxy.target_rejected
+错误密码          -> proxy.auth_failed
+```
+
+同一目标经代理成功时，TCP / HTTP / UDP 三条客户端路径都能拿到目标响应。
 
 ---
 

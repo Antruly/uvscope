@@ -95,9 +95,21 @@ export interface HttpHeader {
   value: string
 }
 
+export interface ProxyInfo {
+  enabled?: boolean
+  host?: string
+  port?: number
+  authenticated?: boolean
+  relay?: string
+  errorClass?: string
+  errorCode?: number
+  error?: string
+}
+
 export interface HttpResult {
   ok: boolean
   error?: string
+  proxy?: ProxyInfo | null
   request?: {
     method: string
     url: string

@@ -3391,6 +3391,27 @@ button.nav-item {
 .listener-sessions__head strong {
   font-size: 11px;
 }
+.proxy-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.proxy-fields__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.proxy-fields__head .muted {
+  font-size: 9px;
+  line-height: 1.5;
+}
+.proxy-fields__grid {
+  margin-top: 0;
+}
 .socks5-session-hint {
   display: block;
   margin-top: 9px;
