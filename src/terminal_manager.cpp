@@ -325,6 +325,7 @@ struct TerminalManager::Impl {
       if (nread > 0 && session != nullptr) {
         append_output(*session, buf->base, static_cast<std::size_t>(nread));
         std::fprintf(stderr, "uvscope: terminal output read %zd bytes\n", nread);
+        std::fflush(stderr);
       }
       delete[] buf->base;
     }
@@ -363,6 +364,7 @@ struct TerminalManager::Impl {
     }
     std::fprintf(stderr, "uvscope: terminal input wrote %zu/%zu bytes\n", offset,
                  data.size());
+    std::fflush(stderr);
   }
 
   static std::size_t drain_remaining_output(Session& session) {
@@ -650,6 +652,7 @@ struct TerminalManager::Impl {
     const std::size_t drained = drain_remaining_output(session);
     std::fprintf(stderr, "uvscope: terminal exit code=%lu drained=%zu bytes\n",
                  static_cast<unsigned long>(code), drained);
+    std::fflush(stderr);
     if (session.hpc != nullptr) {
       if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
       session.hpc = nullptr;
