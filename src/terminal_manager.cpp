@@ -28,6 +28,9 @@
 #include <uv.h>
 #include <handle/uvcpp_async.h>
 #include <handle/uvcpp_loop.h>
+#include <handle/uvcpp_pipe.h>
+#include <handle/uvcpp_poll.h>
+#include <handle/uvcpp_timer.h>
 #include <uvcpp/uvcpp_buf.h>
 
 #include "util.h"
@@ -199,7 +202,7 @@ struct TerminalManager::Impl {
     std::uint64_t next_seq = 1;
     std::deque<Chunk> chunks;
     std::size_t buffered_bytes = 0;
-    uv_poll_t* poll = nullptr;
+    uvcpp::uvcpp_poll* poll = nullptr;
     bool polling = false;
     std::string pending_input;
     std::mutex* state_mutex = nullptr;
@@ -207,7 +210,7 @@ struct TerminalManager::Impl {
     void* hpc = nullptr;
     void* process = nullptr;
     void* input_write = nullptr;
-    uv_pipe_t* out_pipe = nullptr;
+    uvcpp::uvcpp_pipe* out_pipe = nullptr;
     void* drain_handle = nullptr;
     std::int64_t hpc_close_at_ms = 0;
 #endif
@@ -231,7 +234,7 @@ struct TerminalManager::Impl {
 
   uvcpp::uvcpp_loop* loop = nullptr;
   uvcpp::uvcpp_async* wake = nullptr;
-  uv_timer_t* sweep_timer = nullptr;
+  uvcpp::uvcpp_timer* sweep_timer = nullptr;
 
   std::mutex command_mutex;
   bool accepting = true;
@@ -292,54 +295,66 @@ struct TerminalManager::Impl {
 
   static void close_poll(Session& session) {
     if (session.poll == nullptr) return;
-    uv_poll_t* handle = session.poll;
+    uvcpp::uvcpp_poll* handle = session.poll;
     session.poll = nullptr;
     session.polling = false;
-    uv_poll_stop(handle);
-    handle->data = nullptr;
-    uv_close(reinterpret_cast<uv_handle_t*>(handle),
-             [](uv_handle_t* raw) { delete reinterpret_cast<uv_poll_t*>(raw); });
+    handle->set_data(nullptr);
+    handle->stop();
+    handle->close([](uvcpp::uvcpp_handle* raw) {
+      delete static_cast<uvcpp::uvcpp_poll*>(raw);
+    });
   }
 
 
 #if defined(_WIN32)
-  static void close_pipe(uv_pipe_t*& pipe) {
+  static void close_pipe(uvcpp::uvcpp_pipe*& pipe) {
     if (pipe == nullptr) return;
-    uv_pipe_t* handle = pipe;
+    uvcpp::uvcpp_pipe* handle = pipe;
     pipe = nullptr;
-    handle->data = nullptr;
-    uv_read_stop(reinterpret_cast<uv_stream_t*>(handle));
-    uv_close(reinterpret_cast<uv_handle_t*>(handle),
-             [](uv_handle_t* raw) { delete reinterpret_cast<uv_pipe_t*>(raw); });
+    handle->set_data(nullptr);
+    handle->read_stop();
+    handle->close([](uvcpp::uvcpp_handle* raw) {
+      delete static_cast<uvcpp::uvcpp_pipe*>(raw);
+    });
   }
 
-  static void conpty_alloc(uv_handle_t*, size_t suggested, uv_buf_t* buf) {
+  static void conpty_alloc(uvcpp::uvcpp_handle*, size_t suggested, uv_buf_t* buf) {
     const size_t size = suggested > 0 ? suggested : 16384;
     buf->base = new char[size];
     buf->len = size;
   }
 
-  static void conpty_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
-    auto* session = static_cast<Session*>(stream->data);
+  static void conpty_read(uvcpp::uvcpp_stream* stream, ssize_t nread,
+                          const uv_buf_t* buf) {
+    auto* session = static_cast<Session*>(stream->get_data());
     if (buf != nullptr && buf->base != nullptr) {
       if (nread > 0 && session != nullptr) {
         append_output(*session, buf->base, static_cast<std::size_t>(nread));
-        std::fprintf(stderr, "uvscope: terminal output read %zd bytes\n", nread);
-        std::fflush(stderr);
       }
       delete[] buf->base;
     }
     if (nread < 0 && session != nullptr) {
-      close_pipe(session->out_pipe);
+      DWORD process_status = WAIT_FAILED;
+      DWORD exit_code = 0;
       if (session->process != nullptr) {
-        DWORD code = 0;
-        if (WaitForSingleObject(session->process, 0) != WAIT_OBJECT_0 &&
-            session->state == "running") {
-          std::lock_guard<std::mutex> lock(*session->state_mutex);
-          session->state = "error";
-          session->error = "console output closed";
-          session->exited_at = now_iso8601();
+        process_status = WaitForSingleObject(session->process, 0);
+        if (process_status == WAIT_OBJECT_0) {
+          GetExitCodeProcess(session->process, &exit_code);
         }
+      }
+      close_pipe(session->out_pipe);
+      std::lock_guard<std::mutex> lock(*session->state_mutex);
+      std::fprintf(stderr,
+                   "uvscope: terminal output closed (status=%ld processWait=%lu "
+                   "exitCode=%lu state=%s)\n",
+                   static_cast<long>(nread),
+                   static_cast<unsigned long>(process_status),
+                   static_cast<unsigned long>(exit_code), session->state.c_str());
+      std::fflush(stderr);
+      if (process_status != WAIT_OBJECT_0 && session->state == "running") {
+        session->state = "error";
+        session->error = "console output closed";
+        session->exited_at = now_iso8601();
       }
     }
   }
@@ -362,9 +377,6 @@ struct TerminalManager::Impl {
     if (offset < data.size()) {
       session.pending_input = data.substr(offset) + session.pending_input;
     }
-    std::fprintf(stderr, "uvscope: terminal input wrote %zu/%zu bytes\n", offset,
-                 data.size());
-    std::fflush(stderr);
   }
 
   static std::size_t drain_remaining_output(Session& session) {
@@ -525,12 +537,12 @@ struct TerminalManager::Impl {
       return;
     }
 
-    auto* out_pipe = new uv_pipe_t();
-    out_pipe->data = session.get();
-    if (uv_pipe_init(reinterpret_cast<uv_loop_t*>(current_loop->get_handle()),
-                     out_pipe, 0) != 0 ||
-        uv_pipe_open(out_pipe, out_fd) != 0) {
-      delete out_pipe;
+    auto* out_pipe = new uvcpp::uvcpp_pipe(current_loop, 0);
+    out_pipe->set_data(session.get());
+    if (out_pipe->open(out_fd) != 0) {
+      out_pipe->close([](uvcpp::uvcpp_handle* raw) {
+        delete static_cast<uvcpp::uvcpp_pipe*>(raw);
+      });
       _close(out_fd);
       if (drain_handle) CloseHandle(drain_handle);
       CloseHandle(input_write);
@@ -540,7 +552,7 @@ struct TerminalManager::Impl {
       fail("cannot open the ConPTY output pipe");
       return;
     }
-    uv_read_start(reinterpret_cast<uv_stream_t*>(out_pipe), conpty_alloc, conpty_read);
+    out_pipe->read_start(conpty_alloc, conpty_read);
 
     session->hpc = hpc;
     session->process = process_info.hProcess;
@@ -597,13 +609,13 @@ struct TerminalManager::Impl {
     }
     if (session.poll == nullptr) return;
     if (session.pending_input.empty()) {
-      uv_poll_start(session.poll, UV_READABLE, on_poll);
+      session.poll->start(UV_READABLE, on_poll);
     }
 #endif
   }
 
-  static void on_poll(uv_poll_t* handle, int status, int events) {
-    auto* session = static_cast<Session*>(handle->data);
+  static void on_poll(uvcpp::uvcpp_poll* handle, int status, int events) {
+    auto* session = static_cast<Session*>(handle->get_data());
     if (session == nullptr) return;
     if (status < 0) {
       close_poll(*session);
@@ -615,16 +627,12 @@ struct TerminalManager::Impl {
 
   static void start_poll(Session& session) {
     if (session.fd < 0 || session.poll != nullptr || current_loop == nullptr) return;
-    auto* handle = new uv_poll_t();
-    handle->data = &session;
-    if (uv_poll_init(reinterpret_cast<uv_loop_t*>(current_loop->get_handle()), handle,
-                     session.fd) != 0) {
-      delete handle;
-      return;
-    }
+    auto* handle = new uvcpp::uvcpp_poll(
+        current_loop, static_cast<uv_os_sock_t>(session.fd));
+    handle->set_data(&session);
     session.poll = handle;
     session.polling = true;
-    uv_poll_start(handle, UV_READABLE, on_poll);
+    if (handle->start(UV_READABLE, on_poll) != 0) close_poll(session);
   }
 
   static thread_local uvcpp::uvcpp_loop* current_loop;
@@ -834,12 +842,18 @@ struct TerminalManager::Impl {
     }
     wake = created_wake;
 
-    auto* timer = new uv_timer_t();
-    timer->data = this;
-    if (uv_timer_init(reinterpret_cast<uv_loop_t*>(loop->get_handle()), timer) != 0) {
-      delete timer;
+    auto* timer = new uvcpp::uvcpp_timer(loop);
+    timer->set_data(this);
+    if (timer->start([](uvcpp::uvcpp_timer* handle) {
+          static_cast<Impl*>(handle->get_data())->sweep();
+        }, kSweepIntervalMs, kSweepIntervalMs) != 0) {
+      timer->close([](uvcpp::uvcpp_handle* raw) {
+        delete static_cast<uvcpp::uvcpp_timer*>(raw);
+      });
       delete wake;
       wake = nullptr;
+      // Let the deferred close callbacks run before the loop is torn down.
+      loop->run(UV_RUN_NOWAIT);
       loop->loop_close();
       delete loop;
       loop = nullptr;
@@ -851,9 +865,6 @@ struct TerminalManager::Impl {
       return;
     }
     sweep_timer = timer;
-    uv_timer_start(timer, [](uv_timer_t* handle) {
-      static_cast<Impl*>(handle->data)->sweep();
-    }, kSweepIntervalMs, kSweepIntervalMs);
 
     available = true;
     {
@@ -883,14 +894,18 @@ struct TerminalManager::Impl {
       }
     }
     if (sweep_timer != nullptr) {
-      uv_close(reinterpret_cast<uv_handle_t*>(sweep_timer),
-               [](uv_handle_t* handle) { delete reinterpret_cast<uv_timer_t*>(handle); });
+      sweep_timer->close([](uvcpp::uvcpp_handle* raw) {
+        delete static_cast<uvcpp::uvcpp_timer*>(raw);
+      });
       sweep_timer = nullptr;
     }
     if (wake != nullptr) {
       delete wake;
       wake = nullptr;
     }
+    // uv_close is asynchronous: give the loop one pass so the handles queued
+    // above (timer, wake, pipes and polls) are freed before loop_close().
+    loop->run(UV_RUN_NOWAIT);
     loop->loop_close();
     delete loop;
     loop = nullptr;
@@ -1164,7 +1179,7 @@ bool TerminalManager::input(const std::string& id, const std::string& bytes,
 #if defined(_WIN32)
     Impl::pump_input(*session);
 #else
-    uv_poll_start(session->poll, UV_READABLE | UV_WRITABLE, Impl::on_poll);
+    session->poll->start(UV_READABLE | UV_WRITABLE, Impl::on_poll);
 #endif
   });
 }
