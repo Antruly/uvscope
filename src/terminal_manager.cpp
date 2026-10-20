@@ -208,6 +208,7 @@ struct TerminalManager::Impl {
     uv_pipe_t* out_pipe = nullptr;
     uv_pipe_t* in_pipe = nullptr;
     bool write_in_flight = false;
+    std::int64_t hpc_close_at_ms = 0;
 #endif
   };
 
@@ -625,10 +626,13 @@ struct TerminalManager::Impl {
     CloseHandle(session.process);
     session.process = nullptr;
     close_pipe(session.in_pipe);
-    if (session.hpc != nullptr) {
-      if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
-      session.hpc = nullptr;
-    }
+    // Let the pipe reader drain the final output before closing the
+    // pseudoconsole; ClosePseudoConsole also closes the output pipe.
+    session.hpc_close_at_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count() +
+        300;
 #else
     if (session.pid <= 0) return;
     int status = 0;
@@ -654,6 +658,19 @@ struct TerminalManager::Impl {
     for (auto& item : sessions) {
       Session& session = *item.second;
       if (session.state == "running" || session.state == "closing") reap(session);
+#if defined(_WIN32)
+      if (session.hpc != nullptr &&
+          (session.state == "exited" || session.state == "error") &&
+          session.hpc_close_at_ms > 0) {
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+        if (now >= session.hpc_close_at_ms) {
+          if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
+          session.hpc = nullptr;
+        }
+      }
+#endif
     }
     // Keep a short history of exited sessions without unbounded growth.
     while (sessions.size() > kMaxRetainedSessions) {
