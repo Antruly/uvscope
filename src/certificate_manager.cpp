@@ -255,11 +255,18 @@ nlohmann::json CertificateManager::generate(const GenerateCertificateInput& inpu
   X509_gmtime_adj(X509_getm_notAfter(cert.get()),
                   static_cast<long>(days) * 24 * 60 * 60);
   X509_set_pubkey(cert.get(), key.get());
-  X509_NAME* subject = X509_get_subject_name(cert.get());
-  X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC,
-                             reinterpret_cast<const unsigned char*>(common_name.c_str()),
-                             -1, -1, 0);
-  X509_set_issuer_name(cert.get(), subject);
+  // `subject` is a macro in some Windows SDK header combinations; use a
+  // distinct local name and inline the issuer update.
+  X509_NAME* cert_name = X509_get_subject_name(cert.get());
+  if (cert_name == nullptr ||
+      X509_NAME_add_entry_by_txt(
+          cert_name, "CN", MBSTRING_ASC,
+          reinterpret_cast<const unsigned char*>(common_name.c_str()), -1, -1,
+          0) != 1) {
+    if (error) *error = "could not set the certificate subject";
+    return nullptr;
+  }
+  X509_set_issuer_name(cert.get(), cert_name);
 
   X509V3_CTX ctx;
   X509V3_set_ctx_nodb(&ctx);
