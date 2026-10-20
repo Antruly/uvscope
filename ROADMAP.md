@@ -71,3 +71,12 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [ ] Full test matrix and performance baselines
 - [ ] Stable event schema and plugin boundary
 - [ ] Documentation site
+
+## Post-0.4 additions
+
+- [x] Reverse proxy exact/prefix/regex redirect and rewrite rules
+- [x] Live TLS peer-chain probe and managed certificate vault (generate/import/delete)
+- [x] Unix virtual terminal with WebSocket, xterm.js, persistent sessions and admin control
+- [x] Seeded SQLite command library with quick bar, search, custom snippets and quick pins
+- [ ] Windows ConPTY terminal backend
+- [ ] Local CA hierarchy and certificate renewal
