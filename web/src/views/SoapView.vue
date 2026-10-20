@@ -11,7 +11,7 @@ defineOptions({ name: 'SoapView' })
 const ui = useUiStore()
 const i18n = useI18nStore()
 const t = i18n.t
-const wsdlUrl = ref('')
+const wsdlUrl = ref('http://www.webxml.com.cn/webservices/qqOnlineWebService.asmx?wsdl')
 const wsdlText = ref('')
 const loadingWsdl = ref(false)
 const operations = ref<Array<{ name: string; action: string; documentation: string }>>([])
