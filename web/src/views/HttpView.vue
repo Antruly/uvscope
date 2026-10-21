@@ -78,6 +78,9 @@ const envDraft = ref<WorkspaceEnvironment>({ id: '', name: '', variables: [{ key
 const importOpen = ref(false)
 const importText = ref('')
 const importError = ref('')
+const preScript = ref('')
+const postScript = ref('')
+const scriptTests = ref<Array<{ name: string; passed: boolean; error?: string }>>([])
 const downloading = ref(false)
 const downloadState = ref<HttpDownload | null>(null)
 let downloadTimer: number | undefined
@@ -91,7 +94,7 @@ const previewUrl = ref('')
 const previewDocUrl = ref('')
 const previewDocId = ref('')
 let previewDocSeq = 0
-const requestTab = ref<'headers' | 'body'>('headers')
+const requestTab = ref<'headers' | 'body' | 'scripts'>('headers')
 const advancedOpen = ref(false)
 const history = ref<HistoryEntry[]>([])
 const historyLoading = ref(false)
@@ -955,6 +958,101 @@ function applyImport() {
   }
 }
 
+function activeEnvironment(): WorkspaceEnvironment | undefined {
+  return workspace.value.environments.find(
+    (item) => item.id === workspace.value.activeEnvironmentId,
+  )
+}
+
+function setEnvironmentVariable(key: string, value: string) {
+  let environment = activeEnvironment()
+  if (!environment) {
+    environment = { id: newId(), name: 'Script', variables: [] }
+    workspace.value.environments.push(environment)
+    workspace.value.activeEnvironmentId = environment.id
+  }
+  const existing = environment.variables.find((variable) => variable.key === key)
+  if (existing) existing.value = value
+  else environment.variables.push({ key, value })
+  void saveWorkspace()
+}
+
+async function runPreScript(): Promise<boolean> {
+  scriptTests.value = []
+  if (!preScript.value.trim()) return true
+  const request = {
+    method: method.value,
+    url: url.value,
+    headers: headers.value.map((header) => ({ ...header })),
+    body: body.value,
+  }
+  const api = {
+    request,
+    env: { get: (key: string) => activeVariables()[key], set: setEnvironmentVariable },
+    variables: activeVariables(),
+  }
+  try {
+    const fn = new Function(
+      'uvscope',
+      `"use strict"; return (async () => {\n${preScript.value}\n})()`,
+    )
+    await fn(api)
+  } catch (err) {
+    ui.notify('error', t('http.scripts.preFailed'), err instanceof Error ? err.message : String(err))
+    return false
+  }
+  method.value = request.method
+  url.value = request.url
+  headers.value = request.headers
+  body.value = request.body
+  return true
+}
+
+async function runPostScript(res: HttpResult) {
+  if (!postScript.value.trim() || !res.ok) return
+  const contentTypeHeader = (res.headers || []).find(
+    (header) => header.name.toLowerCase() === 'content-type',
+  )?.value || ''
+  let parsedBody: unknown = null
+  const parseBody = () => {
+    if (parsedBody !== null) return parsedBody
+    parsedBody = JSON.parse(res.bodyText || 'null')
+    return parsedBody
+  }
+  const api = {
+    response: {
+      status: res.status,
+      headers: res.headers || [],
+      text: res.bodyText || '',
+      contentType: contentTypeHeader,
+      json: parseBody,
+    },
+    test: (name: string, fn: () => void) => {
+      try {
+        fn()
+        scriptTests.value.push({ name, passed: true })
+      } catch (err) {
+        scriptTests.value.push({
+          name,
+          passed: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    },
+    env: { get: (key: string) => activeVariables()[key], set: setEnvironmentVariable },
+    variables: activeVariables(),
+  }
+  try {
+    const fn = new Function(
+      'uvscope',
+      `"use strict"; return (async () => {\n${postScript.value}\n})()`,
+    )
+    await fn(api)
+  } catch (err) {
+    ui.notify('error', t('http.scripts.postFailed'), err instanceof Error ? err.message : String(err))
+  }
+}
+
 async function buildPayload() {
   const outgoing = cleanHeaders()
   let requestBody = substitute(body.value)
@@ -1040,7 +1138,12 @@ async function send() {
     elapsed.value = Math.round(performance.now() - startedAt.value)
   }, 100)
   try {
+    if (!(await runPreScript())) {
+      sending.value = false
+      return
+    }
     result.value = await post<HttpResult>('/api/http/send', await buildPayload())
+    await runPostScript(result.value)
     responseTab.value = 'body'
     await loadHistory()
     if (!result.value.ok) ui.notify('error', t('http.requestFailed'), result.value.error)
@@ -1183,6 +1286,11 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+watch([preScript, postScript], () => {
+  window.localStorage.setItem('uvscope-http-pre-script', preScript.value)
+  window.localStorage.setItem('uvscope-http-post-script', postScript.value)
+})
+
 async function loadCapabilities() {
   try {
     const health = await get<{ capabilities?: typeof capabilities.value }>('/api/health')
@@ -1197,6 +1305,8 @@ onMounted(() => {
   void loadHistory()
   void loadCapabilities()
   void loadWorkspace()
+  preScript.value = window.localStorage.getItem('uvscope-http-pre-script') || ''
+  postScript.value = window.localStorage.getItem('uvscope-http-post-script') || ''
 })
 onActivated(() => void loadHistory())
 onBeforeUnmount(() => {
@@ -1311,6 +1421,7 @@ onBeforeUnmount(() => {
               {{ t('http.request.tab.headers') }} <span class="count">{{ cleanHeaders().length }}</span>
             </button>
             <button :class="{ active: requestTab === 'body' }" @click="requestTab = 'body'">{{ t('http.request.tab.body') }}</button>
+            <button :class="{ active: requestTab === 'scripts' }" @click="requestTab = 'scripts'">{{ t('http.request.tab.scripts') }}</button>
           </div>
 
           <div v-show="requestTab === 'headers'" class="editor-pane">
@@ -1377,6 +1488,28 @@ onBeforeUnmount(() => {
               <button class="add-row" @click="addMultipartField"><Icon name="plus" :size="14" />{{ t('http.body.addField') }}</button>
               <p class="muted body-hint">{{ t('http.body.multipartHint') }}</p>
             </template>
+          </div>
+
+          <div v-show="requestTab === 'scripts'" class="editor-pane">
+            <div class="inline-alert inline-alert--warning">
+              <Icon name="alert" :size="16" />{{ t('http.scripts.warning') }}
+            </div>
+            <label class="field">
+              <span>{{ t('http.scripts.pre') }}</span>
+              <textarea v-model="preScript" class="code-input code-input--short" spellcheck="false" :placeholder="t('http.scripts.prePlaceholder')" />
+            </label>
+            <label class="field">
+              <span>{{ t('http.scripts.post') }}</span>
+              <textarea v-model="postScript" class="code-input code-input--short" spellcheck="false" :placeholder="t('http.scripts.postPlaceholder')" />
+            </label>
+            <p class="muted body-hint">{{ t('http.scripts.hint') }}</p>
+            <div v-if="scriptTests.length" class="script-tests">
+              <div v-for="(test, index) in scriptTests" :key="index" class="script-test" :class="{ 'script-test--bad': !test.passed }">
+                <strong>{{ test.passed ? 'PASS' : 'FAIL' }}</strong>
+                <span>{{ test.name }}</span>
+                <small v-if="test.error">{{ test.error }}</small>
+              </div>
+            </div>
           </div>
         </section>
 

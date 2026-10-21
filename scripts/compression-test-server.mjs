@@ -23,6 +23,25 @@ const encoders = {
 }
 
 const server = http.createServer((request, response) => {
+  if (request.url === '/echo-request') {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', () => {
+      const body = Buffer.concat(chunks)
+      const payload = JSON.stringify({
+        method: request.method,
+        headers: request.headers,
+        body: body.toString('utf8'),
+      })
+      response.writeHead(200, {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload),
+        'cache-control': 'no-store',
+      })
+      response.end(payload)
+    })
+    return
+  }
   if (request.url === '/echo-body') {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))

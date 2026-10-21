@@ -754,7 +754,9 @@ void Application::register_middleware() {
     resp.set_header("Referrer-Policy", "no-referrer");
     resp.set_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     resp.set_header("Content-Security-Policy",
-                    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                    // User-authored pre/post-request scripts run through new Function(), so the
+    // SPA needs 'unsafe-eval'. Everything else stays same-origin only.
+    "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; "
                     "img-src 'self' data: blob: http: https:; "
                     "media-src 'self' data: blob: http: https:; "
                     "font-src 'self' data:; connect-src 'self' ws: wss: http: https:; "

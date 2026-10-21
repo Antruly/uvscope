@@ -2782,6 +2782,35 @@ button.nav-item {
 .hidden-file {
   display: none;
 }
+.script-tests {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+.script-test {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid rgba(98, 230, 167, 0.25);
+  border-radius: 8px;
+  background: rgba(98, 230, 167, 0.06);
+  font-size: 10px;
+}
+.script-test strong {
+  color: var(--ok);
+}
+.script-test small {
+  color: var(--danger);
+}
+.script-test--bad {
+  border-color: rgba(255, 107, 129, 0.3);
+  background: rgba(255, 107, 129, 0.06);
+}
+.script-test--bad strong {
+  color: var(--danger);
+}
 .workspace-bar {
   display: flex;
   flex-wrap: wrap;
