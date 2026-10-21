@@ -87,12 +87,19 @@ export interface ProxyRule {
   preserveQuery: boolean
 }
 
+export interface ProxyUpstream {
+  url: string
+  weight: number
+}
+
 export interface ProxyInfo {
   id: string
   name: string
   listenHost: string
   listenPort: number
   target: string
+  upstreams?: ProxyUpstream[]
+  retries?: number
   autoStart: boolean
   tls: boolean
   certConfigured?: boolean

@@ -39,6 +39,30 @@ std::string feature_defaults() {
   return R"({"http":true,"websocket":true,"tcpudp":true,"soap":true,"tls":true,"proxy":true,"terminal":false})";
 }
 
+nlohmann::json proxy_upstreams_to_json(const std::vector<ProxyUpstream>& upstreams) {
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& upstream : upstreams) {
+    out.push_back({{"url", upstream.url}, {"weight", upstream.weight}});
+  }
+  return out;
+}
+
+std::vector<ProxyUpstream> proxy_upstreams_from_json(const std::string& text) {
+  std::vector<ProxyUpstream> upstreams;
+  const auto parsed = nlohmann::json::parse(text, nullptr, false);
+  if (!parsed.is_array()) return upstreams;
+  for (const auto& item : parsed) {
+    if (!item.is_object()) continue;
+    ProxyUpstream upstream;
+    upstream.url = item.value("url", std::string());
+    upstream.weight = item.value("weight", 1);
+    if (upstream.url.empty()) continue;
+    if (upstream.weight < 0) upstream.weight = 0;
+    upstreams.push_back(std::move(upstream));
+  }
+  return upstreams;
+}
+
 nlohmann::json proxy_rules_to_json(const std::vector<ProxyRule>& rules) {
   nlohmann::json out = nlohmann::json::array();
   for (const auto& rule : rules) {
@@ -214,6 +238,8 @@ bool Store::migrate(std::string* error) {
            cert_path TEXT NOT NULL DEFAULT '',
            key_path TEXT NOT NULL DEFAULT '',
            rules_json TEXT NOT NULL DEFAULT '[]',
+           upstreams_json TEXT NOT NULL DEFAULT '[]',
+           retries INTEGER NOT NULL DEFAULT 0,
            created_at TEXT NOT NULL,
            updated_at TEXT NOT NULL
          ))",
@@ -254,6 +280,24 @@ bool Store::migrate(std::string* error) {
   }
   if (!has_rules_column) {
     if (!exec("ALTER TABLE proxies ADD COLUMN rules_json TEXT NOT NULL DEFAULT '[]'", error)) {
+      return false;
+    }
+  }
+  bool has_upstreams_column = false;
+  bool has_retries_column = false;
+  if (const auto columns = query("PRAGMA table_info(proxies)")) {
+    for (const auto& row : columns->rows()) {
+      if (row["name"].to_text() == "upstreams_json") has_upstreams_column = true;
+      if (row["name"].to_text() == "retries") has_retries_column = true;
+    }
+  }
+  if (!has_upstreams_column) {
+    if (!exec("ALTER TABLE proxies ADD COLUMN upstreams_json TEXT NOT NULL DEFAULT '[]'", error)) {
+      return false;
+    }
+  }
+  if (!has_retries_column) {
+    if (!exec("ALTER TABLE proxies ADD COLUMN retries INTEGER NOT NULL DEFAULT 0", error)) {
       return false;
     }
   }
@@ -753,8 +797,8 @@ bool Store::delete_socks5_server(const std::string& id, std::string* error) {
 std::vector<ProxyConfig> Store::proxies() const {
   std::vector<ProxyConfig> out;
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"
-                           "cert_path,key_path,rules_json,created_at,updated_at "
-                           "FROM proxies ORDER BY name");
+                           "cert_path,key_path,rules_json,upstreams_json,retries,"
+                           "created_at,updated_at FROM proxies ORDER BY name");
   if (!table) return out;
   for (const auto& row : table->rows()) out.push_back(row_to_proxy(row));
   return out;
@@ -762,8 +806,8 @@ std::vector<ProxyConfig> Store::proxies() const {
 
 std::optional<ProxyConfig> Store::proxy(const std::string& id) const {
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"
-                           "cert_path,key_path,rules_json,created_at,updated_at "
-                           "FROM proxies WHERE id = ?",
+                           "cert_path,key_path,rules_json,upstreams_json,retries,"
+                           "created_at,updated_at FROM proxies WHERE id = ?",
                            {id});
   if (!table || table->empty()) return std::nullopt;
   return row_to_proxy(table->rows().front());
@@ -773,14 +817,18 @@ bool Store::save_proxy(const ProxyConfig& proxy, std::string* error) {
   const std::string now = now_iso8601();
   return exec(
       "INSERT INTO proxies(id,name,listen_host,listen_port,target,auto_start,tls,cert_path,key_path,"
-      "rules_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+      "rules_json,upstreams_json,retries,created_at,updated_at) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
       "ON CONFLICT(id) DO UPDATE SET name=excluded.name, listen_host=excluded.listen_host, "
       "listen_port=excluded.listen_port, target=excluded.target, auto_start=excluded.auto_start, "
       "tls=excluded.tls, cert_path=excluded.cert_path, key_path=excluded.key_path, "
-      "rules_json=excluded.rules_json, updated_at=excluded.updated_at",
+      "rules_json=excluded.rules_json, upstreams_json=excluded.upstreams_json, "
+      "retries=excluded.retries, updated_at=excluded.updated_at",
       {proxy.id, proxy.name, proxy.listen_host, proxy.listen_port, proxy.target,
        proxy.auto_start ? 1 : 0, proxy.tls ? 1 : 0, proxy.cert_path, proxy.key_path,
        proxy_rules_to_json(proxy.rules).dump(),
+       proxy_upstreams_to_json(proxy.upstreams).dump(),
+       std::max(0, std::min(proxy.retries, 3)),
        proxy.created_at.empty() ? now : proxy.created_at, now},
       error);
 }
@@ -1066,6 +1114,10 @@ nlohmann::json proxy_rules_json(const std::vector<ProxyRule>& rules) {
   return proxy_rules_to_json(rules);
 }
 
+nlohmann::json proxy_upstreams_json(const std::vector<ProxyUpstream>& upstreams) {
+  return proxy_upstreams_to_json(upstreams);
+}
+
 ProxyConfig Store::row_to_proxy(const uvcpp::uvcpp_db_row& row) {
   ProxyConfig p;
   p.id = row["id"].to_text();
@@ -1079,6 +1131,9 @@ ProxyConfig Store::row_to_proxy(const uvcpp::uvcpp_db_row& row) {
   p.key_path = row["key_path"].to_text();
   p.rules = proxy_rules_from_json(row.has("rules_json") ? row["rules_json"].to_text()
                                                        : std::string("[]"));
+  p.upstreams = proxy_upstreams_from_json(
+      row.has("upstreams_json") ? row["upstreams_json"].to_text() : std::string("[]"));
+  p.retries = row.has("retries") ? static_cast<int>(row["retries"].to_int64()) : 0;
   p.created_at = row["created_at"].to_text();
   p.updated_at = row["updated_at"].to_text();
   return p;

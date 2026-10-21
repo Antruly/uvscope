@@ -103,12 +103,19 @@ struct ProxyRule {
 nlohmann::json proxy_rules_json(const std::vector<ProxyRule>& rules);
 nlohmann::json terminal_command_json(const TerminalCommand& command);
 
+struct ProxyUpstream {
+  std::string url;
+  int weight = 1;
+};
+
 struct ProxyConfig {
   std::string id;
   std::string name;
   std::string listen_host = "127.0.0.1";
   int listen_port = 0;
-  std::string target;
+  std::string target;  // primary upstream; used when upstreams is empty
+  std::vector<ProxyUpstream> upstreams;
+  int retries = 0;
   bool auto_start = false;
   bool tls = false;
   std::string cert_path;
@@ -117,6 +124,8 @@ struct ProxyConfig {
   std::string created_at;
   std::string updated_at;
 };
+
+nlohmann::json proxy_upstreams_json(const std::vector<ProxyUpstream>& upstreams);
 
 class Store {
  public:

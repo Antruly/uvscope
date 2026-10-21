@@ -265,7 +265,8 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   file and downloaded (512 MiB cap, HTTP/1.1, attachment-only).
 - Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
 - No WebSocket upgrade pass-through in the proxy.
-- Routing supports ordered exact / prefix / regex rules plus method/host/header conditions.
-  Upstreams remain single per listener; there are no weighted pools, retries or health checks.
+- Routing supports ordered exact / prefix / regex rules plus method/host/header conditions, and
+  weighted upstreams with bounded retries. There is no active health checking or circuit
+  breaking.
 - The `history` table stores summaries, not full bodies.
 - No IPC supervisor yet; all long-lived services are threads in the daemon.

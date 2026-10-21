@@ -14,6 +14,8 @@ SOCKS5_UDP_TARGET_PORT="${9:-18794}"
 H2_PORT="${10:-18795}"
 COMP_PORT="${11:-18796}"
 WS_PORT="${12:-18797}"
+MULTI_PORT="${13:-18798}"
+DEAD_PORT="${14:-18799}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -359,6 +361,13 @@ HOST_HIT="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5
 HOST_MISS="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 "http://127.0.0.1:${PROXY_PORT}/smoke-host")"
 ALL_HIT="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 -X POST -H 'Host: proxy.test' -H 'X-Secret: 1' "http://127.0.0.1:${PROXY_PORT}/smoke-all")"
 ALL_MISS="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 -X POST -H 'Host: proxy.test' "http://127.0.0.1:${PROXY_PORT}/smoke-all")"
+MULTI_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/proxies" \
+  -H 'content-type: application/json' \
+  -d "{\"name\":\"smoke-multi\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${MULTI_PORT},\"target\":\"http://127.0.0.1:${DEAD_PORT}\",\"upstreams\":[{\"url\":\"http://127.0.0.1:${DEAD_PORT}\",\"weight\":1},{\"url\":\"http://127.0.0.1:${PORT}\",\"weight\":1}],\"retries\":1,\"start\":true,\"rules\":[]}")"
+MULTI_STATUSES=""
+for _ in $(seq 1 10); do
+  MULTI_STATUSES="${MULTI_STATUSES}$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${MULTI_PORT}/api/health") "
+done
 
 SESSION_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/tcp/sessions" \
   -H 'content-type: application/json' \
@@ -397,6 +406,7 @@ METHOD_POST="${METHOD_POST}" METHOD_GET="${METHOD_GET}" \
 HEADER_HIT="${HEADER_HIT}" HEADER_MISS="${HEADER_MISS}" \
 HOST_HIT="${HOST_HIT}" HOST_MISS="${HOST_MISS}" \
 ALL_HIT="${ALL_HIT}" ALL_MISS="${ALL_MISS}" \
+MULTI_RESULT="${MULTI_RESULT}" MULTI_STATUSES="${MULTI_STATUSES}" \
 SESSION_RESULT="${SESSION_RESULT}" SEND_ONE="${SEND_ONE}" SEND_TWO="${SEND_TWO}" \
 EVENTS_RESULT="${EVENTS_RESULT}" python3 - <<'PY'
 import json
@@ -506,6 +516,17 @@ check_rule("HOST_HIT", "301", "host rule did not fire for proxy.test")
 check_miss("HOST_MISS", "host rule fired for the wrong host")
 check_rule("ALL_HIT", "308", "combined method+host+header rule did not fire")
 check_miss("ALL_MISS", "combined rule fired with a missing header")
+
+multi = json.loads(os.environ["MULTI_RESULT"])
+check(multi.get("ok") is True, f"multi-upstream proxy creation failed: {multi}")
+multi_proxy = next((p for p in multi.get("proxies", []) if p.get("name") == "smoke-multi"), {})
+check(multi_proxy.get("retries") == 1,
+      f"retries were not persisted: {multi_proxy.get('retries')}")
+check(len(multi_proxy.get("upstreams", [])) == 2,
+      f"upstreams were not persisted: {multi_proxy.get('upstreams')}")
+statuses = os.environ["MULTI_STATUSES"].split()
+check(len(statuses) == 10 and all(code == "200" for code in statuses),
+      f"failover did not serve every request: {statuses}")
 
 proxied = json.loads(os.environ["PROXIED"])
 check(proxied.get("ok") is True, "proxied health endpoint failed")

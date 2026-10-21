@@ -8,6 +8,11 @@ All notable changes to uvscope are documented here. The format is based on
 
 ### Added
 
+- Reverse proxies accept multiple weighted upstreams (`upstreams: [{url, weight}]`) and a retry
+  count (0–3). Requests pick an upstream by weight; a failed connection fails over for any
+  method, while send failures and 502/503/504 retry only idempotent methods. Access logs and
+  502 responses include the upstream and attempt count, and the editor exposes the primary
+  weight, additional upstreams and retry attempts.
 - Reverse proxy rules can match on HTTP method, Host and headers in addition to the path. Method
   lists are comma-separated and case-insensitive; Host supports exact values and `*.suffix`
   wildcards (port ignored unless specified); `headerName` requires a header and `headerValue`

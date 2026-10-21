@@ -2544,6 +2544,8 @@ nlohmann::json Application::proxy_view() const {
                            {"listenHost", config.listen_host},
                            {"listenPort", config.listen_port},
                            {"target", config.target},
+                           {"upstreams", proxy_upstreams_json(config.upstreams)},
+                           {"retries", config.retries},
                            {"autoStart", config.auto_start},
                            {"tls", config.tls},
                            {"certConfigured", !config.cert_path.empty()},
@@ -2587,6 +2589,55 @@ void Application::register_proxy_routes() {
     config.tls = bool_field(*body, "tls", false);
     config.cert_path = string_field(*body, "certPath");
     config.key_path = string_field(*body, "keyPath");
+    const auto existing = store_.proxy(config.id);
+    if (body->contains("upstreams")) {
+      if (!(*body)["upstreams"].is_array()) {
+        send_error(resp, 400, "upstreams must be an array", "bad_request");
+        return;
+      }
+      std::size_t index = 0;
+      for (const auto& item : (*body)["upstreams"]) {
+        ++index;
+        if (!item.is_object()) {
+          send_error(resp, 400, "upstream " + std::to_string(index) + " must be an object",
+                     "bad_request");
+          return;
+        }
+        ProxyUpstream upstream;
+        upstream.url = trim(string_field(item, "url"));
+        upstream.weight = int_field(item, "weight", 1);
+        const ParsedUrl parsed = parse_url(upstream.url);
+        if (!parsed.valid || (parsed.scheme != "http" && parsed.scheme != "https")) {
+          send_error(resp, 400,
+                     "upstream " + std::to_string(index) +
+                         " must be a valid http:// or https:// URL",
+                     "bad_request");
+          return;
+        }
+        if (upstream.weight < 1 || upstream.weight > 1000) {
+          send_error(resp, 400,
+                     "upstream " + std::to_string(index) + " weight must be 1-1000",
+                     "bad_request");
+          return;
+        }
+        if (config.upstreams.size() >= 16) {
+          send_error(resp, 400, "at most 16 upstreams are allowed", "bad_request");
+          return;
+        }
+        config.upstreams.push_back(std::move(upstream));
+      }
+    } else if (existing) {
+      config.upstreams = existing->upstreams;
+    }
+    config.retries = body->contains("retries") ? int_field(*body, "retries", 0)
+                                               : (existing ? existing->retries : 0);
+    if (config.retries < 0 || config.retries > 3) {
+      send_error(resp, 400, "retries must be between 0 and 3", "bad_request");
+      return;
+    }
+    if (config.target.empty() && !config.upstreams.empty()) {
+      config.target = config.upstreams.front().url;
+    }
     if (config.name.empty()) config.name = "Proxy " + std::to_string(config.listen_port);
     if (config.listen_port < 1 || config.listen_port > 65535) {
       send_error(resp, 400, "listenPort must be between 1 and 65535", "bad_request");
@@ -2596,7 +2647,6 @@ void Application::register_proxy_routes() {
       send_error(resp, 400, "target must be a valid http:// or https:// URL", "bad_request");
       return;
     }
-    const auto existing = store_.proxy(config.id);
     if (body->contains("rules")) {
       std::string rules_error;
       config.rules = proxy_rules_field(*body, &rules_error);

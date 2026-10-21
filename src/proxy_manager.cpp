@@ -4,6 +4,7 @@
 #include <chrono>
 #include <ctime>
 #include <memory>
+#include <random>
 #include <regex>
 #include <sstream>
 
@@ -31,6 +32,37 @@ bool hop_by_hop(const std::string& name) {
 }
 
 std::string iso_time() { return now_iso8601(); }
+
+struct ProxyCandidate {
+  std::string url;
+  ParsedUrl parsed;
+  int weight = 1;
+};
+
+int pick_candidate(std::mt19937& rng, const std::vector<ProxyCandidate>& candidates,
+                   std::vector<bool>& tried) {
+  int total = 0;
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    if (!tried[i]) total += candidates[i].weight;
+  }
+  if (total <= 0) {
+    // Every upstream has been tried once (or all weights are zero): allow a
+    // second pass over the list instead of failing without an attempt.
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+      tried[i] = false;
+      total += candidates[i].weight;
+    }
+  }
+  if (total <= 0) return -1;
+  std::uniform_int_distribution<int> dist(1, total);
+  int roll = dist(rng);
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    if (tried[i]) continue;
+    roll -= candidates[i].weight;
+    if (roll <= 0) return static_cast<int>(i);
+  }
+  return -1;
+}
 
 bool method_matches(const std::string& list, const std::string& method) {
   const std::string wanted = lower(trim(method));
@@ -123,6 +155,7 @@ struct ProxyManager::Runtime {
   std::atomic<std::uint64_t> errors{0};
   std::atomic<std::uint64_t> bytes{0};
   std::uint64_t next_log_seq = 1;
+  std::mt19937 rng{std::random_device{}()};
   std::deque<nlohmann::json> log_entries;
   mutable std::mutex log_mutex;
 
@@ -138,8 +171,26 @@ struct ProxyManager::Runtime {
   void forward(uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp) {
     const auto started = std::chrono::steady_clock::now();
     requests.fetch_add(1);
-    const ParsedUrl target = parse_url(config.target);
-    if (!target.valid) {
+    std::vector<ProxyCandidate> candidates;
+    if (config.upstreams.empty()) {
+      ProxyCandidate candidate;
+      candidate.url = config.target;
+      candidate.parsed = parse_url(config.target);
+      candidate.weight = 1;
+      if (candidate.parsed.valid) candidates.push_back(std::move(candidate));
+    } else {
+      for (const auto& upstream : config.upstreams) {
+        ProxyCandidate candidate;
+        candidate.url = upstream.url;
+        candidate.parsed = parse_url(upstream.url);
+        candidate.weight = std::max(1, upstream.weight);
+        if (candidate.parsed.valid && (candidate.parsed.scheme == "http" ||
+                                       candidate.parsed.scheme == "https")) {
+          candidates.push_back(std::move(candidate));
+        }
+      }
+    }
+    if (candidates.empty()) {
       errors.fetch_add(1);
       resp.status(502).json_str("{\"error\":\"invalid proxy target\"}");
       resp.end();
@@ -148,8 +199,6 @@ struct ProxyManager::Runtime {
       return;
     }
 
-    uvcpp::uvcpp_http_request upstream;
-    upstream.method = req.method();
     std::string path = req.raw_path();
     if (path.empty()) path = "/";
     std::string query = req.query_string();
@@ -214,47 +263,94 @@ struct ProxyManager::Runtime {
       break;
     }
 
-    if (!rewritten && target.path != "/" && !target.path.empty()) {
-      path = join_path(target.path, path);
-    }
-    if (!query.empty()) path += "?" + query;
-    upstream.url = path;
-
-    bool has_host = false;
+    std::vector<std::pair<std::string, std::string>> forwarded_headers;
     for (const auto& header : req.headers()) {
       if (hop_by_hop(header.name)) continue;
-      if (lower(header.name) == "host") {
-        has_host = true;
+      if (lower(header.name) == "host") continue;
+      forwarded_headers.emplace_back(header.name, header.value);
+    }
+    if (!req.peer_ip().empty()) {
+      forwarded_headers.emplace_back("x-forwarded-for", req.peer_ip());
+    }
+    forwarded_headers.emplace_back("x-forwarded-host", req.host());
+    forwarded_headers.emplace_back("x-forwarded-proto", config.tls ? "https" : "http");
+    forwarded_headers.emplace_back("x-uvscope-proxy", config.id);
+
+    const std::string request_method = lower(req.method_name());
+    const bool idempotent = request_method == "get" || request_method == "head" ||
+                            request_method == "options" || request_method == "trace";
+    const int max_attempts = 1 + std::min(3, std::max(0, config.retries));
+    std::vector<bool> tried(candidates.size(), false);
+    uvcpp::uvcpp_http_response response;
+    int rc = 0;
+    int attempts = 0;
+    std::string last_error;
+    std::string used_url;
+
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+      const int index = pick_candidate(rng, candidates, tried);
+      if (index < 0) break;
+      tried[static_cast<std::size_t>(index)] = true;
+      const ProxyCandidate& candidate = candidates[static_cast<std::size_t>(index)];
+      const ParsedUrl& target = candidate.parsed;
+      used_url = candidate.url;
+
+      std::string attempt_path = path;
+      if (!rewritten && target.path != "/" && !target.path.empty()) {
+        attempt_path = join_path(target.path, attempt_path);
+      }
+      if (!query.empty()) attempt_path += "?" + query;
+
+      uvcpp::uvcpp_http_request upstream;
+      upstream.method = req.method();
+      upstream.url = attempt_path;
+      for (const auto& header : forwarded_headers) {
+        upstream.set_header(header.first, header.second);
+      }
+      const int default_port = target.scheme == "https" ? 443 : 80;
+      upstream.set_header("host", target.port == default_port
+                                      ? target.host
+                                      : target.host + ":" + std::to_string(target.port));
+      upstream.body.clone_data(req.body_data(), req.body_size());
+
+      std::unique_ptr<uvcpp::uvcpp_ssl_context> ssl;
+      const bool tls_upstream = target.scheme == "https";
+      if (tls_upstream) {
+        ssl.reset(new uvcpp::uvcpp_ssl_context(uvcpp::tls_mode::CLIENT,
+                                               uvcpp::tls_version::TLS_1_2));
+        const std::string ca = find_ca_bundle(executable_dir(nullptr));
+        if (!ca.empty()) ssl->load_ca_file(ca);
+        ssl->set_verify_mode(uvcpp::tls_verify_mode::PEER_STRICT);
+      }
+
+      uvcpp::uvcpp_http_client client;
+      if (ssl) client.set_ssl_context(ssl.get());
+      ++attempts;
+      const int connect_rc = client.connect_wait(target.host.c_str(), target.port, 15000);
+      if (connect_rc != 0) {
+        rc = connect_rc;
+        last_error = uv_error_string(connect_rc);
+        // Nothing was sent, so a retry is safe for any method.
         continue;
       }
-      upstream.set_header(header.name, header.value);
-    }
-    if (!has_host) {
-      upstream.set_header("host", target.port == 443 ? target.host : target.host + ":" + std::to_string(target.port));
-    }
-    if (req.peer_ip().size() > 0) upstream.set_header("x-forwarded-for", req.peer_ip());
-    upstream.set_header("x-forwarded-host", req.host());
-    upstream.set_header("x-forwarded-proto", config.tls ? "https" : "http");
-    upstream.set_header("x-uvscope-proxy", config.id);
-    upstream.body.clone_data(req.body_data(), req.body_size());
-
-    std::unique_ptr<uvcpp::uvcpp_ssl_context> ssl;
-    const bool tls_upstream = target.scheme == "https";
-    if (tls_upstream) {
-      ssl.reset(new uvcpp::uvcpp_ssl_context(uvcpp::tls_mode::CLIENT,
-                                             uvcpp::tls_version::TLS_1_2));
-      const std::string ca = find_ca_bundle(executable_dir(nullptr));
-      if (!ca.empty()) ssl->load_ca_file(ca);
-      ssl->set_verify_mode(uvcpp::tls_verify_mode::PEER_STRICT);
-    }
-
-    uvcpp::uvcpp_http_client client;
-    if (ssl) client.set_ssl_context(ssl.get());
-    int rc = client.connect_wait(target.host.c_str(), target.port, 15000);
-    uvcpp::uvcpp_http_response response;
-    if (rc == 0) {
-      rc = ssl ? client.send_wait_ssl(upstream, response, 30000)
-               : client.send_wait_plain(upstream, response, 30000);
+      uvcpp::uvcpp_http_response attempt_response;
+      const int send_rc = ssl ? client.send_wait_ssl(upstream, attempt_response, 30000)
+                              : client.send_wait_plain(upstream, attempt_response, 30000);
+      if (send_rc != 0) {
+        rc = send_rc;
+        last_error = uv_error_string(send_rc);
+        if (idempotent) continue;
+        break;
+      }
+      response = std::move(attempt_response);
+      rc = 0;
+      const int status = static_cast<int>(response.status_code);
+      if (idempotent && (status == 502 || status == 503 || status == 504) &&
+          attempt + 1 < max_attempts) {
+        last_error = "upstream status " + std::to_string(status);
+        continue;
+      }
+      break;
     }
 
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -262,16 +358,18 @@ struct ProxyManager::Runtime {
                              .count();
     if (rc != 0) {
       errors.fetch_add(1);
-      const std::string message = rc == 0 ? std::string("upstream failed")
-                                          : uv_error_string(rc);
+      const std::string message = last_error.empty() ? "upstream failed" : last_error;
       resp.status(502).set_header("content-type", "application/json")
           .json_str(nlohmann::json({{"error", "upstream request failed"},
                                     {"detail", message},
-                                    {"proxy", config.name}})
+                                    {"proxy", config.name},
+                                    {"attempts", attempts},
+                                    {"upstream", used_url}})
                         .dump());
       resp.end();
       add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
-               {"error", message}, {"latencyMs", elapsed}, {"bytes", 0}});
+               {"error", message}, {"attempts", attempts}, {"upstream", used_url},
+               {"latencyMs", elapsed}, {"bytes", 0}});
       return;
     }
 
@@ -298,7 +396,7 @@ struct ProxyManager::Runtime {
     resp.end();
     add_log({{"method", req.method_name()}, {"path", req.raw_url()},
              {"status", static_cast<int>(response.status_code)}, {"latencyMs", elapsed},
-             {"bytes", body.size()}});
+             {"attempts", attempts}, {"upstream", used_url}, {"bytes", body.size()}});
   }
 
   ~Runtime() {

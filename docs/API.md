@@ -81,7 +81,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 | POST | `/api/preview` | `{html, baseUrl, mode: safe\|scripts}` → `{id, url}` preview token (8 MiB, 120 s) |
 | DELETE | `/api/preview/:id` | Drop a preview token |
 | GET | `/preview/:id` | Token-based HTML with `CSP: sandbox allow-scripts` (no auth) |
-| POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, autoStart, tls, certPath, keyPath, rules[], start}` |
+| POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, upstreams[], retries, autoStart, tls, certPath, keyPath, rules[], start}` |
 | POST | `/api/proxies/:id/start` | Start a proxy |
 | POST | `/api/proxies/:id/stop` | Stop a proxy |
 | DELETE | `/api/proxies/:id` | Stop and delete a proxy |
@@ -333,6 +333,19 @@ wins. A rule is:
   contains `?`; destinations using `$args` or `$request_uri` are not appended twice.
 - Invalid regexes, rewrite destinations that do not start with `/` or `$`, rules without any
   path/method/host/header condition, or more than 64 rules are rejected with `400 bad_request`.
+
+### Upstreams and retries
+
+`upstreams` is an optional array of `{"url": "http://…", "weight": 1}` objects (maximum 16,
+weights 1–1000). When present it replaces `target` for routing; when empty, `target` is the only
+upstream. Each request picks an upstream with probability proportional to its weight, and the
+access log plus `502` responses name the chosen `upstream` and the `attempts` count.
+
+`retries` (0–3) is the number of extra attempts after the first. A failed connection retries with
+another upstream for any method because nothing was sent. A failed send, or an upstream
+responding `502`/`503`/`504`, retries only for idempotent methods (`GET`, `HEAD`, `OPTIONS`,
+`TRACE`); other methods return the failure instead of risking a duplicate request. There is no
+active health checking: an upstream is tried again on the next request.
 
 ## Virtual terminals
 

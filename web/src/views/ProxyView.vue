@@ -2,7 +2,7 @@
 import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import { del, errorMessage, get, post } from '../api'
-import type { ProxyInfo, ProxyLog, ProxyRule } from '../types'
+import type { ProxyInfo, ProxyLog, ProxyRule, ProxyUpstream } from '../types'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
 import { useI18nStore } from '../stores/i18n'
@@ -49,6 +49,9 @@ const blank = () => ({
   listenHost: '127.0.0.1',
   listenPort: 18080,
   target: 'http://127.0.0.1:8000',
+  upstreams: [] as ProxyUpstream[],
+  primaryWeight: 1,
+  retries: 0,
   autoStart: false,
   tls: false,
   certPath: '',
@@ -104,12 +107,17 @@ function openCreate() {
 }
 
 function openEdit(proxy: ProxyInfo) {
+  const upstreams = (proxy.upstreams || []).map((item) => ({ ...item }))
+  const primary = upstreams.shift()
   form.value = {
     id: proxy.id,
     name: proxy.name,
     listenHost: proxy.listenHost,
     listenPort: proxy.listenPort,
-    target: proxy.target,
+    target: primary ? primary.url : proxy.target,
+    upstreams,
+    primaryWeight: primary ? primary.weight : 1,
+    retries: proxy.retries || 0,
     autoStart: proxy.autoStart,
     tls: proxy.tls,
     certPath: proxy.certPath || '',
@@ -125,6 +133,14 @@ function openEdit(proxy: ProxyInfo) {
     )
     if (match) selectedCertId.value = match.id
   })
+}
+
+function addUpstream() {
+  form.value.upstreams.push({ url: '', weight: 1 })
+}
+
+function removeUpstream(index: number) {
+  form.value.upstreams.splice(index, 1)
 }
 
 function addRule() {
@@ -153,6 +169,16 @@ async function save(start = false) {
     formError.value = t('proxy.error.tlsPaths')
     return
   }
+  for (const [index, upstream] of form.value.upstreams.entries()) {
+    if (!/^https?:\/\//.test(upstream.url.trim())) {
+      formError.value = t('proxy.upstreams.invalid', { index: index + 2 })
+      return
+    }
+    if (!upstream.weight || upstream.weight < 1 || upstream.weight > 1000) {
+      formError.value = t('proxy.upstreams.weightError', { index: index + 2 })
+      return
+    }
+  }
   for (const [index, rule] of form.value.rules.entries()) {
     const hasCondition = Boolean(
       rule.pattern.trim() || rule.method?.trim() || rule.host?.trim() || rule.headerName?.trim(),
@@ -164,9 +190,15 @@ async function save(start = false) {
   }
   saving.value = true
   try {
+    const upstreams = [
+      { url: form.value.target.trim(), weight: form.value.primaryWeight || 1 },
+      ...form.value.upstreams
+        .filter((upstream) => upstream.url.trim())
+        .map((upstream) => ({ url: upstream.url.trim(), weight: upstream.weight || 1 })),
+    ]
     const response = await post<{ ok: boolean; warning?: string; error?: string }>(
       '/api/proxies',
-      { ...form.value, name: form.value.name.trim(), start },
+      { ...form.value, upstreams, name: form.value.name.trim(), start },
     )
     editorOpen.value = false
     await load()
@@ -374,7 +406,26 @@ onBeforeUnmount(stopLogPolling)
                 <label class="field"><span>{{ t('proxy.editor.listenHost') }}</span><input v-model="form.listenHost" class="mono" /></label>
                 <label class="field"><span>{{ t('proxy.editor.listenPort') }}</span><input v-model.number="form.listenPort" type="number" min="1" max="65535" class="mono" /></label>
               </div>
-              <label class="field"><span>{{ t('proxy.editor.target') }}</span><input v-model="form.target" class="mono" placeholder="http://127.0.0.1:8000" /></label>
+              <div class="form-grid">
+                <label class="field field--grow"><span>{{ t('proxy.editor.target') }}</span><input v-model="form.target" class="mono" placeholder="http://127.0.0.1:8000" /></label>
+                <label class="field"><span>{{ t('proxy.upstreams.weight') }}</span><input v-model.number="form.primaryWeight" type="number" min="1" max="1000" class="mono" /></label>
+              </div>
+              <div class="proxy-rules-editor">
+                <div class="proxy-rules-editor__head">
+                  <div>
+                    <strong>{{ t('proxy.upstreams.title') }}</strong>
+                    <p class="muted">{{ t('proxy.upstreams.hint') }}</p>
+                  </div>
+                  <button type="button" class="link-button" @click="addUpstream"><Icon name="plus" :size="14" />{{ t('proxy.upstreams.add') }}</button>
+                </div>
+                <div v-if="!form.upstreams.length" class="proxy-rules-empty">{{ t('proxy.upstreams.empty') }}</div>
+                <div v-for="(upstream, index) in form.upstreams" :key="index" class="kv-row">
+                  <input v-model="upstream.url" class="mono" placeholder="http://127.0.0.1:8001" spellcheck="false" />
+                  <input v-model.number="upstream.weight" type="number" min="1" max="1000" class="mono" />
+                  <button type="button" class="icon-button icon-button--sm icon-button--danger" :title="t('proxy.upstreams.remove')" @click="removeUpstream(index)"><Icon name="trash" :size="14" /></button>
+                </div>
+                <label class="field"><span>{{ t('proxy.editor.retries') }}</span><input v-model.number="form.retries" type="number" min="0" max="3" class="mono" /></label>
+              </div>
               <div class="switch-row">
                 <label class="switch-field"><span>{{ t('proxy.editor.autoStart') }}</span><button type="button" class="switch" :class="{ on: form.autoStart }" @click="form.autoStart = !form.autoStart"><i /></button></label>
                 <label class="switch-field"><span>{{ t('proxy.editor.tls') }}</span><button type="button" class="switch" :class="{ on: form.tls }" @click="form.tls = !form.tls"><i /></button></label>
