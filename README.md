@@ -29,12 +29,12 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 
 ![HTTP Studio](docs/screenshots/http-studio.png)
 
-## What is in 0.4.1
+## What is in 0.4.2
 
 | Area | Status |
 | --- | --- |
 | HTTP/1.1 request debugger with headers, body, timing and history | ✅ Stable |
-| gzip / deflate / brotli decoding with a raw-body toggle | ✅ New in 0.4.1 |
+| gzip / deflate / brotli decoding with a raw-body toggle | ✅ New in 0.4.2 |
 | HTTP/2 over TLS with ALPN, stream IDs, GOAWAY and frame summary | ✅ New in 0.4.0 |
 | Response preview: sandboxed HTML, images, audio, video and PDF | ✅ Stable (opt-in scripts) |
 | Chinese / English UI with browser-language detection and manual switch | ✅ Stable |
@@ -71,10 +71,10 @@ than falling back to a direct connection.
 
 ## Download
 
-Prebuilt **v0.4.1** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.4.1):
+Prebuilt **v0.4.2** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.4.2):
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.4.1-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.4.2-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 The Windows executable and installer share the uvscope icon; Linux packages install the hicolor
