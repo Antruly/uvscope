@@ -34,6 +34,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Area | Status |
 | --- | --- |
 | HTTP/1.1 request debugger with headers, body, timing and history | ✅ Stable |
+| Request body modes: raw, form-urlencoded, multipart with files | ✅ New in 0.5.1 |
 | gzip / deflate / brotli decoding with a raw-body toggle | ✅ New in 0.4.2 |
 | Large-response streaming download with progress and cancel | ✅ New in 0.4.3 |
 | HTTP/2 over TLS with ALPN, stream IDs, GOAWAY and frame summary | ✅ New in 0.4.0 |
@@ -60,7 +61,8 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Audit log and active session revocation | ✅ New in 0.5.0 |
 | SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
 | Module toggles, factory reset, update check, about/help | ✅ Stable |
-| HTTP/3 and QUIC transports | 🗺️ Roadmap |
+| HTTP/3 and QUIC transports | 🧪 Experimental — needs an OpenSSL 3.6+ SDK build |
+| QUIC client probe and echo server | 🧪 Experimental in the OpenSSL 3.6+/QUIC-enabled SDK |
 
 HTTP/2 is the supported alternate transport: selecting H2 negotiates ALPN `h2` and returns the
 stream ID, GOAWAY state and the first 200 received frames. HTTP/3 and raw QUIC remain closed in

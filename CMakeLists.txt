@@ -155,6 +155,7 @@ set(UVSCOPE_SOURCES
   src/http_probe.cpp
   src/net_probe.cpp
   src/preview_store.cpp
+  src/quic_manager.cpp
   src/proxy_manager.cpp
   src/socks5_manager.cpp
   src/socks5_proxy.cpp

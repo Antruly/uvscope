@@ -70,6 +70,16 @@ done
 # validated a release path yet.
 UVCPP_ENABLE_NGHTTP2="${UVCPP_ENABLE_NGHTTP2:-ON}"
 UVCPP_ENABLE_BROTLI="${UVCPP_ENABLE_BROTLI:-ON}"
+# Experimental: QUIC/HTTP/3 need mainline OpenSSL >= 3.2 (QUIC API) and are off in
+# release builds. Set both to ON and point OPENSSL_ROOT_DIR at a 3.2+ prefix.
+UVCPP_ENABLE_QUIC="${UVCPP_ENABLE_QUIC:-OFF}"
+UVCPP_ENABLE_HTTP3="${UVCPP_ENABLE_HTTP3:-${UVCPP_ENABLE_QUIC}}"
+# A QUIC build needs a different OpenSSL (>= 3.2). Keep its CMake cache separate so
+# switching flags never reuses a cached system OpenSSL.
+BUILD_DIR="${SRC_DIR}/build-uvscope"
+if [[ "${UVCPP_ENABLE_QUIC}" == "ON" ]]; then
+  BUILD_DIR="${SRC_DIR}/build-uvscope-quic"
+fi
 extra_cmake=()
 if [[ "$(uname -s)" == "Darwin" ]]; then
   extra_cmake+=("-DCMAKE_INSTALL_RPATH=@loader_path")
@@ -87,7 +97,7 @@ if [[ -n "${CMAKE_PREFIX_PATH:-}" ]]; then
   export CMAKE_PREFIX_PATH
 fi
 
-cmake -S "${CMAKE_SRC}" -B "${CMAKE_SRC}/build-uvscope" \
+cmake -S "${CMAKE_SRC}" -B "${BUILD_DIR}" \
   -G "${CMAKE_GENERATOR:-Ninja}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${CMAKE_PREFIX}" \
@@ -99,8 +109,8 @@ cmake -S "${CMAKE_SRC}" -B "${CMAKE_SRC}/build-uvscope" \
   -DUVCPP_ENABLE_BROTLI="${UVCPP_ENABLE_BROTLI}" \
   -DUVCPP_BROTLI_FROM_SOURCE=ON \
   -DUVCPP_ENABLE_NGHTTP2="${UVCPP_ENABLE_NGHTTP2}" \
-  -DUVCPP_ENABLE_QUIC=OFF \
-  -DUVCPP_ENABLE_HTTP3=OFF \
+  -DUVCPP_ENABLE_QUIC="${UVCPP_ENABLE_QUIC}" \
+  -DUVCPP_ENABLE_HTTP3="${UVCPP_ENABLE_HTTP3}" \
   -DUVCPP_ENABLE_WSDL=ON \
   -DUVCPP_ENABLE_DB=ON \
   -DUVCPP_ENABLE_DB_SQLITE=ON \
@@ -119,13 +129,13 @@ cmake -S "${CMAKE_SRC}" -B "${CMAKE_SRC}/build-uvscope" \
   -DUVCPP_BUILD_STATIC=OFF \
   "${extra_cmake[@]}"
 
-cmake --build "${CMAKE_SRC}/build-uvscope" -j "${JOBS}"
-cmake --install "${CMAKE_SRC}/build-uvscope"
+cmake --build "${BUILD_DIR}" -j "${JOBS}"
+cmake --install "${BUILD_DIR}"
 
 # On MinGW, llhttp is linked as a DLL but upstream's install rules do not
 # always place it in the SDK. Carry it beside libuvcpp.dll.
 if [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]]; then
-  find "${SRC_DIR}/build-uvscope" -name 'libllhttp.dll' -type f | while read -r dll; do
+  find "${BUILD_DIR}" -name 'libllhttp.dll' -type f | while read -r dll; do
     mkdir -p "${PREFIX}/bin"
     cp -f "${dll}" "${PREFIX}/bin/"
     echo "installed $(basename "${dll}")"

@@ -17,6 +17,7 @@
 #include "download_manager.h"
 #include "preview_store.h"
 #include "proxy_manager.h"
+#include "quic_manager.h"
 #include "socks5_manager.h"
 #include "store.h"
 #include "terminal_manager.h"
@@ -68,6 +69,7 @@ class Application {
   void register_socks5_routes();
   void register_terminal_routes();
   void register_ws_routes();
+  void register_quic_routes();
   void register_certificate_routes();
   void register_proxy_routes();
   void register_admin_routes();
@@ -94,6 +96,7 @@ class Application {
   std::unique_ptr<TerminalManager> terminal_;
   std::unique_ptr<DownloadManager> downloads_;
   std::unique_ptr<WsManager> ws_;
+  std::unique_ptr<QuicManager> quic_;
   std::unique_ptr<CertificateManager> certificates_;
   PreviewStore previews_;
   uvcpp::uvcpp_web_app app_;

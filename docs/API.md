@@ -94,6 +94,10 @@ without an explicit `user-agent` is sent with a current browser UA plus a `uvsco
 token, so sites that serve bot or JS-redirect shims to unknown clients still return their normal
 HTML; an explicit header always wins.
 
+The request body is a UTF-8 string by default. Set `bodyEncoding: "base64"` to send arbitrary
+bytes (the daemon decodes it before constructing the request); this is how the browser-built
+`multipart/form-data` body is forwarded. The same field is accepted by `/api/http/download`.
+
 `decompress` (default `true`) advertises `accept-encoding: gzip, deflate, br` unless the request
 already has one, and decodes the response body. The result then carries:
 
@@ -157,6 +161,21 @@ unguessable token, but the file is always sent as `application/octet-stream` so 
 never execute on the uvscope origin. Jobs belong to their creator (admins see all), are capped
 at 512 MiB, can be cancelled with `DELETE /api/http/download/:id`, and are pruned 10 minutes
 after they finish. Staged files do not survive a daemon restart.
+
+### QUIC (experimental)
+
+`POST /api/quic/probe` takes `{host, port, alpn, payload, encoding, timeoutMs, verify}` and
+returns `{ok, streamId, negotiatedAlpn, replyText | replyBase64, replySize, timing}`. The client
+uses TLS 1.3 and does not verify the certificate by default; `verify: true` uses the system CA
+bundle and strict verification. A QUIC-enabled SDK is required; otherwise the result is
+`{ok: false, code: "unsupported"}` with the build reason.
+
+`/api/quic/servers` creates and manages QUIC listeners:
+`POST {name, host, port, alpn, certPath, keyPath, echo, start}`; `GET` lists them;
+`POST /:id/start|stop`, `DELETE /:id` and `GET /:id/events?after=&limit=` follow the same shapes
+as TCP/UDP listeners. When `certPath`/`keyPath` are empty the server generates a self-signed
+certificate in memory. With `echo: true` (default) received stream bytes are written back and
+datagrams are echoed. Servers are not persisted across daemon restarts.
 
 ### Backend WebSocket sessions
 

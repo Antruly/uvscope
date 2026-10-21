@@ -17,6 +17,7 @@
 #include <uv.h>
 #include <nlohmann/json.hpp>
 #include <req/uvcpp_work.h>
+#include <uvcpp/uvcpp_config.h>
 #include <uvcpp/uvcpp_threadpool.h>
 #include <uvcpp/uvcpp_version.h>
 #include <ssl/uvcpp_ssl_context.h>
@@ -378,6 +379,21 @@ std::vector<HttpHeaderInput> header_fields(const nlohmann::json& body) {
   return headers;
 }
 
+bool decode_body(const HttpProbeInput& input, std::string* body_out,
+                 std::string* error) {
+  if (input.body_encoding != "base64") {
+    *body_out = input.body;
+    return true;
+  }
+  const auto decoded = base64_decode(input.body);
+  if (!decoded) {
+    if (error) *error = "body is not valid base64";
+    return false;
+  }
+  *body_out = *decoded;
+  return true;
+}
+
 void audit_event(Store& store, const uvcpp::uvcpp_web_request& req,
                  const User& user, const std::string& action,
                  const std::string& target, const std::string& detail) {
@@ -396,6 +412,7 @@ HttpProbeInput http_input_field(const nlohmann::json& body) {
   input.method = string_field(body, "method", "GET");
   input.headers = header_fields(body);
   input.body = string_field(body, "body");
+  input.body_encoding = lower(string_field(body, "bodyEncoding", "text"));
   input.timeout_ms = int_field(body, "timeoutMs", 20000);
   input.protocol = string_field(body, "protocol", "auto");
   input.insecure = bool_field(body, "insecure", false);
@@ -525,6 +542,7 @@ bool Application::initialize() {
   certificates_.reset(new CertificateManager(options_.data_dir / "certs"));
   downloads_.reset(new DownloadManager(options_.data_dir));
   ws_.reset(new WsManager());
+  quic_.reset(new QuicManager());
   terminal_.reset(new TerminalManager());
   if (!terminal_->available()) {
     std::fprintf(stderr, "uvscope: terminal sessions unavailable: %s\n",
@@ -563,6 +581,7 @@ bool Application::initialize() {
   register_socks5_routes();
   register_terminal_routes();
   register_ws_routes();
+  register_quic_routes();
   register_certificate_routes();
   register_proxy_routes();
   register_admin_routes();
@@ -636,6 +655,7 @@ int Application::run() {
   if (proxies_) proxies_->stop_all();
   if (downloads_) downloads_.reset();
   if (ws_) ws_.reset();
+  if (quic_) quic_.reset();
   store_.close();
   return 0;
 }
@@ -708,7 +728,12 @@ void Application::register_public_routes() {
                     std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::steady_clock::now() - started_)
                         .count()},
-                   {"setupRequired", !store_.initialized()}});
+                   {"setupRequired", !store_.initialized()},
+                   {"capabilities",
+                    {{"http2", UVCPP_NGHTTP2_ENABLE != 0},
+                     {"http3", UVCPP_HTTP3_ENABLE != 0},
+                     {"quic", UVCPP_QUIC_ENABLE != 0},
+                     {"brotli", UVCPP_BROTLI_ENABLE != 0}}}});
   });
 
   app_.get("/api/setup/status", [this](uvcpp::uvcpp_web_request&, uvcpp::uvcpp_web_response& resp,
@@ -1016,9 +1041,14 @@ void Application::register_debug_routes() {
     if (!principal) return;
     const auto body = parse_json(req, resp);
     if (!body) return;
-    const HttpProbeInput input = http_input_field(*body);
+    HttpProbeInput input = http_input_field(*body);
     if (input.url.empty()) {
       send_error(resp, 400, "url is required", "bad_request");
+      return;
+    }
+    std::string body_error;
+    if (!decode_body(input, &input.body, &body_error)) {
+      send_error(resp, 400, body_error, "bad_request");
       return;
     }
     post_job(
@@ -1046,9 +1076,14 @@ void Application::register_debug_routes() {
     if (!principal) return;
     const auto body = parse_json(req, resp);
     if (!body) return;
-    const HttpProbeInput input = http_input_field(*body);
+    HttpProbeInput input = http_input_field(*body);
     if (input.url.empty()) {
       send_error(resp, 400, "url is required", "bad_request");
+      return;
+    }
+    std::string body_error;
+    if (!decode_body(input, &input.body, &body_error)) {
+      send_error(resp, 400, body_error, "bad_request");
       return;
     }
     if (!downloads_) {
@@ -2434,6 +2469,173 @@ void Application::register_ws_routes() {
       return;
     }
     send_json(resp, 200, {{"ok", true}});
+  });
+}
+
+// ---------------------------------------------------------------------------
+// QUIC (experimental)
+// ---------------------------------------------------------------------------
+void Application::register_quic_routes() {
+  app_.post("/api/quic/probe", [this](uvcpp::uvcpp_web_request& req,
+                                      uvcpp::uvcpp_web_response& resp,
+                                      uvcpp::uvcpp_web_next next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    QuicProbeInput input;
+    input.host = string_field(*body, "host");
+    input.port = int_field(*body, "port", 443);
+    input.alpn = string_field(*body, "alpn", "h3");
+    input.payload = string_field(*body, "payload");
+    input.encoding = lower(string_field(*body, "encoding", "text"));
+    input.timeout_ms = int_field(*body, "timeoutMs", 10000);
+    input.verify = bool_field(*body, "verify", false);
+    if (input.encoding == "hex") {
+      const auto decoded = hex_decode(input.payload);
+      if (!decoded) {
+        send_error(resp, 400, "payload is not valid hex", "bad_request");
+        return;
+      }
+      input.payload = *decoded;
+    }
+    if (input.host.empty() || input.port <= 0) {
+      send_error(resp, 400, "host and port are required", "bad_request");
+      return;
+    }
+    if (!quic_) {
+      send_error(resp, 503, "QUIC is unavailable", "unavailable");
+      return;
+    }
+    post_job([this, input] { return JobResult{200, quic_->probe(input)}; }, &resp,
+             next);
+  });
+
+  app_.get("/api/quic/servers", [this](uvcpp::uvcpp_web_request& req,
+                                       uvcpp::uvcpp_web_response& resp,
+                                       uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    if (!quic_) {
+      send_json(resp, 200, {{"ok", true},
+                            {"servers", nlohmann::json::array()},
+                            {"available", false},
+                            {"reason", QuicManager::unavailable_reason()}});
+      return;
+    }
+    nlohmann::json out = quic_->servers();
+    out["available"] = QuicManager::compiled();
+    out["reason"] = QuicManager::compiled() ? "" : QuicManager::unavailable_reason();
+    send_json(resp, 200, out);
+  });
+
+  app_.post("/api/quic/servers", [this](uvcpp::uvcpp_web_request& req,
+                                        uvcpp::uvcpp_web_response& resp,
+                                        uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    QuicServerConfig config;
+    config.name = string_field(*body, "name");
+    config.host = string_field(*body, "host", "127.0.0.1");
+    config.port = int_field(*body, "port", 4433);
+    config.alpn = string_field(*body, "alpn", "h3");
+    config.cert_path = string_field(*body, "certPath");
+    config.key_path = string_field(*body, "keyPath");
+    config.echo = bool_field(*body, "echo", true);
+    config.auto_start = bool_field(*body, "start", false);
+    if (config.port < 1 || config.port > 65535) {
+      send_error(resp, 400, "port must be between 1 and 65535", "bad_request");
+      return;
+    }
+    if (!quic_) {
+      send_error(resp, 503, QuicManager::unavailable_reason(), "unsupported");
+      return;
+    }
+    std::string error;
+    const auto created = quic_->add_server(config, &error);
+    if (created.is_null()) {
+      send_error(resp, 400, error.empty() ? "could not create QUIC server" : error,
+                 "unsupported");
+      return;
+    }
+    const std::string id = created.value("id", std::string());
+    nlohmann::json out = quic_->servers();
+    if (config.auto_start && !quic_->start_server(id, &error)) {
+      out["warning"] = error;
+    }
+    send_json(resp, 200, out);
+  });
+
+  app_.post("/api/quic/servers/:id/start", [this](uvcpp::uvcpp_web_request& req,
+                                                   uvcpp::uvcpp_web_response& resp,
+                                                   uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::string error;
+    if (!id || !quic_ || !quic_->start_server(*id, &error)) {
+      send_error(resp, 400, error.empty() ? "could not start QUIC server" : error,
+                 "quic_failed");
+      return;
+    }
+    send_json(resp, 200, quic_->servers());
+  });
+
+  app_.post("/api/quic/servers/:id/stop", [this](uvcpp::uvcpp_web_request& req,
+                                                  uvcpp::uvcpp_web_response& resp,
+                                                  uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::string error;
+    if (!id || !quic_ || !quic_->stop_server(*id, &error)) {
+      send_error(resp, 400, error.empty() ? "could not stop QUIC server" : error,
+                 "quic_failed");
+      return;
+    }
+    send_json(resp, 200, quic_->servers());
+  });
+
+  app_.del("/api/quic/servers/:id", [this](uvcpp::uvcpp_web_request& req,
+                                            uvcpp::uvcpp_web_response& resp,
+                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::string error;
+    if (!id || !quic_ || !quic_->remove_server(*id, &error)) {
+      send_error(resp, 404, error.empty() ? "QUIC server not found" : error, "not_found");
+      return;
+    }
+    send_json(resp, 200, quic_->servers());
+  });
+
+  app_.get("/api/quic/servers/:id/events", [this](uvcpp::uvcpp_web_request& req,
+                                                   uvcpp::uvcpp_web_response& resp,
+                                                   uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::uint64_t after = 0;
+    if (const std::string* value = req.query("after")) {
+      after = std::strtoull(value->c_str(), nullptr, 10);
+    }
+    int limit = 200;
+    if (const std::string* value = req.query("limit")) {
+      limit = std::atoi(value->c_str());
+    }
+    if (!id || !quic_) {
+      send_error(resp, 404, "QUIC server not found", "not_found");
+      return;
+    }
+    nlohmann::json out = quic_->server_events(*id, after, limit);
+    if (out.is_null()) {
+      send_error(resp, 404, "QUIC server not found", "not_found");
+      return;
+    }
+    send_json(resp, 200, out);
   });
 }
 

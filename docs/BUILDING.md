@@ -32,6 +32,28 @@ pin another release, `UVCPP_ENABLE_NGHTTP2=OFF` to build without HTTP/2, or
 `UVCPP_ENABLE_BROTLI=OFF` to build without brotli (the daemon then advertises and decodes only
 gzip/deflate; the smoke test skips its brotli assertion).
 
+### Experimental HTTP/3 and QUIC
+
+libuvcpp's QUIC and HTTP/3 modules need an OpenSSL with `SSL_set_quic_tls_cbs`; that API is
+only in OpenSSL **3.6+**. The OpenSSL shipped by Ubuntu 22.04/24.04 (3.0.x), mainline 3.4/3.5
+and quictls do not have it, and the bundled ngtcp2 1.25 backend rejects them. Release builds
+therefore keep `UVCPP_ENABLE_QUIC=OFF`. To build an experimental SDK, compile OpenSSL 3.6+ into
+a prefix and point both the SDK and uvscope at it:
+
+```sh
+export UVCPP_ENABLE_QUIC=ON UVCPP_ENABLE_HTTP3=ON
+export OPENSSL_ROOT_DIR=/path/to/openssl-3.6
+export LD_LIBRARY_PATH=/path/to/openssl-3.6/lib:$LD_LIBRARY_PATH
+./scripts/build-libuvcpp.sh .deps/libuvcpp-src .deps/libuvcpp-quic
+cmake -S . -B build-quic -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DUVCPP_ROOT="$PWD/.deps/libuvcpp-quic" -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR" \
+  -DCMAKE_BUILD_RPATH="$OPENSSL_ROOT_DIR/lib"
+```
+
+The resulting daemon reports `http3: true` / `quic: true` from `/api/health`; packages built this
+way must ship or require that OpenSSL. Do not mix a custom OpenSSL with the system one in release
+artifacts.
+
 To use an existing SDK:
 
 ```sh

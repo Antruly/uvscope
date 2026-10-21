@@ -291,6 +291,13 @@ if command -v node >/dev/null 2>&1; then
   COMP_RAW="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/http/send" \
     -H 'content-type: application/json' \
     -d "{\"url\":\"http://127.0.0.1:${COMP_PORT}/gzip\",\"method\":\"GET\",\"headers\":[],\"body\":\"\",\"timeoutMs\":5000,\"decompress\":false}")"
+  BODY_BASE64="$(printf 'hello-binary' | base64 -w0)"
+  BODY_BINARY_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/http/send" \
+    -H 'content-type: application/json' \
+    -d "{\"url\":\"http://127.0.0.1:${COMP_PORT}/echo-body\",\"method\":\"POST\",\"headers\":[{\"name\":\"content-type\",\"value\":\"application/octet-stream\"}],\"body\":\"${BODY_BASE64}\",\"bodyEncoding\":\"base64\",\"timeoutMs\":5000,\"decompress\":false}")"
+  BODY_FORM_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/http/send" \
+    -H 'content-type: application/json' \
+    -d "{\"url\":\"http://127.0.0.1:${COMP_PORT}/echo-body\",\"method\":\"POST\",\"headers\":[{\"name\":\"content-type\",\"value\":\"application/x-www-form-urlencoded\"}],\"body\":\"a=1&b=hello%20world\",\"timeoutMs\":5000,\"decompress\":false}")"
 else
   echo "skipping compression smoke: node is not available" >&2
 fi
@@ -403,7 +410,8 @@ curl -fsS -b "${COOKIE_JAR}" -X DELETE "http://127.0.0.1:${PORT}/api/tcp/session
 HTTP_RESULT="${HTTP_RESULT}" PROXY_RESULT="${PROXY_RESULT}" PROXIED="${PROXIED}" \
 H2_RESULT="${H2_RESULT}" \
 COMP_GZIP="${COMP_GZIP}" COMP_DEFLATE="${COMP_DEFLATE}" COMP_BR="${COMP_BR}" \
-COMP_RAW="${COMP_RAW}" \
+COMP_RAW="${COMP_RAW}" BODY_BINARY_RESULT="${BODY_BINARY_RESULT}" \
+BODY_FORM_RESULT="${BODY_FORM_RESULT}" \
 REDIRECT_HEADERS="${REDIRECT_HEADERS}" REWRITTEN="${REWRITTEN}" \
 METHOD_POST="${METHOD_POST}" METHOD_GET="${METHOD_GET}" \
 HEADER_HIT="${HEADER_HIT}" HEADER_MISS="${HEADER_MISS}" \
@@ -473,6 +481,18 @@ for label, env_name, encoding in (
     check(info.get("wireBodySize", 0) > 0 and
           info.get("wireBodySize", 0) < info.get("bodySize", 0),
           f"{label} wire/decoded sizes look wrong: {info}")
+
+if os.environ.get("BODY_BINARY_RESULT"):
+    binary = json.loads(os.environ["BODY_BINARY_RESULT"])
+    check(binary.get("ok") is True, f"base64 body probe failed: {binary.get('error')}")
+    check(binary.get("bodyText") == "hello-binary",
+          f"base64 body was not forwarded: {binary.get('bodyText')!r}")
+
+if os.environ.get("BODY_FORM_RESULT"):
+    form = json.loads(os.environ["BODY_FORM_RESULT"])
+    check(form.get("ok") is True, f"form body probe failed: {form.get('error')}")
+    check(form.get("bodyText") == "a=1&b=hello%20world",
+          f"urlencoded body was not forwarded: {form.get('bodyText')!r}")
 
 if os.environ.get("COMP_RAW"):
     raw_result = json.loads(os.environ["COMP_RAW"])

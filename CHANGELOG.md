@@ -4,6 +4,25 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- HTTP Studio request bodies have three modes: raw (the existing JSON/XML/text/binary editor),
+  `application/x-www-form-urlencoded` built from key/value rows, and `multipart/form-data` with
+  text fields and file inputs (files are read in the browser, max 8 MiB). Binary bodies are sent
+  to the daemon as base64 (`bodyEncoding: "base64"`) and forwarded byte-for-byte.
+- Experimental QUIC transport: `POST /api/quic/probe` connects with TLS 1.3/ALPN, opens one
+  bidirectional stream, sends a payload and returns the reply; QUIC servers can be created,
+  started, stopped and inspected through `/api/quic/servers`, echo streams/datagrams by default,
+  and use a configured certificate/key pair or generate a self-signed certificate in memory.
+  The client does not verify certificates unless `verify: true` is set. The Transport page has a
+  QUIC mode with ALPN/verify controls and a server manager. This requires an SDK built with
+  `UVCPP_ENABLE_QUIC=ON` and OpenSSL 3.6+; release builds report `quic: false` and disable it.
+- `/api/health` reports build capabilities (`http2`, `http3`, `quic`, `brotli`). The HTTP Studio
+  disables H2/H3 when the running SDK lacks them and explains the requirement in the tooltip;
+  HTTP/3 and QUIC remain experimental and are disabled in release builds.
+
 ## [0.5.0] - 2026-10-21
 
 ### Added

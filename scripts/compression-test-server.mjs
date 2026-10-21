@@ -23,6 +23,20 @@ const encoders = {
 }
 
 const server = http.createServer((request, response) => {
+  if (request.url === '/echo-body') {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', () => {
+      const body = Buffer.concat(chunks)
+      response.writeHead(200, {
+        'content-type': request.headers['content-type'] || 'application/octet-stream',
+        'content-length': body.length,
+        'cache-control': 'no-store',
+      })
+      response.end(body)
+    })
+    return
+  }
   if (request.url === '/big.bin') {
     response.writeHead(200, {
       'content-type': 'application/octet-stream',

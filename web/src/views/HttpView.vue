@@ -39,6 +39,12 @@ const bodyType = ref('application/json')
 const timeoutMs = ref(20000)
 const insecure = ref(false)
 const decompress = ref(true)
+const bodyMode = ref<'raw' | 'urlencoded' | 'multipart'>('raw')
+const urlEncodedFields = ref<Array<{ name: string; value: string }>>([{ name: '', value: '' }])
+const multipartFields = ref<Array<{ name: string; value: string; kind: 'text' | 'file'; file: File | null }>>([
+  { name: '', value: '', kind: 'text', file: null },
+])
+const capabilities = ref({ http2: true, http3: false, quic: false, brotli: true })
 const downloading = ref(false)
 const downloadState = ref<HttpDownload | null>(null)
 let downloadTimer: number | undefined
@@ -261,9 +267,86 @@ async function copy(text: string) {
   }
 }
 
-function buildPayload() {
+function addUrlEncodedField() {
+  urlEncodedFields.value.push({ name: '', value: '' })
+}
+
+function removeUrlEncodedField(index: number) {
+  urlEncodedFields.value.splice(index, 1)
+}
+
+function addMultipartField() {
+  multipartFields.value.push({ name: '', value: '', kind: 'text', file: null })
+}
+
+function removeMultipartField(index: number) {
+  multipartFields.value.splice(index, 1)
+}
+
+function pickMultipartFile(field: { file: File | null }, event: Event) {
+  field.file = (event.target as HTMLInputElement).files?.[0] ?? null
+}
+
+function multipartName(value: string): string {
+  return value.replace(/["\r\n]/g, '_')
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
+async function buildPayload() {
   const outgoing = cleanHeaders()
-  if (body.value && !outgoing.some((header) => header.name.toLowerCase() === 'content-type')) {
+  let requestBody = body.value
+  let bodyEncoding = 'text'
+  let derivedContentType = ''
+  if (bodyMode.value === 'urlencoded') {
+    const params = new URLSearchParams()
+    for (const field of urlEncodedFields.value) {
+      if (field.name.trim()) params.append(field.name.trim(), field.value)
+    }
+    requestBody = params.toString()
+    derivedContentType = 'application/x-www-form-urlencoded'
+  } else if (bodyMode.value === 'multipart') {
+    const boundary = `----uvscope${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`
+    const parts: BlobPart[] = []
+    for (const field of multipartFields.value) {
+      const name = field.name.trim()
+      if (!name) continue
+      if (field.kind === 'file' && field.file) {
+        parts.push(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${multipartName(name)}"; ` +
+            `filename="${multipartName(field.file.name)}"\r\n` +
+            `Content-Type: ${field.file.type || 'application/octet-stream'}\r\n\r\n`,
+        )
+        parts.push(field.file)
+        parts.push('\r\n')
+      } else if (field.kind === 'text') {
+        parts.push(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${multipartName(name)}"\r\n\r\n` +
+            `${field.value}\r\n`,
+        )
+      }
+    }
+    parts.push(`--${boundary}--\r\n`)
+    const blob = new Blob(parts)
+    if (blob.size > 8 * 1024 * 1024) throw new Error(t('http.body.tooLarge'))
+    requestBody = bytesToBase64(new Uint8Array(await blob.arrayBuffer()))
+    bodyEncoding = 'base64'
+    derivedContentType = `multipart/form-data; boundary=${boundary}`
+  }
+  const contentTypeIndex = outgoing.findIndex(
+    (header) => header.name.toLowerCase() === 'content-type',
+  )
+  if (derivedContentType) {
+    if (contentTypeIndex >= 0) outgoing.splice(contentTypeIndex, 1)
+    outgoing.push({ name: 'content-type', value: derivedContentType })
+  } else if (requestBody && contentTypeIndex < 0) {
     outgoing.push({ name: 'content-type', value: bodyType.value })
   }
   return {
@@ -271,7 +354,8 @@ function buildPayload() {
     method: method.value,
     protocol: protocol.value,
     headers: outgoing,
-    body: body.value,
+    body: requestBody,
+    bodyEncoding,
     timeoutMs: timeoutMs.value,
     insecure: insecure.value,
     decompress: decompress.value,
@@ -300,7 +384,7 @@ async function send() {
     elapsed.value = Math.round(performance.now() - startedAt.value)
   }, 100)
   try {
-    result.value = await post<HttpResult>('/api/http/send', buildPayload())
+    result.value = await post<HttpResult>('/api/http/send', await buildPayload())
     responseTab.value = 'body'
     await loadHistory()
     if (!result.value.ok) ui.notify('error', t('http.requestFailed'), result.value.error)
@@ -369,7 +453,7 @@ async function startStreamDownload() {
   try {
     const response = await post<{ ok: boolean; error?: string; download?: HttpDownload }>(
       '/api/http/download',
-      buildPayload(),
+      await buildPayload(),
     )
     if (!response.ok || !response.download?.id) {
       throw new Error(response.error || t('http.download.failed'))
@@ -443,9 +527,19 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+async function loadCapabilities() {
+  try {
+    const health = await get<{ capabilities?: typeof capabilities.value }>('/api/health')
+    if (health.capabilities) capabilities.value = health.capabilities
+  } catch {
+    // Keep the conservative defaults; the API still reports unsupported builds.
+  }
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   void loadHistory()
+  void loadCapabilities()
 })
 onActivated(() => void loadHistory())
 onBeforeUnmount(() => {
@@ -497,8 +591,18 @@ onBeforeUnmount(() => {
           <div class="request-toolbar">
             <div class="protocol-switch" role="group" :aria-label="t('http.protocol.group')">
               <button :class="{ active: protocol === 'http1' }" @click="protocol = 'http1'">HTTP/1.1</button>
-              <button :class="{ active: protocol === 'http2' }" :title="t('http.protocol.http2Title')" @click="protocol = 'http2'">H2</button>
-              <button :class="{ active: protocol === 'http3' }" :title="t('http.protocol.http3Title')" @click="protocol = 'http3'">H3 <em>{{ t('http.protocol.experimental') }}</em></button>
+              <button
+                :class="{ active: protocol === 'http2' }"
+                :disabled="!capabilities.http2"
+                :title="capabilities.http2 ? t('http.protocol.http2Title') : t('http.protocol.http2Unavailable')"
+                @click="protocol = 'http2'"
+              >H2</button>
+              <button
+                :class="{ active: protocol === 'http3' }"
+                :disabled="!capabilities.http3"
+                :title="capabilities.http3 ? t('http.protocol.http3Title') : t('http.protocol.http3Unavailable')"
+                @click="protocol = 'http3'"
+              >H3 <em>{{ t('http.protocol.experimental') }}</em></button>
             </div>
             <div class="request-toolbar__right">
               <button class="ghost-toggle" :class="{ active: advancedOpen }" @click="advancedOpen = !advancedOpen">
@@ -536,17 +640,57 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-show="requestTab === 'body'" class="editor-pane">
-            <div class="body-toolbar">
-              <select v-model="bodyType" class="select">
-                <option value="application/json">JSON</option>
-                <option value="application/xml">XML</option>
-                <option value="text/plain">{{ t('http.body.typeText') }}</option>
-                <option value="application/x-www-form-urlencoded">{{ t('http.body.typeForm') }}</option>
-                <option value="application/octet-stream">{{ t('http.body.typeBinary') }}</option>
-              </select>
-              <span class="muted mono">{{ t('http.body.chars', { count: body.length }) }}</span>
+            <div class="body-mode">
+              <button :class="{ active: bodyMode === 'raw' }" @click="bodyMode = 'raw'">{{ t('http.body.mode.raw') }}</button>
+              <button :class="{ active: bodyMode === 'urlencoded' }" @click="bodyMode = 'urlencoded'">{{ t('http.body.mode.urlencoded') }}</button>
+              <button :class="{ active: bodyMode === 'multipart' }" @click="bodyMode = 'multipart'">{{ t('http.body.mode.multipart') }}</button>
             </div>
-            <textarea v-model="body" class="code-input" spellcheck="false" :placeholder="t('http.body.placeholder')" />
+
+            <template v-if="bodyMode === 'raw'">
+              <div class="body-toolbar">
+                <select v-model="bodyType" class="select">
+                  <option value="application/json">JSON</option>
+                  <option value="application/xml">XML</option>
+                  <option value="text/plain">{{ t('http.body.typeText') }}</option>
+                  <option value="application/x-www-form-urlencoded">{{ t('http.body.typeForm') }}</option>
+                  <option value="application/octet-stream">{{ t('http.body.typeBinary') }}</option>
+                </select>
+                <span class="muted mono">{{ t('http.body.chars', { count: body.length }) }}</span>
+              </div>
+              <textarea v-model="body" class="code-input" spellcheck="false" :placeholder="t('http.body.placeholder')" />
+            </template>
+
+            <template v-else-if="bodyMode === 'urlencoded'">
+              <div class="kv-head"><span>{{ t('http.body.fieldName') }}</span><span>{{ t('http.body.fieldValue') }}</span><span /></div>
+              <div v-for="(field, index) in urlEncodedFields" :key="index" class="kv-row">
+                <input v-model="field.name" :placeholder="t('http.body.fieldNamePlaceholder')" spellcheck="false" class="mono" />
+                <input v-model="field.value" :placeholder="t('http.body.fieldValuePlaceholder')" spellcheck="false" class="mono" />
+                <button class="icon-button icon-button--sm" :title="t('http.body.removeField')" @click="removeUrlEncodedField(index)"><Icon name="close" :size="14" /></button>
+              </div>
+              <button class="add-row" @click="addUrlEncodedField"><Icon name="plus" :size="14" />{{ t('http.body.addField') }}</button>
+              <p class="muted body-hint">{{ t('http.body.urlencodedHint') }}</p>
+            </template>
+
+            <template v-else>
+              <div class="multipart-row multipart-row--head">
+                <span>{{ t('http.body.fieldType') }}</span>
+                <span>{{ t('http.body.fieldName') }}</span>
+                <span>{{ t('http.body.fieldValue') }}</span>
+                <span />
+              </div>
+              <div v-for="(field, index) in multipartFields" :key="index" class="multipart-row">
+                <select v-model="field.kind" class="select select--compact">
+                  <option value="text">{{ t('http.body.fieldText') }}</option>
+                  <option value="file">{{ t('http.body.fieldFile') }}</option>
+                </select>
+                <input v-model="field.name" :placeholder="t('http.body.fieldNamePlaceholder')" spellcheck="false" class="mono" />
+                <input v-if="field.kind === 'text'" v-model="field.value" :placeholder="t('http.body.fieldValuePlaceholder')" spellcheck="false" class="mono" />
+                <input v-else type="file" class="mono" @change="pickMultipartFile(field, $event)" />
+                <button class="icon-button icon-button--sm" :title="t('http.body.removeField')" @click="removeMultipartField(index)"><Icon name="close" :size="14" /></button>
+              </div>
+              <button class="add-row" @click="addMultipartField"><Icon name="plus" :size="14" />{{ t('http.body.addField') }}</button>
+              <p class="muted body-hint">{{ t('http.body.multipartHint') }}</p>
+            </template>
           </div>
         </section>
 

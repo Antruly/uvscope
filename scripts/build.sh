@@ -31,6 +31,9 @@ sdk_is_current() {
   fi
   # The bundled WebSocket client patch adds handshake headers.
   grep -q "set_handshake_header" "${prefix}/include/web/uvcpp_ws_client.h" || return 1
+  if [[ "${UVCPP_ENABLE_QUIC:-OFF}" == "ON" ]]; then
+    grep -q '^#  define UVCPP_QUIC_ENABLE 1$' "${prefix}/include/uvcpp/uvcpp_config.h" || return 1
+  fi
   return 0
 }
 

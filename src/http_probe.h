@@ -19,6 +19,9 @@ struct HttpProbeInput {
   std::string method = "GET";
   std::vector<HttpHeaderInput> headers;
   std::string body;
+  // "text" (current behaviour) or "base64" for binary-safe payloads such as a
+  // browser-built multipart/form-data body.
+  std::string body_encoding = "text";
   int timeout_ms = 20000;
   std::string protocol = "auto";  // auto | http1 | http2 | http3
   bool insecure = false;
