@@ -143,6 +143,10 @@ function removeUpstream(index: number) {
   form.value.upstreams.splice(index, 1)
 }
 
+function unhealthyCount(proxy: ProxyInfo): number {
+  return (proxy.health || []).filter((item) => item.checked && !item.healthy).length
+}
+
 function addRule() {
   form.value.rules.push(blankRule())
 }
@@ -360,6 +364,7 @@ onBeforeUnmount(stopLogPolling)
           <div><strong>{{ proxy.metrics?.p50Ms ?? 0 }} / {{ proxy.metrics?.p95Ms ?? 0 }} ms</strong><span>{{ t('proxy.card.latency') }}</span></div>
         </div>
         <div v-if="proxy.lastError" class="proxy-error"><Icon name="alert" :size="14" />{{ proxy.lastError }}</div>
+        <div v-if="unhealthyCount(proxy)" class="proxy-error"><Icon name="alert" :size="14" />{{ t('proxy.card.unhealthy', { count: unhealthyCount(proxy) }) }}</div>
         <div class="proxy-card__actions">
           <button class="button" :class="{ 'button--danger': proxy.running }" :disabled="!canOperate" @click="toggle(proxy)">
             <Icon :name="proxy.running ? 'stop' : 'play'" :size="15" />{{ proxy.running ? t('proxy.card.stop') : t('proxy.card.start') }}

@@ -354,6 +354,24 @@ Every proxy snapshot in `GET /api/proxies` carries `metrics` computed from the l
 
 `requests`, `errors` and `bytes` remain lifetime totals for the running instance.
 
+### Upstream health
+
+Proxies with more than one upstream run an active TCP/TLS connect probe against each upstream
+every 10 seconds (3-second timeout). Snapshots include a `health` array:
+
+```json
+"health": [
+  {"url": "http://127.0.0.1:8001", "healthy": true, "checked": true,
+   "latencyMs": 2, "checkedAt": "2026-10-21T13:07:48Z", "error": ""},
+  {"url": "http://127.0.0.1:8002", "healthy": false, "checked": true,
+   "latencyMs": 1, "checkedAt": "2026-10-21T13:07:48Z", "error": "connection refused"}
+]
+```
+
+Healthy upstreams are preferred; an unhealthy upstream is skipped as long as at least one healthy
+one remains, and becomes eligible again automatically once a probe succeeds. The probe checks
+TCP reachability (and the TLS handshake for `https://`), not application-level health.
+
 ### Upstreams and retries
 
 `upstreams` is an optional array of `{"url": "http://…", "weight": 1}` objects (maximum 16,

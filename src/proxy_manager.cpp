@@ -5,8 +5,11 @@
 #include <ctime>
 #include <memory>
 #include <random>
+#include <condition_variable>
+#include <map>
 #include <regex>
 #include <sstream>
+#include <thread>
 
 #include <uv.h>
 #include <ssl/uvcpp_ssl_context.h>
@@ -164,6 +167,116 @@ struct ProxyManager::Runtime {
   mutable std::mutex metrics_mutex;
   std::deque<Sample> samples;
 
+  struct HealthState {
+    bool healthy = true;
+    bool checked = false;
+    long long latency_ms = 0;
+    std::string error;
+    std::string checked_at;
+  };
+  mutable std::mutex health_mutex;
+  std::map<std::string, HealthState> health;
+  std::thread health_thread;
+  std::mutex health_wait_mutex;
+  std::condition_variable health_cv;
+  std::atomic<bool> stop_health{false};
+
+  bool is_healthy(const std::string& url) const {
+    std::lock_guard<std::mutex> lock(health_mutex);
+    const auto it = health.find(url);
+    if (it == health.end() || !it->second.checked) return true;
+    return it->second.healthy;
+  }
+
+  nlohmann::json health_json() const {
+    std::lock_guard<std::mutex> lock(health_mutex);
+    nlohmann::json out = nlohmann::json::array();
+    std::vector<std::string> urls;
+    if (config.upstreams.empty()) urls.push_back(config.target);
+    else {
+      for (const auto& upstream : config.upstreams) urls.push_back(upstream.url);
+    }
+    for (const auto& url : urls) {
+      const auto it = health.find(url);
+      if (it == health.end()) {
+        out.push_back({{"url", url}, {"healthy", true}, {"checked", false},
+                       {"latencyMs", 0}, {"checkedAt", ""}, {"error", ""}});
+      } else {
+        out.push_back({{"url", url}, {"healthy", it->second.healthy},
+                       {"checked", it->second.checked},
+                       {"latencyMs", it->second.latency_ms},
+                       {"checkedAt", it->second.checked_at},
+                       {"error", it->second.error}});
+      }
+    }
+    return out;
+  }
+
+  void check_health() {
+    std::vector<std::string> urls;
+    if (config.upstreams.empty()) {
+      urls.push_back(config.target);
+    } else {
+      for (const auto& upstream : config.upstreams) urls.push_back(upstream.url);
+    }
+    for (const auto& url : urls) {
+      if (stop_health.load()) return;
+      HealthState state;
+      state.checked = true;
+      state.checked_at = now_iso8601();
+      const ParsedUrl parsed = parse_url(url);
+      if (!parsed.valid) {
+        state.healthy = false;
+        state.error = "invalid upstream URL";
+      } else {
+        std::unique_ptr<uvcpp::uvcpp_ssl_context> ssl;
+        const bool tls = parsed.scheme == "https";
+        if (tls) {
+          ssl.reset(new uvcpp::uvcpp_ssl_context(uvcpp::tls_mode::CLIENT,
+                                                 uvcpp::tls_version::TLS_1_2));
+          const std::string ca = find_ca_bundle(executable_dir(nullptr));
+          if (!ca.empty()) ssl->load_ca_file(ca);
+          ssl->set_verify_mode(uvcpp::tls_verify_mode::PEER_STRICT);
+        }
+        uvcpp::uvcpp_http_client client;
+        if (ssl) client.set_ssl_context(ssl.get());
+        const auto started = std::chrono::steady_clock::now();
+        const int rc = client.connect_wait(parsed.host.c_str(), parsed.port, 3000);
+        state.latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - started)
+                               .count();
+        state.healthy = rc == 0;
+        if (rc != 0) state.error = uv_error_string(rc);
+      }
+      {
+        std::lock_guard<std::mutex> lock(health_mutex);
+        health[url] = state;
+      }
+    }
+  }
+
+  void health_loop() {
+    while (!stop_health.load()) {
+      check_health();
+      std::unique_lock<std::mutex> lock(health_wait_mutex);
+      health_cv.wait_for(lock, std::chrono::seconds(10),
+                         [this] { return stop_health.load(); });
+    }
+  }
+
+  void start_health() {
+    if (config.upstreams.size() <= 1) return;
+    stop_health.store(false);
+    if (health_thread.joinable()) health_thread.join();
+    health_thread = std::thread([this] { health_loop(); });
+  }
+
+  void stop_health_checks() {
+    stop_health.store(true);
+    health_cv.notify_all();
+    if (health_thread.joinable()) health_thread.join();
+  }
+
   void record(int status, double latency_ms) {
     std::lock_guard<std::mutex> lock(metrics_mutex);
     samples.push_back({std::chrono::steady_clock::now(), status, latency_ms});
@@ -202,6 +315,18 @@ struct ProxyManager::Runtime {
           candidates.push_back(std::move(candidate));
         }
       }
+    }
+    bool any_healthy = false;
+    for (const auto& candidate : candidates) {
+      if (is_healthy(candidate.url)) any_healthy = true;
+    }
+    if (any_healthy) {
+      candidates.erase(
+          std::remove_if(candidates.begin(), candidates.end(),
+                         [this](const ProxyCandidate& candidate) {
+                           return !is_healthy(candidate.url);
+                         }),
+          candidates.end());
     }
     if (candidates.empty()) {
       errors.fetch_add(1);
@@ -456,6 +581,7 @@ struct ProxyManager::Runtime {
   }
 
   ~Runtime() {
+    stop_health_checks();
     if (app) {
       app->stop();
       app->join();
@@ -570,6 +696,7 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
   runtime->app = std::move(app);
   runtime->running.store(true);
   runtime->started_at = now_iso8601();
+  runtime->start_health();
   runtime->last_error.clear();
   runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
                     {"message", "proxy started on " + config->listen_host + ":" +
@@ -584,6 +711,7 @@ bool ProxyManager::stop(const std::string& id, std::string* error) {
     if (error) *error = "proxy not found";
     return false;
   }
+  runtime->stop_health_checks();
   if (runtime->app) {
     runtime->app->stop();
     runtime->app->join();
@@ -602,6 +730,7 @@ void ProxyManager::stop_all() {
     runtimes = runtimes_;
   }
   for (const auto& runtime : runtimes) {
+    runtime->stop_health_checks();
     if (runtime->app) {
       runtime->app->stop();
       runtime->app->join();
@@ -659,7 +788,8 @@ nlohmann::json ProxyManager::snapshot() const {
                    {"requests", runtime->requests.load()},
                    {"errors", runtime->errors.load()},
                    {"bytes", runtime->bytes.load()},
-                   {"metrics", runtime->metrics_snapshot()}});
+                   {"metrics", runtime->metrics_snapshot()},
+                   {"health", runtime->health_json()}});
   }
   return out;
 }

@@ -364,6 +364,8 @@ ALL_MISS="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5
 MULTI_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/proxies" \
   -H 'content-type: application/json' \
   -d "{\"name\":\"smoke-multi\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${MULTI_PORT},\"target\":\"http://127.0.0.1:${DEAD_PORT}\",\"upstreams\":[{\"url\":\"http://127.0.0.1:${DEAD_PORT}\",\"weight\":1},{\"url\":\"http://127.0.0.1:${PORT}\",\"weight\":1}],\"retries\":1,\"start\":true,\"rules\":[]}")"
+# Let the active health checker mark the dead upstream before the requests.
+sleep 1.2
 MULTI_STATUSES=""
 for _ in $(seq 1 10); do
   MULTI_STATUSES="${MULTI_STATUSES}$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${MULTI_PORT}/api/health") "
@@ -557,6 +559,7 @@ print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP se
 PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
+PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -1181,9 +1184,21 @@ check(metrics.get("status2xx", 0) > 0,
 check(metrics.get("p95Ms", 0) >= metrics.get("p50Ms", 0),
       f"proxy latency percentiles are inverted: {metrics}")
 
+multi_proxy = next((item for item in proxy_payload.get("proxies", [])
+                    if item.get("name") == "smoke-multi"), {})
+multi_health = multi_proxy.get("health", [])
+dead_entry = next((item for item in multi_health
+                   if os.environ["DEAD_PORT"] in item.get("url", "")), {})
+live_entry = next((item for item in multi_health
+                   if (":" + os.environ["PORT"]) in item.get("url", "")), {})
+check(dead_entry.get("checked") is True and dead_entry.get("healthy") is False,
+      f"dead upstream was not marked unhealthy: {dead_entry}")
+check(live_entry.get("checked") is True and live_entry.get("healthy") is True,
+      f"live upstream was not marked healthy: {live_entry}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks)")
 PY

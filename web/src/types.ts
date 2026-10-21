@@ -112,6 +112,14 @@ export interface ProxyInfo {
   requests: number
   errors: number
   bytes?: number
+  health?: Array<{
+    url: string
+    healthy: boolean
+    checked: boolean
+    latencyMs: number
+    checkedAt: string
+    error: string
+  }>
   metrics?: {
     windowSeconds: number
     qps: number

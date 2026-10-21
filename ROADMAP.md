@@ -60,7 +60,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Header / method / host routing conditions
 - [x] Multiple weighted upstreams and retry policy
 - [ ] WebSocket pass-through
-- [ ] Active upstream health checks
+- [x] Active upstream health checks
 - [x] Certificate import / self-sign / selection
 - [x] Per-instance QPS, latency and traffic metrics
 - [ ] Collections, environments and variable substitution

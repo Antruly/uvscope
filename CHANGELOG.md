@@ -8,6 +8,11 @@ All notable changes to uvscope are documented here. The format is based on
 
 ### Added
 
+- Proxies with more than one upstream now check each upstream actively: a background probe
+  performs a TCP/TLS connect every 10 seconds (3-second timeout), marks the result with latency
+  and the last error, and selection skips unhealthy upstreams while at least one healthy
+  upstream remains. `/api/proxies` exposes the per-upstream `health` array and the proxy card
+  warns when an upstream is unhealthy.
 - Each reverse proxy reports rolling metrics over a 60-second window: QPS, p50/p95 latency, and
   2xx/3xx/4xx/5xx status counts alongside the existing totals. The proxy card shows QPS and the
   latency percentiles; samples are kept in memory (2048 per instance) and reset when the daemon
