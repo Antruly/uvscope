@@ -273,3 +273,44 @@ export interface UpdateInfo {
   starCount?: number
   cached?: boolean
 }
+
+export interface WsSession {
+  id: string
+  ownerId?: number
+  owner?: string
+  url: string
+  state: 'connecting' | 'open' | 'closing' | 'closed' | 'error'
+  error?: string
+  createdAt?: string
+  connectedAt?: string
+  closedAt?: string
+  sentBytes: number
+  receivedBytes: number
+  frameCount: number
+  closeCode?: number
+  closeReason?: string
+  nextSeq: number
+}
+
+export interface WsEvent {
+  seq: number
+  type: string
+  at?: string
+  text?: string
+  base64?: string
+  encoding?: string
+  size?: number
+  truncated?: boolean
+  opcode?: string
+  opcodeId?: number
+  fin?: boolean
+  rsv1?: boolean
+  masked?: boolean
+  length?: number
+  code?: number
+  reason?: string
+  error?: string
+  closeCode?: number
+  closeReason?: string
+  status?: number
+}

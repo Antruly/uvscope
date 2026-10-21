@@ -21,6 +21,7 @@
 #include "store.h"
 #include "terminal_manager.h"
 #include "transport_manager.h"
+#include "ws_manager.h"
 
 namespace uvscope {
 
@@ -66,6 +67,7 @@ class Application {
   void register_debug_routes();
   void register_socks5_routes();
   void register_terminal_routes();
+  void register_ws_routes();
   void register_certificate_routes();
   void register_proxy_routes();
   void register_admin_routes();
@@ -91,6 +93,7 @@ class Application {
   std::unique_ptr<Socks5Manager> socks5_;
   std::unique_ptr<TerminalManager> terminal_;
   std::unique_ptr<DownloadManager> downloads_;
+  std::unique_ptr<WsManager> ws_;
   std::unique_ptr<CertificateManager> certificates_;
   PreviewStore previews_;
   uvcpp::uvcpp_web_app app_;

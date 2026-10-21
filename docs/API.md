@@ -36,6 +36,13 @@ Each module must be enabled in Settings and the role must have `debug`.
 | GET | `/api/http/download/:id` | Download progress/state |
 | DELETE | `/api/http/download/:id` | Cancel and delete a download (owner/admin) |
 | GET | `/download/:id` | Staged file (public by token, attachment only) |
+| POST | `/api/ws/sessions` | `{url, headers[], subprotocol, insecure, timeoutMs, proxy}` → backend WebSocket session |
+| GET | `/api/ws/sessions?all=` | List sessions (admin `all=1` sees every user) |
+| GET | `/api/ws/sessions/:id` | Session snapshot and counters |
+| GET | `/api/ws/sessions/:id/events?after=&limit=` | Incremental frame/message/close events |
+| POST | `/api/ws/sessions/:id/send` | `{type: text\|binary\|ping\|pong, payload, encoding}` |
+| POST | `/api/ws/sessions/:id/close` | `{code, reason}` → graceful Close frame |
+| DELETE | `/api/ws/sessions/:id` | Close and remove the session |
 | POST | `/api/tcp/probe` | `{host, port, payload, encoding, connectTimeoutMs, readTimeoutMs, proxy}` |
 | POST | `/api/udp/probe` | `{host, port, payload, encoding, timeoutMs, proxy}` |
 | POST | `/api/tcp/sessions` | `{host, port, connectTimeoutMs, proxy}` → persistent TCP session |
@@ -150,6 +157,29 @@ unguessable token, but the file is always sent as `application/octet-stream` so 
 never execute on the uvscope origin. Jobs belong to their creator (admins see all), are capped
 at 512 MiB, can be cancelled with `DELETE /api/http/download/:id`, and are pruned 10 minutes
 after they finish. Staged files do not survive a daemon restart.
+
+### Backend WebSocket sessions
+
+`POST /api/ws/sessions` connects from the daemon to a `ws://` or `wss://` URL. `headers` are added
+to the Upgrade request (`Authorization`, `Cookie`, `Origin`, `Sec-WebSocket-Protocol`, …); the
+standard handshake headers are reserved. `subprotocol` is a shortcut for
+`Sec-WebSocket-Protocol`, `insecure` disables TLS verification and `proxy` takes the same SOCKS5
+object as the HTTP probe. Each session runs on its own thread and loop.
+
+Snapshots carry `state` (`connecting`, `open`, `closing`, `closed`, `error`), byte/frame counters,
+close code/reason and `nextSeq`. Event types:
+
+- `connecting`, `open`, `closing`, `close` (`code`, `reason`), `error`;
+- `sent` (`opcode`, `size`);
+- `text` (`text`, `encoding`, `size`, `truncated`) and `binary` (`base64`, `size`, `truncated`);
+- `frame` (`opcode`, `opcodeId`, `fin`, `rsv1`, `masked`, `length`, optional `text`/`base64`,
+  `truncated`, and `closeCode`/`closeReason` on CLOSE). Frames are received frames only; payloads
+  are capped at 16 KiB in the event, while messages are capped at 256 KiB.
+
+`send` accepts `type: "text" | "binary" | "ping" | "pong"` and `encoding: "text" | "hex" |
+"base64"` (hex/base64 are decoded before sending). `close` sends a Close frame with the requested
+code and reason; a locally initiated close settles as `closed` once the peer answers or after a
+five-second grace period. `DELETE` sends `1001` and hides the session immediately.
 
 `POST /api/preview` stores a captured HTML document in memory (max 8 entries, 8 MiB each,
 120 s TTL) and returns a random token. `mode: "safe"` allows remote CSS/images/fonts/frames but

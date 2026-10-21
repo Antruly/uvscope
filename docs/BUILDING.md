@@ -23,8 +23,10 @@ Build the SDK from the release tag:
 ./scripts/build-libuvcpp.sh
 ```
 
-This clones `v1.8.2` into `.deps/libuvcpp-src`, builds a lean runtime (HTTP/1.1 + HTTP/2,
-WebSocket, webapp, SSL, SQLite, WSDL, brotli) and installs it to `.deps/libuvcpp`. A cached source
+This clones `v1.8.2` into `.deps/libuvcpp-src`, applies the patches in
+[`patches/upstream/`](../patches/upstream/) (currently the WebSocket handshake-header patch),
+builds a lean runtime (HTTP/1.1 + HTTP/2, WebSocket, webapp, SSL, SQLite, WSDL, brotli) and
+installs it to `.deps/libuvcpp`. A cached source
 tree on an older tag is moved to the requested release automatically. Set `LIBUVCPP_TAG=vX.Y.Z` to
 pin another release, `UVCPP_ENABLE_NGHTTP2=OFF` to build without HTTP/2, or
 `UVCPP_ENABLE_BROTLI=OFF` to build without brotli (the daemon then advertises and decodes only

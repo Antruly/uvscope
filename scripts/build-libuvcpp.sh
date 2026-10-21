@@ -45,6 +45,26 @@ if git -C "${SRC_DIR}" rev-parse --git-dir >/dev/null 2>&1; then
   fi
 fi
 
+# Local patches carried on top of the release tag. Each one must apply cleanly
+# (or already be present); see docs/LIBUVCPP_UPSTREAM.zh-CN.md.
+PATCH_DIR="${ROOT_DIR}/patches/upstream"
+shopt -s nullglob
+patches=("${PATCH_DIR}"/0*.patch)
+shopt -u nullglob
+for patch in "${patches[@]}"; do
+  name="$(basename "${patch}")"
+  if git -C "${SRC_DIR}" apply --check "${patch}" >/dev/null 2>&1; then
+    git -C "${SRC_DIR}" apply "${patch}"
+    echo "Applied ${name}."
+  elif git -C "${SRC_DIR}" apply --reverse --check "${patch}" >/dev/null 2>&1; then
+    echo "${name} already present."
+  else
+    echo "error: ${name} does not apply and is not already present in ${SRC_DIR}." >&2
+    echo "       Update the patch or point LIBUVCPP_TAG at the matching release." >&2
+    exit 1
+  fi
+done
+
 # HTTP/2 and brotli ship in the default SDK; set UVCPP_ENABLE_NGHTTP2=OFF or
 # UVCPP_ENABLE_BROTLI=OFF for a lean build. HTTP/3/QUIC stay closed: upstream has not
 # validated a release path yet.

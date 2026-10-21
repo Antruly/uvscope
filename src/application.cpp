@@ -471,6 +471,7 @@ bool Application::initialize() {
   }
   certificates_.reset(new CertificateManager(options_.data_dir / "certs"));
   downloads_.reset(new DownloadManager(options_.data_dir));
+  ws_.reset(new WsManager());
   terminal_.reset(new TerminalManager());
   if (!terminal_->available()) {
     std::fprintf(stderr, "uvscope: terminal sessions unavailable: %s\n",
@@ -508,6 +509,7 @@ bool Application::initialize() {
   register_debug_routes();
   register_socks5_routes();
   register_terminal_routes();
+  register_ws_routes();
   register_certificate_routes();
   register_proxy_routes();
   register_admin_routes();
@@ -580,6 +582,7 @@ int Application::run() {
   if (update_thread_.joinable()) update_thread_.join();
   if (proxies_) proxies_->stop_all();
   if (downloads_) downloads_.reset();
+  if (ws_) ws_.reset();
   store_.close();
   return 0;
 }
@@ -2127,6 +2130,199 @@ void Application::register_terminal_routes() {
                    const std::string hello = R"({"type":"attached","id":")" + *id + "\"}";
                    conn->send_text(hello.data(), hello.size());
                  });
+}
+
+// ---------------------------------------------------------------------------
+// Backend WebSocket sessions
+// ---------------------------------------------------------------------------
+void Application::register_ws_routes() {
+  auto can_access = [](const WsManager* manager, const std::string& id,
+                       const Principal& principal) {
+    std::int64_t owner = 0;
+    if (manager == nullptr || !manager->owner_of(id, &owner)) return false;
+    return principal.user.role == "admin" || owner == principal.user.id;
+  };
+
+  app_.post("/api/ws/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                       uvcpp::uvcpp_web_response& resp,
+                                       uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "websocket", "debug");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    WsConnectInput input;
+    input.url = string_field(*body, "url");
+    input.subprotocol = string_field(*body, "subprotocol");
+    input.insecure = bool_field(*body, "insecure", false);
+    input.timeout_ms = int_field(*body, "timeoutMs", 15000);
+    input.proxy = proxy_field(*body);
+    for (const auto& header : header_fields(*body)) {
+      input.headers.emplace_back(header.name, header.value);
+    }
+    if (input.url.empty()) {
+      send_error(resp, 400, "url is required", "bad_request");
+      return;
+    }
+    if (!ws_) {
+      send_error(resp, 503, "WebSocket sessions are unavailable", "unavailable");
+      return;
+    }
+    std::string error;
+    const std::string id =
+        ws_->create(principal->user.id, principal->user.username, input, &error);
+    if (id.empty()) {
+      send_error(resp, 400, error.empty() ? "could not open WebSocket" : error,
+                 "ws_failed");
+      return;
+    }
+    nlohmann::json snapshot;
+    ws_->session(id, principal->user.id, principal->user.role == "admin", &snapshot);
+    send_json(resp, 200, snapshot);
+  });
+
+  app_.get("/api/ws/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                      uvcpp::uvcpp_web_response& resp,
+                                      uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "websocket", "debug");
+    if (!principal) return;
+    if (!ws_) {
+      send_error(resp, 503, "WebSocket sessions are unavailable", "unavailable");
+      return;
+    }
+    const bool all = principal->user.role == "admin" && req.query("all") != nullptr;
+    send_json(resp, 200, ws_->sessions(principal->user.id, all));
+  });
+
+  app_.get("/api/ws/sessions/:id", [this, can_access](uvcpp::uvcpp_web_request& req,
+                                                       uvcpp::uvcpp_web_response& resp,
+                                                       uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "websocket", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !can_access(ws_.get(), *id, *principal)) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    nlohmann::json snapshot;
+    if (!ws_->session(*id, principal->user.id, principal->user.role == "admin",
+                      &snapshot)) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    send_json(resp, 200, snapshot);
+  });
+
+  app_.get("/api/ws/sessions/:id/events", [this, can_access](
+                                              uvcpp::uvcpp_web_request& req,
+                                              uvcpp::uvcpp_web_response& resp,
+                                              uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "websocket", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !can_access(ws_.get(), *id, *principal)) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    std::uint64_t after = 0;
+    if (const std::string* value = req.query("after")) {
+      after = std::strtoull(value->c_str(), nullptr, 10);
+    }
+    std::size_t limit = 200;
+    if (const std::string* value = req.query("limit")) {
+      const int parsed = std::atoi(value->c_str());
+      if (parsed > 0) limit = static_cast<std::size_t>(parsed);
+    }
+    nlohmann::json result;
+    if (!ws_->events(*id, principal->user.id, principal->user.role == "admin",
+                     after, limit, &result)) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.post("/api/ws/sessions/:id/send", [this, can_access](
+                                             uvcpp::uvcpp_web_request& req,
+                                             uvcpp::uvcpp_web_response& resp,
+                                             uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "websocket", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !can_access(ws_.get(), *id, *principal)) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const std::string type = lower(string_field(*body, "type", "text"));
+    const std::string encoding = lower(string_field(*body, "encoding", "text"));
+    std::string payload = string_field(*body, "payload");
+    if (encoding == "hex") {
+      const auto decoded = hex_decode(payload);
+      if (!decoded) {
+        send_error(resp, 400, "payload is not valid hex", "bad_request");
+        return;
+      }
+      payload = *decoded;
+    } else if (encoding == "base64") {
+      const auto decoded = base64_decode(payload);
+      if (!decoded) {
+        send_error(resp, 400, "payload is not valid base64", "bad_request");
+        return;
+      }
+      payload = *decoded;
+    }
+    std::string error;
+    if (!ws_->send(*id, principal->user.id, principal->user.role == "admin", type,
+                   payload, &error)) {
+      send_error(resp, 400, error, "ws_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.post("/api/ws/sessions/:id/close", [this, can_access](
+                                              uvcpp::uvcpp_web_request& req,
+                                              uvcpp::uvcpp_web_response& resp,
+                                              uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "websocket", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !can_access(ws_.get(), *id, *principal)) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const int code = int_field(*body, "code", 1000);
+    const std::string reason = string_field(*body, "reason");
+    std::string error;
+    if (!ws_->close(*id, principal->user.id, principal->user.role == "admin", code,
+                    reason, &error)) {
+      send_error(resp, 400, error, "ws_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.del("/api/ws/sessions/:id", [this, can_access](uvcpp::uvcpp_web_request& req,
+                                                      uvcpp::uvcpp_web_response& resp,
+                                                      uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "websocket", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !can_access(ws_.get(), *id, *principal)) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    std::string error;
+    if (!ws_->remove(*id, principal->user.id, principal->user.role == "admin",
+                     &error)) {
+      send_error(resp, 400, error, "ws_failed");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
 }
 
 // ---------------------------------------------------------------------------

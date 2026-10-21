@@ -2982,6 +2982,51 @@ button.nav-item {
 .ws-connect {
   padding: 13px;
 }
+.ws-mode-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-soft);
+}
+.ws-mode-switch button {
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.ws-mode-switch button.active {
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--accent);
+}
+.ws-backend-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.ws-headers {
+  min-width: 0;
+}
+.ws-headers .kv-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 28px;
+}
+.ws-backend-options .switch-field {
+  margin: 0;
+}
+@media (max-width: 720px) {
+  .ws-backend-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .ws-url-line {
   display: flex;
   align-items: stretch;

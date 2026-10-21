@@ -19,8 +19,23 @@
 | `0003-install-complete.patch` | `cmake --install` 产出可用的 SDK | 已包含于 v1.8.1 |
 | `0004-socks5-proxy-stage.patch` | 区分"连代理失败"与代理应答后的失败（PR #42） | 已包含于 v1.8.2 |
 
-切换后 `scripts/build-libuvcpp.sh` 只克隆发布 tag，不再打补丁；CMake 在检测到低于
-1.8.2 的 SDK 时直接失败。验证方式仍是 `--self-check` 与 `scripts/smoke-test.sh`。
+切换后 `scripts/build-libuvcpp.sh` 只克隆发布 tag，再应用 `patches/upstream/0*.patch`；CMake 在
+检测到低于 1.8.2 的 SDK 时直接失败。验证方式仍是 `--self-check` 与 `scripts/smoke-test.sh`。
+
+## 1.8.2 上继续携带的补丁
+
+### 0005 — WebSocket 客户端握手 Header
+
+**现象**：后端 WebSocket 调试需要发送 `Authorization`、`Cookie`、`Origin` 或
+`Sec-WebSocket-Protocol`。1.8.2 的 `uvcpp_ws_client` 只生成固定握手头（Host / Upgrade /
+Connection / Key / Version / Extensions），没有公开的设置入口，这类目标无法连接。
+
+**补丁**：`0005-ws-client-handshake-headers.patch` 新增
+`uvcpp_ws_client::set_handshake_header(name, value)`；拒绝 CR/LF 注入，忽略保留的握手头，
+按名字大小写不敏感地覆盖重复项，并在 `do_handshake()` 组包时逐条追加。
+
+**验证**：smoke 的 WebSocket echo 服务在缺少 `X-Smoke: ok` 时返回 403；带该头时握手成功，
+文本回显、PING/PONG 帧、Close 1000 与删除清理均通过。上游若接受该 API，可删除此补丁。
 
 ---
 

@@ -162,7 +162,8 @@ set(UVSCOPE_SOURCES
   src/terminal_manager.cpp
   src/tls_probe.cpp
   src/transport_manager.cpp
-  src/util.cpp)
+  src/util.cpp
+  src/ws_manager.cpp)
 
 add_executable(uvscope ${UVSCOPE_SOURCES})
 

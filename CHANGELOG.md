@@ -8,6 +8,14 @@ All notable changes to uvscope are documented here. The format is based on
 
 ### Added
 
+- WebSocket debugging can run inside the daemon: `POST /api/ws/sessions` connects to a
+  `ws://`/`wss://` URL with custom handshake headers, a subprotocol and an optional SOCKS5 proxy.
+  Sessions expose `open`, `text`, `binary`, `frame` (opcode, FIN/RSV1/mask, close code), `closing`,
+  `close` and `error` events plus byte/frame counters; `send` supports text, binary, ping and pong,
+  and `close` sends a chosen close code/reason. The WebSocket view gains a Daemon/Browser mode
+  switch, a handshake-header editor and a Delete action. libuvcpp 1.8.2 has no handshake-header
+  API, so a minimal patch (`patches/upstream/0005-ws-client-handshake-headers.patch`) adds
+  `set_handshake_header()`; the smoke echo server rejects handshakes without the header.
 - Large responses can be streamed to disk and downloaded without the 4 MiB probe clip.
   `POST /api/http/download` starts a background fetch (HTTP/1.1), `GET /api/http/download/:id`
   reports progress, and `/download/:id` serves the staged file as an attachment with

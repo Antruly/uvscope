@@ -13,6 +13,7 @@ SOCKS5_AUTH_PORT="${8:-18793}"
 SOCKS5_UDP_TARGET_PORT="${9:-18794}"
 H2_PORT="${10:-18795}"
 COMP_PORT="${11:-18796}"
+WS_PORT="${12:-18797}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -20,8 +21,13 @@ PID=""
 ECHO_PID=""
 H2_PID=""
 COMP_PID=""
+WS_PID=""
 
 cleanup() {
+  if [[ -n "${WS_PID}" ]] && kill -0 "${WS_PID}" 2>/dev/null; then
+    kill "${WS_PID}" 2>/dev/null || true
+    wait "${WS_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${COMP_PID}" ]] && kill -0 "${COMP_PID}" 2>/dev/null; then
     kill "${COMP_PID}" 2>/dev/null || true
     wait "${COMP_PID}" 2>/dev/null || true
@@ -108,6 +114,99 @@ python3 "${DATA_DIR}/echo.py" "${TCP_PORT}" "${SOCKS5_UDP_TARGET_PORT}" >"${DATA
 ECHO_PID=$!
 for _ in $(seq 1 80); do
   if grep -q LISTENING "${DATA_DIR}/echo.log" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+
+# Minimal WebSocket echo server. The handshake requires X-Smoke: ok, which also
+# proves that the bundled libuvcpp handshake-header patch is applied.
+cat >"${DATA_DIR}/ws_echo.py" <<'WSPY'
+import base64, hashlib, socket, struct, sys, threading
+GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+
+def read_frame(conn):
+    head = conn.recv(2)
+    if len(head) < 2:
+        return None
+    b1, b2 = head
+    opcode = b1 & 0x0f
+    masked = b2 >> 7
+    length = b2 & 0x7f
+    if length == 126:
+        length = struct.unpack('!H', conn.recv(2))[0]
+    elif length == 127:
+        length = struct.unpack('!Q', conn.recv(8))[0]
+    mask = conn.recv(4) if masked else b''
+    payload = b''
+    while len(payload) < length:
+        chunk = conn.recv(length - len(payload))
+        if not chunk:
+            return None
+        payload += chunk
+    if masked:
+        payload = bytes(payload[i] ^ mask[i % 4] for i in range(len(payload)))
+    return opcode, payload
+
+def send_frame(conn, opcode, payload):
+    b1 = 0x80 | opcode
+    n = len(payload)
+    if n < 126:
+        head = struct.pack('!BB', b1, n)
+    elif n < 65536:
+        head = struct.pack('!BBH', b1, 126, n)
+    else:
+        head = struct.pack('!BBQ', b1, 127, n)
+    conn.sendall(head + payload)
+
+def handle(conn):
+    data = b''
+    while b'\r\n\r\n' not in data:
+        chunk = conn.recv(4096)
+        if not chunk:
+            return
+        data += chunk
+    headers = {}
+    for line in data.decode('latin1').split('\r\n')[1:]:
+        if ':' in line:
+            key, value = line.split(':', 1)
+            headers[key.strip().lower()] = value.strip()
+    if headers.get('x-smoke') != 'ok':
+        conn.sendall(b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n')
+        conn.close()
+        return
+    accept = base64.b64encode(hashlib.sha1(
+        (headers.get('sec-websocket-key', '') + GUID).encode()).digest()).decode()
+    conn.sendall(('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n'
+                  'Connection: Upgrade\r\nSec-WebSocket-Accept: ' + accept +
+                  '\r\n\r\n').encode())
+    while True:
+        frame = read_frame(conn)
+        if frame is None:
+            break
+        opcode, payload = frame
+        if opcode in (0x1, 0x2):
+            send_frame(conn, opcode, b'echo:' + payload)
+        elif opcode == 0x9:
+            send_frame(conn, 0xA, payload)
+        elif opcode == 0x8:
+            send_frame(conn, 0x8, payload)
+            break
+    conn.close()
+
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('127.0.0.1', int(sys.argv[1])))
+server.listen(16)
+print('WS LISTENING', flush=True)
+while True:
+    conn, _ = server.accept()
+    threading.Thread(target=handle, args=(conn,), daemon=True).start()
+WSPY
+python3 "${DATA_DIR}/ws_echo.py" "${WS_PORT}" >"${DATA_DIR}/ws.log" 2>&1 &
+WS_PID=$!
+for _ in $(seq 1 80); do
+  if grep -q "WS LISTENING" "${DATA_DIR}/ws.log" 2>/dev/null; then
     break
   fi
   sleep 0.1
@@ -402,7 +501,7 @@ print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP se
 PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
-COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" \
+COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
 SOCKS5_UDP_TARGET_PORT="${SOCKS5_UDP_TARGET_PORT}" TCP_PORT="${TCP_PORT}" python3 - <<'PY'
@@ -931,9 +1030,92 @@ if os.environ.get("COMP_READY") == "1":
     except urllib.error.HTTPError as error:
         check(error.code == 404, f"deleted download returned {error.code}")
 
+if os.environ.get("WS_PORT"):
+    ws_url = "ws://127.0.0.1:" + os.environ["WS_PORT"] + "/echo"
+    status, created = call("POST", "/api/ws/sessions", {
+        "url": ws_url,
+        "headers": [{"name": "X-Smoke", "value": "ok"}],
+        "timeoutMs": 5000,
+    })
+    ws_session = created.get("session", {})
+    ws_id = ws_session.get("id", "")
+    check(status == 200 and bool(ws_id), f"websocket create failed: {created}")
+    for _ in range(60):
+        _, payload = call("GET", f"/api/ws/sessions/{ws_id}")
+        ws_session = payload.get("session", {})
+        if ws_session.get("state") != "connecting":
+            break
+        time.sleep(0.1)
+    check(ws_session.get("state") == "open",
+          f"websocket did not open: {ws_session}")
+
+    status, sent = call("POST", f"/api/ws/sessions/{ws_id}/send",
+                        {"type": "text", "encoding": "text", "payload": "smoke-ws"})
+    check(status == 200 and sent.get("ok") is True,
+          f"websocket text send failed: {sent}")
+    status, pinged = call("POST", f"/api/ws/sessions/{ws_id}/send",
+                          {"type": "ping", "encoding": "text", "payload": "pp"})
+    check(status == 200 and pinged.get("ok") is True,
+          f"websocket ping failed: {pinged}")
+
+    ws_events = []
+    for _ in range(60):
+        _, payload = call("GET", f"/api/ws/sessions/{ws_id}/events?after=0&limit=200")
+        ws_events = payload.get("events", [])
+        texts = [item.get("text") for item in ws_events if item.get("type") == "text"]
+        pongs = [item for item in ws_events
+                 if item.get("type") == "frame" and item.get("opcode") == "PONG"]
+        if "echo:smoke-ws" in texts and pongs:
+            break
+        time.sleep(0.1)
+    texts = [item.get("text") for item in ws_events if item.get("type") == "text"]
+    pongs = [item for item in ws_events
+             if item.get("type") == "frame" and item.get("opcode") == "PONG"]
+    check("echo:smoke-ws" in texts, f"websocket echo missing: {texts}")
+    check(bool(pongs), "websocket PONG frame missing")
+    frames = [item for item in ws_events if item.get("type") == "frame"]
+    check(all("opcode" in item and "length" in item for item in frames),
+          f"websocket frame events are incomplete: {frames[:2]}")
+
+    status, closed = call("POST", f"/api/ws/sessions/{ws_id}/close",
+                          {"code": 1000, "reason": "smoke"})
+    check(status == 200 and closed.get("ok") is True,
+          f"websocket close failed: {closed}")
+    for _ in range(60):
+        _, payload = call("GET", f"/api/ws/sessions/{ws_id}")
+        ws_session = payload.get("session", {})
+        if ws_session.get("state") == "closed":
+            break
+        time.sleep(0.1)
+    check(ws_session.get("state") == "closed",
+          f"websocket did not close: {ws_session}")
+    check(ws_session.get("closeCode") == 1000,
+          f"websocket close code was {ws_session.get('closeCode')}")
+    status, deleted = call("DELETE", f"/api/ws/sessions/{ws_id}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"websocket delete failed: {deleted}")
+
+    # The handshake server requires X-Smoke: ok; without it the Upgrade must
+    # fail, proving both the header plumbing and the error path.
+    status, denied = call("POST", "/api/ws/sessions", {
+        "url": ws_url, "timeoutMs": 3000,
+    })
+    denied_id = denied.get("session", {}).get("id", "")
+    check(status == 200 and bool(denied_id), f"denied create failed: {denied}")
+    denied_state = {}
+    for _ in range(60):
+        _, payload = call("GET", f"/api/ws/sessions/{denied_id}")
+        denied_state = payload.get("session", {})
+        if denied_state.get("state") not in ("connecting", ""):
+            break
+        time.sleep(0.1)
+    check(denied_state.get("state") == "error",
+          f"handshake without the header should fail: {denied_state}")
+    call("DELETE", f"/api/ws/sessions/{denied_id}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket)")
 PY

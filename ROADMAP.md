@@ -51,7 +51,8 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Large-response streaming download (512 MiB cap, progress, cancel)
 - [ ] Multipart upload and Range download
 - [x] Live peer certificate chain inspection
-- [ ] WebSocket ping/pong, close-code and backend relay mode
+- [x] Backend WebSocket sessions (daemon-side connect, headers, ping/pong, close codes, frames)
+- [ ] WebSocket backend relay / pass-through mode
 
 ## 0.5 — gateway and team workflow
 

@@ -42,6 +42,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Dark / light / follow-system theme | ✅ Stable |
 | HTTPS with system CA bundle / explicit insecure mode | ✅ Stable |
 | WebSocket console (browser-native, text + binary) | ✅ Stable |
+| Backend WebSocket sessions: headers, frames, ping/pong, close codes | ✅ New in 0.4.3 |
 | TCP and UDP one-shot probes (text / hex) | ✅ Stable |
 | Persistent TCP sessions with repeated sends and event logs | ✅ Stable |
 | TCP / UDP server listeners with sessions, datagrams and replies | ✅ Stable |
@@ -106,8 +107,8 @@ cd uvscope
 ./build/uvscope --port 8787 --open
 ```
 
-`build.sh` clones the libuvcpp v1.8.2 release into `.deps/`, builds the frontend, then builds
-uvscope. No local upstream patches are applied.
+`build.sh` clones the libuvcpp v1.8.2 release into `.deps/`, applies the minimal WebSocket
+handshake-header patch from `patches/upstream/`, builds the frontend, then builds uvscope.
 
 If you already have a libuvcpp 1.8.2 SDK:
 
@@ -154,9 +155,9 @@ uvscope daemon (C++17 / libuvcpp)
         └─ libuvcpp → libuv → sockets
 ```
 
-The daemon is the only process that opens outbound sockets. The browser never talks to the
-target service directly, except for the WebSocket console, where browser-native WebSocket
-semantics (origin, mixed content, certificate prompts) are part of what is being debugged.
+The daemon is the only process that opens outbound sockets in the default Daemon mode. The
+WebSocket view also offers a browser-native mode, because origin, mixed-content and certificate
+prompts are part of what is being debugged.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the data model and request flow.
 

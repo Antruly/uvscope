@@ -29,6 +29,8 @@ sdk_is_current() {
   if [[ "${UVCPP_ENABLE_BROTLI:-ON}" == "ON" ]]; then
     grep -q '^#  define UVCPP_BROTLI_ENABLE 1$' "${prefix}/include/uvcpp/uvcpp_config.h" || return 1
   fi
+  # The bundled WebSocket client patch adds handshake headers.
+  grep -q "set_handshake_header" "${prefix}/include/web/uvcpp_ws_client.h" || return 1
   return 0
 }
 
