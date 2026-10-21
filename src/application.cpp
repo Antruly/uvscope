@@ -394,6 +394,89 @@ bool decode_body(const HttpProbeInput& input, std::string* body_out,
   return true;
 }
 
+bool validate_workspace(const nlohmann::json& workspace, std::string* error) {
+  if (!workspace.is_object()) {
+    if (error) *error = "workspace must be an object";
+    return false;
+  }
+  const auto check_string = [error](const nlohmann::json& value, std::size_t limit,
+                                    const char* label) {
+    if (!value.is_string() || value.get<std::string>().size() > limit) {
+      if (error) *error = std::string(label) + " must be a string of at most " +
+                          std::to_string(limit) + " characters";
+      return false;
+    }
+    return true;
+  };
+  const auto limits = [error](const nlohmann::json& value, const char* label,
+                              std::size_t limit) {
+    if (!value.is_array() || value.size() > limit) {
+      if (error) *error = std::string(label) + " must be an array of at most " +
+                          std::to_string(limit) + " items";
+      return false;
+    }
+    return true;
+  };
+  if (workspace.contains("activeEnvironmentId") &&
+      !check_string(workspace["activeEnvironmentId"], 128, "activeEnvironmentId")) {
+    return false;
+  }
+  if (!limits(workspace.value("environments", nlohmann::json::array()),
+              "environments", 50)) {
+    return false;
+  }
+  for (const auto& environment : workspace.value("environments", nlohmann::json::array())) {
+    if (!environment.is_object() ||
+        !check_string(environment.value("id", nlohmann::json("")), 128, "environment id") ||
+        !check_string(environment.value("name", nlohmann::json("")), 128, "environment name")) {
+      return false;
+    }
+    const auto variables = environment.value("variables", nlohmann::json::array());
+    if (!limits(variables, "environment variables", 200)) return false;
+    for (const auto& variable : variables) {
+      if (!variable.is_object() ||
+          !check_string(variable.value("key", nlohmann::json("")), 128, "variable key") ||
+          !check_string(variable.value("value", nlohmann::json("")), 8192, "variable value")) {
+        return false;
+      }
+    }
+  }
+  const auto collections = workspace.value("collections", nlohmann::json::array());
+  if (!limits(collections, "collections", 100)) return false;
+  for (const auto& collection : collections) {
+    if (!collection.is_object() ||
+        !check_string(collection.value("id", nlohmann::json("")), 128, "collection id") ||
+        !check_string(collection.value("name", nlohmann::json("")), 128, "collection name")) {
+      return false;
+    }
+    const auto items = collection.value("items", nlohmann::json::array());
+    if (!limits(items, "collection items", 500)) return false;
+    for (const auto& item : items) {
+      if (!item.is_object() ||
+          !check_string(item.value("name", nlohmann::json("")), 128, "item name") ||
+          !check_string(item.value("method", nlohmann::json("GET")), 20, "item method") ||
+          !check_string(item.value("url", nlohmann::json("")), 4096, "item URL") ||
+          !check_string(item.value("body", nlohmann::json("")), 262144, "item body")) {
+        return false;
+      }
+      const auto headers = item.value("headers", nlohmann::json::array());
+      if (!limits(headers, "item headers", 100)) return false;
+      for (const auto& header : headers) {
+        if (!header.is_object() ||
+            !check_string(header.value("name", nlohmann::json("")), 128, "header name") ||
+            !check_string(header.value("value", nlohmann::json("")), 8192, "header value")) {
+          return false;
+        }
+      }
+    }
+  }
+  if (workspace.dump().size() > 2 * 1024 * 1024) {
+    if (error) *error = "workspace exceeds 2 MiB";
+    return false;
+  }
+  return true;
+}
+
 void audit_event(Store& store, const uvcpp::uvcpp_web_request& req,
                  const User& user, const std::string& action,
                  const std::string& target, const std::string& detail) {
@@ -1067,6 +1150,44 @@ void Application::register_debug_routes() {
           owner.user = user;
           add_history(owner, "http", summary, result.body);
         });
+  });
+
+  app_.get("/api/http/workspace", [this](uvcpp::uvcpp_web_request& req,
+                                            uvcpp::uvcpp_web_response& resp,
+                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "http", "debug");
+    if (!principal) return;
+    const auto parsed = nlohmann::json::parse(
+        store_.setting("http.workspace", R"({"environments":[],"activeEnvironmentId":"","collections":[]})"),
+        nullptr, false);
+    if (!parsed.is_object()) {
+      send_json(resp, 200, {{"ok", true},
+                            {"workspace", {{"environments", nlohmann::json::array()},
+                                           {"activeEnvironmentId", ""},
+                                           {"collections", nlohmann::json::array()}}}});
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}, {"workspace", parsed}});
+  });
+
+  app_.put("/api/http/workspace", [this](uvcpp::uvcpp_web_request& req,
+                                          uvcpp::uvcpp_web_response& resp,
+                                          uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "http", "debug");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    std::string error;
+    if (!validate_workspace(*body, &error)) {
+      send_error(resp, 400, error, "bad_request");
+      return;
+    }
+    if (!store_.set_setting("http.workspace", body->dump(), &error)) {
+      send_error(resp, 500, error, "workspace_save_failed");
+      return;
+    }
+    audit_event(store_, req, principal->user, "http.workspace", "", "");
+    send_json(resp, 200, {{"ok", true}, {"workspace", *body}});
   });
 
   app_.post("/api/http/download", [this](uvcpp::uvcpp_web_request& req,

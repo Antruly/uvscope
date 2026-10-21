@@ -2,7 +2,7 @@
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Icon from '../components/Icon.vue'
 import Socks5ProxyFields from '../components/Socks5ProxyFields.vue'
-import { del, errorMessage, get, post } from '../api'
+import { del, errorMessage, get, post, put } from '../api'
 import type { HistoryEntry, HttpDownload, HttpHeader, HttpResult } from '../types'
 import { useUiStore } from '../stores/ui'
 import { useAuthStore } from '../stores/auth'
@@ -51,6 +51,33 @@ const curlImportOpen = ref(false)
 const curlImportText = ref('')
 const curlImportError = ref('')
 const harInput = ref<HTMLInputElement | null>(null)
+
+interface WorkspaceVariable { key: string; value: string }
+interface WorkspaceEnvironment { id: string; name: string; variables: WorkspaceVariable[] }
+interface CollectionItem {
+  id: string
+  name: string
+  method: string
+  url: string
+  headers: HttpHeader[]
+  body: string
+  bodyType: string
+  bodyMode: 'raw' | 'urlencoded' | 'multipart'
+}
+interface Collection { id: string; name: string; items: CollectionItem[] }
+interface Workspace {
+  environments: WorkspaceEnvironment[]
+  activeEnvironmentId: string
+  collections: Collection[]
+}
+const emptyWorkspace = (): Workspace => ({ environments: [], activeEnvironmentId: '', collections: [] })
+const workspace = ref<Workspace>(emptyWorkspace())
+const selectedCollectionId = ref('')
+const envOpen = ref(false)
+const envDraft = ref<WorkspaceEnvironment>({ id: '', name: '', variables: [{ key: '', value: '' }] })
+const importOpen = ref(false)
+const importText = ref('')
+const importError = ref('')
 const downloading = ref(false)
 const downloadState = ref<HttpDownload | null>(null)
 let downloadTimer: number | undefined
@@ -672,15 +699,271 @@ function applyCurlImport() {
   ui.notify('success', t('http.curl.imported'))
 }
 
+function newId(): string {
+  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`
+}
+
+function activeVariables(): Record<string, string> {
+  const environment = workspace.value.environments.find(
+    (item) => item.id === workspace.value.activeEnvironmentId,
+  )
+  const map: Record<string, string> = {}
+  for (const variable of environment?.variables || []) {
+    if (variable.key) map[variable.key] = variable.value
+  }
+  return map
+}
+
+function substitute(value: string): string {
+  const variables = activeVariables()
+  return value.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, name: string) =>
+    Object.prototype.hasOwnProperty.call(variables, name) ? variables[name] : match,
+  )
+}
+
+async function loadWorkspace() {
+  try {
+    const response = await get<{ workspace?: Workspace }>('/api/http/workspace')
+    if (response.workspace) {
+      workspace.value = {
+        environments: response.workspace.environments || [],
+        activeEnvironmentId: response.workspace.activeEnvironmentId || '',
+        collections: response.workspace.collections || [],
+      }
+    }
+  } catch {
+    // Workspaces are optional; the request editor still works without one.
+  }
+}
+
+async function saveWorkspace() {
+  try {
+    await put('/api/http/workspace', workspace.value)
+  } catch (err) {
+    ui.toastError(err, t('http.workspace.saveFailed'))
+  }
+}
+
+function openEnvironment() {
+  envDraft.value = { id: '', name: '', variables: [{ key: '', value: '' }] }
+  envOpen.value = true
+}
+
+function editEnvironment(environment: WorkspaceEnvironment) {
+  envDraft.value = {
+    id: environment.id,
+    name: environment.name,
+    variables: environment.variables.length
+      ? environment.variables.map((variable) => ({ ...variable }))
+      : [{ key: '', value: '' }],
+  }
+}
+
+function addWorkspaceVariable() {
+  envDraft.value.variables.push({ key: '', value: '' })
+}
+
+function removeWorkspaceVariable(index: number) {
+  envDraft.value.variables.splice(index, 1)
+}
+
+async function saveEnvironment() {
+  if (!envDraft.value.name.trim()) {
+    ui.notify('warning', t('http.workspace.nameRequired'))
+    return
+  }
+  const variables = envDraft.value.variables
+    .filter((variable) => variable.key.trim())
+    .map((variable) => ({ key: variable.key.trim(), value: variable.value }))
+  const existing = workspace.value.environments.find((item) => item.id === envDraft.value.id)
+  if (existing) {
+    existing.name = envDraft.value.name.trim()
+    existing.variables = variables
+  } else {
+    const environment: WorkspaceEnvironment = {
+      id: envDraft.value.id || newId(),
+      name: envDraft.value.name.trim(),
+      variables,
+    }
+    workspace.value.environments.push(environment)
+    workspace.value.activeEnvironmentId = environment.id
+  }
+  await saveWorkspace()
+  envDraft.value = { id: '', name: '', variables: [{ key: '', value: '' }] }
+}
+
+async function deleteEnvironment(id: string) {
+  if (!window.confirm(t('http.workspace.deleteEnvConfirm'))) return
+  workspace.value.environments = workspace.value.environments.filter((item) => item.id !== id)
+  if (workspace.value.activeEnvironmentId === id) workspace.value.activeEnvironmentId = ''
+  if (envDraft.value.id === id) envDraft.value = { id: '', name: '', variables: [{ key: '', value: '' }] }
+  await saveWorkspace()
+}
+
+function selectedCollection(): Collection | undefined {
+  return workspace.value.collections.find((item) => item.id === selectedCollectionId.value)
+}
+
+async function saveToCollection() {
+  let collection = selectedCollection()
+  if (!collection) {
+    const name = window.prompt(t('http.workspace.newCollectionName'))
+    if (!name?.trim()) return
+    collection = { id: newId(), name: name.trim(), items: [] }
+    workspace.value.collections.push(collection)
+    selectedCollectionId.value = collection.id
+  }
+  const itemName = window.prompt(t('http.workspace.itemName'), `${method.value} ${url.value}`)
+  if (!itemName?.trim()) return
+  collection.items.push({
+    id: newId(),
+    name: itemName.trim(),
+    method: method.value,
+    url: url.value,
+    headers: cleanHeaders(),
+    body: body.value,
+    bodyType: bodyType.value,
+    bodyMode: bodyMode.value,
+  })
+  await saveWorkspace()
+  ui.notify('success', t('http.workspace.saved'))
+}
+
+function loadCollectionItem(item: CollectionItem) {
+  url.value = item.url
+  method.value = item.method
+  headers.value = item.headers?.length ? item.headers.map((header) => ({ ...header })) : headers.value
+  body.value = item.body || ''
+  bodyType.value = item.bodyType || 'application/json'
+  bodyMode.value = item.bodyMode || 'raw'
+}
+
+async function importCollectionFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  importText.value = await file.text()
+  applyImport()
+}
+
+function postmanItems(items: unknown[], collection: Collection, prefix = '') {
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') continue
+    const entry = raw as Record<string, unknown>
+    const name = String(entry.name || 'request')
+    const request = entry.request as Record<string, unknown> | undefined
+    if (request) {
+      let url = ''
+      if (typeof request.url === 'string') url = request.url
+      else if (request.url && typeof request.url === 'object') {
+        const rawUrl = (request.url as Record<string, unknown>).raw
+        url = typeof rawUrl === 'string' ? rawUrl : ''
+      }
+      const headers: HttpHeader[] = []
+      const rawHeaders = request.header
+      if (Array.isArray(rawHeaders)) {
+        for (const header of rawHeaders) {
+          if (header && typeof header === 'object') {
+            const item = header as Record<string, unknown>
+            if (item.key && !item.disabled) {
+              headers.push({ name: String(item.key), value: String(item.value ?? '') })
+            }
+          }
+        }
+      }
+      let bodyText = ''
+      const body = request.body as Record<string, unknown> | undefined
+      if (body && typeof body.raw === 'string') bodyText = body.raw
+      collection.items.push({
+        id: newId(),
+        name: `${prefix}${name}`,
+        method: String(request.method || 'GET').toUpperCase(),
+        url,
+        headers,
+        body: bodyText,
+        bodyType: 'application/json',
+        bodyMode: 'raw',
+      })
+    }
+    if (Array.isArray(entry.item)) postmanItems(entry.item, collection, `${prefix}${name} / `)
+  }
+}
+
+function applyImport() {
+  importError.value = ''
+  try {
+    const data = JSON.parse(importText.value)
+    const collection: Collection = { id: newId(), name: 'Imported', items: [] }
+    if (data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).item)) {
+      const info = (data as Record<string, unknown>).info as Record<string, unknown> | undefined
+      collection.name = String(info?.name || 'Postman import')
+      postmanItems((data as Record<string, unknown>).item as unknown[], collection)
+    } else if (data && typeof data === 'object' &&
+               (((data as Record<string, unknown>).openapi) || ((data as Record<string, unknown>).swagger))) {
+      const spec = data as Record<string, unknown>
+      const info = spec.info as Record<string, unknown> | undefined
+      collection.name = String(info?.title || 'OpenAPI import')
+      let base = ''
+      const servers = spec.servers
+      if (Array.isArray(servers) && servers[0] && typeof servers[0] === 'object') {
+        base = String((servers[0] as Record<string, unknown>).url || '')
+      } else if (spec.host) {
+        const scheme = Array.isArray(spec.schemes) && spec.schemes[0] ? String(spec.schemes[0]) : 'https'
+        base = `${scheme}://${String(spec.host)}${String(spec.basePath || '')}`
+      }
+      const paths = spec.paths as Record<string, unknown> | undefined
+      for (const [path, operations] of Object.entries(paths || {})) {
+        if (!operations || typeof operations !== 'object') continue
+        for (const [method, operation] of Object.entries(operations as Record<string, unknown>)) {
+          if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method)) continue
+          const op = (operation || {}) as Record<string, unknown>
+          const headers: HttpHeader[] = []
+          const parameters = op.parameters
+          if (Array.isArray(parameters)) {
+            for (const parameter of parameters) {
+              if (parameter && typeof parameter === 'object') {
+                const param = parameter as Record<string, unknown>
+                if (param.in === 'header' && param.name) {
+                  headers.push({ name: String(param.name), value: String(param.example ?? '') })
+                }
+              }
+            }
+          }
+          collection.items.push({
+            id: newId(),
+            name: String(op.summary || op.operationId || `${method.toUpperCase()} ${path}`),
+            method: method.toUpperCase(),
+            url: `${base}${path}`,
+            headers,
+            body: '',
+            bodyType: 'application/json',
+            bodyMode: 'raw',
+          })
+        }
+      }
+    }
+    if (!collection.items.length) throw new Error(t('http.import.empty'))
+    workspace.value.collections.push(collection)
+    selectedCollectionId.value = collection.id
+    void saveWorkspace()
+    importOpen.value = false
+    importText.value = ''
+    ui.notify('success', t('http.import.imported', { count: collection.items.length }))
+  } catch (err) {
+    importError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
 async function buildPayload() {
   const outgoing = cleanHeaders()
-  let requestBody = body.value
+  let requestBody = substitute(body.value)
   let bodyEncoding = 'text'
   let derivedContentType = ''
   if (bodyMode.value === 'urlencoded') {
     const params = new URLSearchParams()
     for (const field of urlEncodedFields.value) {
-      if (field.name.trim()) params.append(field.name.trim(), field.value)
+      if (field.name.trim()) params.append(field.name.trim(), substitute(field.value))
     }
     requestBody = params.toString()
     derivedContentType = 'application/x-www-form-urlencoded'
@@ -701,7 +984,7 @@ async function buildPayload() {
       } else if (field.kind === 'text') {
         parts.push(
           `--${boundary}\r\nContent-Disposition: form-data; name="${multipartName(name)}"\r\n\r\n` +
-            `${field.value}\r\n`,
+            `${substitute(field.value)}\r\n`,
         )
       }
     }
@@ -721,8 +1004,9 @@ async function buildPayload() {
   } else if (requestBody && contentTypeIndex < 0) {
     outgoing.push({ name: 'content-type', value: bodyType.value })
   }
+  for (const header of outgoing) header.value = substitute(header.value)
   return {
-    url: url.value.trim(),
+    url: substitute(url.value.trim()),
     method: method.value,
     protocol: protocol.value,
     headers: outgoing,
@@ -912,6 +1196,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   void loadHistory()
   void loadCapabilities()
+  void loadWorkspace()
 })
 onActivated(() => void loadHistory())
 onBeforeUnmount(() => {
@@ -944,6 +1229,30 @@ onBeforeUnmount(() => {
     <div class="workbench">
       <div class="workbench__main">
         <section class="request-card">
+          <div class="workspace-bar">
+            <label class="workspace-field">
+              <span>{{ t('http.workspace.environment') }}</span>
+              <select v-model="workspace.activeEnvironmentId" class="select select--compact" @change="saveWorkspace">
+                <option value="">{{ t('http.workspace.none') }}</option>
+                <option v-for="environment in workspace.environments" :key="environment.id" :value="environment.id">{{ environment.name }}</option>
+              </select>
+            </label>
+            <button type="button" class="ghost-toggle" @click="envOpen = true"><Icon name="settings" :size="14" />{{ t('http.workspace.manage') }}</button>
+            <label class="workspace-field">
+              <span>{{ t('http.workspace.collection') }}</span>
+              <select v-model="selectedCollectionId" class="select select--compact">
+                <option value="">{{ t('http.workspace.none') }}</option>
+                <option v-for="collection in workspace.collections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
+              </select>
+            </label>
+            <button type="button" class="ghost-toggle" @click="saveToCollection"><Icon name="plus" :size="14" />{{ t('http.workspace.saveRequest') }}</button>
+            <button type="button" class="ghost-toggle" @click="importOpen = true"><Icon name="upload" :size="14" />{{ t('http.import.action') }}</button>
+          </div>
+          <div v-if="selectedCollection()?.items.length" class="collection-items">
+            <button v-for="item in selectedCollection()?.items" :key="item.id" type="button" class="collection-chip" @click="loadCollectionItem(item)">
+              <span class="mono">{{ item.method }}</span>{{ item.name }}
+            </button>
+          </div>
           <div class="request-line">
             <div class="method-select" :class="`method-select--${method.toLowerCase()}`">
               <select v-model="method" :aria-label="t('http.methodAria')">
@@ -1316,6 +1625,60 @@ onBeforeUnmount(() => {
     </div>
 
     <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="envOpen" class="modal-scrim" @click.self="envOpen = false">
+          <div class="modal-card modal-card--wide">
+            <header class="modal-head">
+              <div><span class="eyebrow">{{ t('http.workspace.environment') }}</span><h3>{{ t('http.workspace.title') }}</h3></div>
+              <button type="button" class="icon-button" @click="envOpen = false"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <div class="workspace-envs">
+                <div v-for="environment in workspace.environments" :key="environment.id" class="workspace-env-row">
+                  <button type="button" class="link-button" @click="editEnvironment(environment)">{{ environment.name }}</button>
+                  <button type="button" class="icon-button icon-button--sm icon-button--danger" @click="deleteEnvironment(environment.id)"><Icon name="trash" :size="14" /></button>
+                </div>
+                <button type="button" class="link-button" @click="openEnvironment"><Icon name="plus" :size="14" />{{ t('http.workspace.newEnvironment') }}</button>
+              </div>
+              <div class="form-grid">
+                <label class="field field--grow"><span>{{ t('http.workspace.name') }}</span><input v-model="envDraft.name" :placeholder="t('http.workspace.namePlaceholder')" /></label>
+              </div>
+              <div class="kv-head"><span>{{ t('http.workspace.variable') }}</span><span>{{ t('http.workspace.value') }}</span><span /></div>
+              <div v-for="(variable, index) in envDraft.variables" :key="index" class="kv-row">
+                <input v-model="variable.key" class="mono" placeholder="base_url" spellcheck="false" />
+                <input v-model="variable.value" class="mono" placeholder="https://api.example.com" spellcheck="false" />
+                <button type="button" class="icon-button icon-button--sm" @click="removeWorkspaceVariable(index)"><Icon name="close" :size="14" /></button>
+              </div>
+              <button type="button" class="add-row" @click="addWorkspaceVariable"><Icon name="plus" :size="14" />{{ t('http.workspace.addVariable') }}</button>
+              <p class="muted body-hint">{{ t('http.workspace.variableHint') }}</p>
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="envOpen = false">{{ t('http.curl.close') }}</button>
+              <button type="button" class="button button--primary" @click="saveEnvironment"><Icon name="check" :size="15" />{{ t('http.workspace.saveEnvironment') }}</button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+      <Transition name="modal">
+        <div v-if="importOpen" class="modal-scrim" @click.self="importOpen = false">
+          <div class="modal-card modal-card--wide">
+            <header class="modal-head">
+              <div><span class="eyebrow">{{ t('http.import.eyebrow') }}</span><h3>{{ t('http.import.title') }}</h3></div>
+              <button type="button" class="icon-button" @click="importOpen = false"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <p class="modal-hint">{{ t('http.import.hint') }}</p>
+              <textarea v-model="importText" class="code-input" spellcheck="false" :placeholder="t('http.import.placeholder')" />
+              <label class="link-button">{{ t('http.import.file') }}<input type="file" accept=".json,application/json" class="hidden-file" @change="importCollectionFile" /></label>
+              <div v-if="importError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ importError }}</div>
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="importOpen = false">{{ t('http.curl.cancel') }}</button>
+              <button type="button" class="button button--primary" :disabled="!importText.trim()" @click="applyImport"><Icon name="upload" :size="15" />{{ t('http.import.action') }}</button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
       <Transition name="modal">
         <div v-if="curlOpen" class="modal-scrim" @click.self="curlOpen = false">
           <div class="modal-card modal-card--wide">

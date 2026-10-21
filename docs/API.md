@@ -37,6 +37,8 @@ Each module must be enabled in Settings and the role must have `debug`.
 | Method | Path | Body / result |
 | --- | --- | --- |
 | POST | `/api/http/send` | `{url, method, protocol, headers[{name,value}], body, timeoutMs, insecure, decompress, proxy}` → probe result |
+| GET | `/api/http/workspace` | Environments, active environment and saved collections |
+| PUT | `/api/http/workspace` | Replace the workspace (validated; 2 MiB cap) |
 | POST | `/api/http/download` | Same body as `/api/http/send` → background download job |
 | GET | `/api/http/download/:id` | Download progress/state |
 | DELETE | `/api/http/download/:id` | Cancel and delete a download (owner/admin) |

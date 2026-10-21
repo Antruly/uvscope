@@ -36,6 +36,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | HTTP/1.1 request debugger with headers, body, timing and history | ✅ Stable |
 | Request body modes: raw, form-urlencoded, multipart with files | ✅ New in 0.5.1 |
 | cURL / HAR import and export | ✅ New in 0.5.2 |
+| Environments with {{variables}}, saved request collections, OpenAPI/Postman import | ✅ New in 0.6.0 |
 | SQLite backup download and staged restore | ✅ New in 0.5.2 |
 | gzip / deflate / brotli decoding with a raw-body toggle | ✅ New in 0.4.2 |
 | Large-response streaming download with progress and cancel | ✅ New in 0.4.3 |

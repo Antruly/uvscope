@@ -63,9 +63,9 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Active upstream health checks
 - [x] Certificate import / self-sign / selection
 - [x] Per-instance QPS, latency and traffic metrics
-- [ ] Collections, environments and variable substitution
+- [x] Collections, environments and variable substitution
 - [ ] Pre-request / post-response scripts
-- [~] cURL and HAR import/export (OpenAPI/Postman pending)
+- [x] cURL, HAR, OpenAPI and Postman import/export (HAR export is one entry)
 - [x] Audit log and active session management
 - [x] Backup download and staged restore (migrations still ad hoc)
 - [ ] Supervisor + IPC for long-lived services

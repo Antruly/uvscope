@@ -2782,6 +2782,62 @@ button.nav-item {
 .hidden-file {
   display: none;
 }
+.workspace-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.workspace-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.collection-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 10px;
+}
+.collection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+.collection-chip:hover {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--text);
+}
+.collection-chip .mono {
+  color: var(--accent);
+  font-size: 9px;
+}
+.workspace-envs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.workspace-env-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
 .body-mode {
   display: inline-flex;
   gap: 2px;

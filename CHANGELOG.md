@@ -4,6 +4,17 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- HTTP workspaces: named environments with `{{variable}}` substitution in the URL, headers and
+  body (including urlencoded and multipart text fields), plus named collections of saved
+  requests that can be reloaded. The workspace is stored in SQLite settings and exposed through
+  `GET/PUT /api/http/workspace`.
+- Import OpenAPI/Swagger and Postman collections from JSON into a collection (method, URL,
+  header parameters, body examples where present). cURL and HAR import/export remain available.
+
 ## [0.5.2] - 2026-10-22
 
 ### Added

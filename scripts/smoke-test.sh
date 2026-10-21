@@ -1342,9 +1342,31 @@ with opener.open(restore_request, timeout=30) as response:
 check(restored.get("restartRequired") is True,
       f"restore was not staged: {restored}")
 
+workspace_payload = {
+    "environments": [{"id": "e1", "name": "Local",
+                      "variables": [{"key": "base_url", "value": "http://127.0.0.1"}]}],
+    "activeEnvironmentId": "e1",
+    "collections": [{"id": "c1", "name": "Smoke", "items": [
+        {"id": "i1", "name": "Health", "method": "GET",
+         "url": "{{base_url}}/api/health", "headers": [], "body": "",
+         "bodyType": "application/json", "bodyMode": "raw"}]}],
+}
+status, saved = call("PUT", "/api/http/workspace", workspace_payload)
+check(status == 200 and saved.get("ok") is True,
+      f"workspace save failed: {saved}")
+status, loaded = call("GET", "/api/http/workspace")
+workspace = loaded.get("workspace", {})
+check(workspace.get("activeEnvironmentId") == "e1",
+      f"workspace environment was not persisted: {workspace}")
+check(workspace.get("collections", [{}])[0].get("items", [{}])[0].get("url") ==
+      "{{base_url}}/api/health",
+      f"workspace collection was not persisted: {workspace}")
+status, _ = call("PUT", "/api/http/workspace", {"collections": "invalid"})
+check(status == 400, f"invalid workspace was accepted: {status}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, audit, backup)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, audit, backup, workspace)")
 PY
