@@ -3,7 +3,7 @@
 ; Expects the CMake install tree under stage\ (bin/, share/uvscope/web/).
 
 #define MyAppName "uvscope"
-#define MyAppVersion "0.4.3"
+#define MyAppVersion "0.4.4"
 #define MyAppPublisher "Antruly"
 #define MyAppURL "https://github.com/Antruly/uvscope"
 #define MyAppExeName "uvscope.exe"

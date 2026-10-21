@@ -29,7 +29,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 
 ![HTTP Studio](docs/screenshots/http-studio.png)
 
-## What is in 0.4.3
+## What is in 0.4.4
 
 | Area | Status |
 | --- | --- |
@@ -74,10 +74,10 @@ than falling back to a direct connection.
 
 ## Download
 
-Prebuilt **v0.4.3** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.4.3):
+Prebuilt **v0.4.4** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.4.4):
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.4.3-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.4.4-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 The Windows executable and installer share the uvscope icon; Linux packages install the hicolor
