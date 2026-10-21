@@ -184,7 +184,7 @@ jobs:
         run: |
           mkdir -p packages stage
           cmake --install build --prefix "$PWD/stage"
-          # macOS 0.6.0 is a source-oriented build: libuvcpp and llhttp are
+          # macOS 0.6.1 is a source-oriented build: libuvcpp and llhttp are
           # bundled; Homebrew supplies libuv and OpenSSL. Record the linkage for
           # diagnostics and ad-hoc sign the executable.
           otool -L stage/bin/uvscope || true
