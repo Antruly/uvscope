@@ -4,6 +4,15 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Each reverse proxy reports rolling metrics over a 60-second window: QPS, p50/p95 latency, and
+  2xx/3xx/4xx/5xx status counts alongside the existing totals. The proxy card shows QPS and the
+  latency percentiles; samples are kept in memory (2048 per instance) and reset when the daemon
+  restarts.
+
 ## [0.4.4] - 2026-10-21
 
 ### Added

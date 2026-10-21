@@ -1169,9 +1169,21 @@ if os.environ.get("WS_PORT"):
           f"handshake without the header should fail: {denied_state}")
     call("DELETE", f"/api/ws/sessions/{denied_id}")
 
+status, proxy_payload = call("GET", "/api/proxies")
+smoke_proxy = next((item for item in proxy_payload.get("proxies", [])
+                    if item.get("name") == "smoke"), {})
+metrics = smoke_proxy.get("metrics", {})
+check(metrics.get("windowSeconds") == 60,
+      f"proxy metrics window missing: {metrics}")
+check(metrics.get("qps", 0) > 0, f"proxy qps was not recorded: {metrics}")
+check(metrics.get("status2xx", 0) > 0,
+      f"proxy 2xx status counts missing: {metrics}")
+check(metrics.get("p95Ms", 0) >= metrics.get("p50Ms", 0),
+      f"proxy latency percentiles are inverted: {metrics}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics)")
 PY

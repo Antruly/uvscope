@@ -62,7 +62,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [ ] WebSocket pass-through
 - [ ] Active upstream health checks
 - [x] Certificate import / self-sign / selection
-- [ ] Per-instance QPS, latency and traffic metrics
+- [x] Per-instance QPS, latency and traffic metrics
 - [ ] Collections, environments and variable substitution
 - [ ] Pre-request / post-response scripts
 - [ ] HAR, cURL, OpenAPI and Postman import/export

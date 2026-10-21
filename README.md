@@ -54,6 +54,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | SOAP 1.1 + WSDL operation discovery | ✅ Stable |
 | Managed HTTP reverse proxy with live logs and routing rules | ✅ Stable (method/host/header conditions in 0.4.4) |
 | Weighted upstreams with failover and retries | ✅ New in 0.4.4 |
+| Per-proxy QPS, p50/p95 latency and status counts | ✅ New in 0.4.5 |
 | SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
 | Module toggles, factory reset, update check, about/help | ✅ Stable |
 | HTTP/3 and QUIC transports | 🗺️ Roadmap |

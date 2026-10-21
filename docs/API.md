@@ -334,6 +334,26 @@ wins. A rule is:
 - Invalid regexes, rewrite destinations that do not start with `/` or `$`, rules without any
   path/method/host/header condition, or more than 64 rules are rejected with `400 bad_request`.
 
+### Proxy metrics
+
+Every proxy snapshot in `GET /api/proxies` carries `metrics` computed from the last 60 seconds
+(up to 2048 in-memory samples, reset on daemon restart):
+
+```json
+"metrics": {
+  "windowSeconds": 60,
+  "qps": 1.4,
+  "p50Ms": 3,
+  "p95Ms": 11,
+  "status2xx": 82,
+  "status3xx": 4,
+  "status4xx": 1,
+  "status5xx": 0
+}
+```
+
+`requests`, `errors` and `bytes` remain lifetime totals for the running instance.
+
 ### Upstreams and retries
 
 `upstreams` is an optional array of `{"url": "http://…", "weight": 1}` objects (maximum 16,

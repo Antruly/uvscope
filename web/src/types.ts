@@ -112,6 +112,16 @@ export interface ProxyInfo {
   requests: number
   errors: number
   bytes?: number
+  metrics?: {
+    windowSeconds: number
+    qps: number
+    p50Ms: number
+    p95Ms: number
+    status2xx: number
+    status3xx: number
+    status4xx: number
+    status5xx: number
+  }
 }
 
 export interface HttpHeader {

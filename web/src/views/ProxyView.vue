@@ -356,6 +356,8 @@ onBeforeUnmount(stopLogPolling)
           <div><strong>{{ proxy.requests }}</strong><span>{{ t('proxy.card.requests') }}</span></div>
           <div><strong>{{ proxy.errors }}</strong><span>{{ t('proxy.card.errors') }}</span></div>
           <div><strong>{{ proxy.bytes || 0 }}</strong><span>{{ t('proxy.card.bytes') }}</span></div>
+          <div><strong>{{ (proxy.metrics?.qps ?? 0).toFixed(1) }}</strong><span>{{ t('proxy.card.qps') }}</span></div>
+          <div><strong>{{ proxy.metrics?.p50Ms ?? 0 }} / {{ proxy.metrics?.p95Ms ?? 0 }} ms</strong><span>{{ t('proxy.card.latency') }}</span></div>
         </div>
         <div v-if="proxy.lastError" class="proxy-error"><Icon name="alert" :size="14" />{{ proxy.lastError }}</div>
         <div class="proxy-card__actions">

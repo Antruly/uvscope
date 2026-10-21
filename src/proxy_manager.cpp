@@ -156,6 +156,19 @@ struct ProxyManager::Runtime {
   std::atomic<std::uint64_t> bytes{0};
   std::uint64_t next_log_seq = 1;
   std::mt19937 rng{std::random_device{}()};
+  struct Sample {
+    std::chrono::steady_clock::time_point at;
+    int status = 0;
+    double latency_ms = 0;
+  };
+  mutable std::mutex metrics_mutex;
+  std::deque<Sample> samples;
+
+  void record(int status, double latency_ms) {
+    std::lock_guard<std::mutex> lock(metrics_mutex);
+    samples.push_back({std::chrono::steady_clock::now(), status, latency_ms});
+    while (samples.size() > 2048) samples.pop_front();
+  }
   std::deque<nlohmann::json> log_entries;
   mutable std::mutex log_mutex;
 
@@ -248,6 +261,7 @@ struct ProxyManager::Runtime {
             .set_header("cache-control", "no-store")
             .set_header("x-uvscope-proxy", config.id);
         resp.end();
+        record(rule.status, static_cast<double>(elapsed));
         add_log({{"method", req.method_name()}, {"path", req.raw_url()},
                  {"status", rule.status}, {"rule", rule.name.empty() ? rule.id : rule.name},
                  {"action", "redirect"}, {"location", location}, {"latencyMs", elapsed},
@@ -367,6 +381,7 @@ struct ProxyManager::Runtime {
                                     {"upstream", used_url}})
                         .dump());
       resp.end();
+      record(502, static_cast<double>(elapsed));
       add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
                {"error", message}, {"attempts", attempts}, {"upstream", used_url},
                {"latencyMs", elapsed}, {"bytes", 0}});
@@ -394,9 +409,50 @@ struct ProxyManager::Runtime {
     }
     resp.set_header("x-uvscope-proxy", config.id);
     resp.end();
+    record(static_cast<int>(response.status_code), static_cast<double>(elapsed));
     add_log({{"method", req.method_name()}, {"path", req.raw_url()},
              {"status", static_cast<int>(response.status_code)}, {"latencyMs", elapsed},
              {"attempts", attempts}, {"upstream", used_url}, {"bytes", body.size()}});
+  }
+
+  nlohmann::json metrics_snapshot() const {
+    const auto now = std::chrono::steady_clock::now();
+    const auto window = std::chrono::seconds(60);
+    std::vector<double> latencies;
+    std::uint64_t recent = 0;
+    std::uint64_t status_2xx = 0;
+    std::uint64_t status_3xx = 0;
+    std::uint64_t status_4xx = 0;
+    std::uint64_t status_5xx = 0;
+    {
+      std::lock_guard<std::mutex> lock(metrics_mutex);
+      for (auto it = samples.rbegin(); it != samples.rend(); ++it) {
+        if (now - it->at > window) break;
+        ++recent;
+        latencies.push_back(it->latency_ms);
+        if (it->status >= 200 && it->status <= 299) ++status_2xx;
+        else if (it->status >= 300 && it->status <= 399) ++status_3xx;
+        else if (it->status >= 400 && it->status <= 499) ++status_4xx;
+        else if (it->status >= 500) ++status_5xx;
+      }
+    }
+    auto percentile = [&latencies](double p) -> long long {
+      if (latencies.empty()) return 0;
+      std::sort(latencies.begin(), latencies.end());
+      std::size_t index = static_cast<std::size_t>(p * latencies.size());
+      if (index >= latencies.size()) index = latencies.size() - 1;
+      return static_cast<long long>(latencies[index]);
+    };
+    const long long p50 = percentile(0.50);
+    const long long p95 = percentile(0.95);
+    return {{"windowSeconds", 60},
+            {"qps", static_cast<double>(recent) / 60.0},
+            {"p50Ms", p50},
+            {"p95Ms", p95},
+            {"status2xx", status_2xx},
+            {"status3xx", status_3xx},
+            {"status4xx", status_4xx},
+            {"status5xx", status_5xx}};
   }
 
   ~Runtime() {
@@ -602,7 +658,8 @@ nlohmann::json ProxyManager::snapshot() const {
                    {"lastError", runtime->last_error},
                    {"requests", runtime->requests.load()},
                    {"errors", runtime->errors.load()},
-                   {"bytes", runtime->bytes.load()}});
+                   {"bytes", runtime->bytes.load()},
+                   {"metrics", runtime->metrics_snapshot()}});
   }
   return out;
 }
