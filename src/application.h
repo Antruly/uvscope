@@ -14,6 +14,7 @@
 
 #include "auth.h"
 #include "certificate_manager.h"
+#include "download_manager.h"
 #include "preview_store.h"
 #include "proxy_manager.h"
 #include "socks5_manager.h"
@@ -89,6 +90,7 @@ class Application {
   std::unique_ptr<TransportManager> transport_;
   std::unique_ptr<Socks5Manager> socks5_;
   std::unique_ptr<TerminalManager> terminal_;
+  std::unique_ptr<DownloadManager> downloads_;
   std::unique_ptr<CertificateManager> certificates_;
   PreviewStore previews_;
   uvcpp::uvcpp_web_app app_;

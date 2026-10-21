@@ -4,6 +4,17 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Large responses can be streamed to disk and downloaded without the 4 MiB probe clip.
+  `POST /api/http/download` starts a background fetch (HTTP/1.1), `GET /api/http/download/:id`
+  reports progress, and `/download/:id` serves the staged file as an attachment with
+  `Content-Length` and range support. Jobs are per-user, capped at 512 MiB, cancellable with
+  `DELETE`, and expire after 10 minutes. The HTTP Studio download button uses this path
+  automatically when the probe body was truncated.
+
 ## [0.4.2] - 2026-10-21
 
 ### Added

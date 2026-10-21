@@ -159,6 +159,7 @@ COMP_GZIP=""
 COMP_DEFLATE=""
 COMP_BR=""
 COMP_RAW=""
+COMP_READY=0
 if command -v node >/dev/null 2>&1; then
   COMP_DIR="${DATA_DIR}/compression"
   mkdir -p "${COMP_DIR}"
@@ -176,6 +177,7 @@ if command -v node >/dev/null 2>&1; then
     cat "${COMP_DIR}/server.log" >&2
     exit 1
   fi
+  COMP_READY=1
   for encoding in gzip deflate br; do
     payload="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/http/send" \
       -H 'content-type: application/json' \
@@ -400,10 +402,12 @@ print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP se
 PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
+COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
 SOCKS5_UDP_TARGET_PORT="${SOCKS5_UDP_TARGET_PORT}" TCP_PORT="${TCP_PORT}" python3 - <<'PY'
 import base64
+import hashlib
 import http.cookiejar
 import json
 import os
@@ -891,9 +895,45 @@ for mode, csp_must, csp_must_not in [
         check(status == 200 and deleted.get("ok") is True,
               f"preview {mode} delete failed: {deleted}")
 
+if os.environ.get("COMP_READY") == "1":
+    big_size = 6 * 1024 * 1024
+    comp_base = "http://127.0.0.1:" + os.environ["COMP_PORT"]
+    status, created = call("POST", "/api/http/download", {
+        "url": comp_base + "/big.bin", "method": "GET", "headers": [],
+        "body": "", "timeoutMs": 30000,
+    })
+    download = created.get("download", {})
+    download_id = download.get("id", "")
+    check(status == 200 and bool(download_id),
+          f"download start failed: {created}")
+    state = download
+    for _ in range(150):
+        status, payload = call("GET", f"/api/http/download/{download_id}")
+        state = payload.get("download", {})
+        if state.get("state") != "running":
+            break
+        time.sleep(0.2)
+    check(state.get("state") == "ready", f"download did not finish: {state}")
+    check(state.get("bytes") == big_size,
+          f"download size was {state.get('bytes')}, expected {big_size}")
+    with opener.open(base + f"/download/{download_id}", timeout=30) as stream:
+        body = stream.read()
+    expected = bytes(range(256)) * (big_size // 256)
+    check(len(body) == big_size, f"downloaded {len(body)} bytes, expected {big_size}")
+    check(hashlib.sha256(body).digest() == hashlib.sha256(expected).digest(),
+          "downloaded bytes differ from the upstream payload")
+    status, deleted = call("DELETE", f"/api/http/download/{download_id}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"download delete failed: {deleted}")
+    try:
+        opener.open(base + f"/download/{download_id}", timeout=5)
+        check(False, "deleted download is still reachable")
+    except urllib.error.HTTPError as error:
+        check(error.code == 404, f"deleted download returned {error.code}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads)")
 PY

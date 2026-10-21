@@ -151,6 +151,7 @@ set(UVSCOPE_SOURCES
   src/certificate_manager.cpp
   src/command_seed.cpp
   src/crypto.cpp
+  src/download_manager.cpp
   src/http_probe.cpp
   src/net_probe.cpp
   src/preview_store.cpp

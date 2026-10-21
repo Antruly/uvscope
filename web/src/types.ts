@@ -129,6 +129,20 @@ export interface Http2Frame {
   lastStreamId: number
 }
 
+export interface HttpDownload {
+  id: string
+  state: 'running' | 'ready' | 'error' | 'cancelled'
+  error?: string
+  url: string
+  contentType?: string
+  filename?: string
+  startedAt?: string
+  finishedAt?: string
+  bytes: number
+  totalBytes: number
+  statusCode?: number
+}
+
 export interface HttpResult {
   ok: boolean
   error?: string

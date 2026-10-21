@@ -14,6 +14,8 @@ if (!port) {
 }
 
 const payload = Buffer.from('compressed-ok '.repeat(200))
+const big = Buffer.alloc(6 * 1024 * 1024)
+for (let i = 0; i < big.length; i += 1) big[i] = i & 0xff
 const encoders = {
   '/gzip': zlib.gzipSync,
   '/deflate': zlib.deflateSync,
@@ -21,6 +23,15 @@ const encoders = {
 }
 
 const server = http.createServer((request, response) => {
+  if (request.url === '/big.bin') {
+    response.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': big.length,
+      'cache-control': 'no-store',
+    })
+    response.end(big)
+    return
+  }
   const encode = encoders[request.url]
   if (!encode) {
     response.writeHead(404, { 'content-type': 'text/plain' })

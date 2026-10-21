@@ -32,6 +32,10 @@ Each module must be enabled in Settings and the role must have `debug`.
 | Method | Path | Body / result |
 | --- | --- | --- |
 | POST | `/api/http/send` | `{url, method, protocol, headers[{name,value}], body, timeoutMs, insecure, decompress, proxy}` → probe result |
+| POST | `/api/http/download` | Same body as `/api/http/send` → background download job |
+| GET | `/api/http/download/:id` | Download progress/state |
+| DELETE | `/api/http/download/:id` | Cancel and delete a download (owner/admin) |
+| GET | `/download/:id` | Staged file (public by token, attachment only) |
 | POST | `/api/tcp/probe` | `{host, port, payload, encoding, connectTimeoutMs, readTimeoutMs, proxy}` |
 | POST | `/api/udp/probe` | `{host, port, payload, encoding, timeoutMs, proxy}` |
 | POST | `/api/tcp/sessions` | `{host, port, connectTimeoutMs, proxy}` → persistent TCP session |
@@ -125,6 +129,27 @@ order; `frameCount` is the total seen and `framesTruncated` marks the cap. `type
 9113 names, `flags` is the raw bit mask, and `errorCode` / `lastStreamId` are meaningful only on
 `RST_STREAM` / `GOAWAY`. An SDK built without nghttp2 makes the daemon reject `protocol: "http2"`
 with `this libuvcpp build has no HTTP/2 support`.
+
+### Large response downloads
+
+`POST /api/http/download` accepts the same body as `/api/http/send` (the `protocol`,
+`decompress` and `maxBodyBytes` fields are ignored; the transfer is HTTP/1.1 and the bytes are
+stored as received). It returns immediately:
+
+```json
+{"ok": true, "download": {
+  "id": "9f2c…", "state": "running", "bytes": 0, "totalBytes": -1,
+  "filename": "big.bin", "url": "/download/9f2c…"
+}}
+```
+
+Poll `GET /api/http/download/:id` for `state` (`running`, `ready`, `error`, `cancelled`) and the
+byte counters. When `ready`, `GET /download/:id` serves the file with
+`Content-Disposition: attachment`, `Content-Length` and byte-range support. The URL is public by
+unguessable token, but the file is always sent as `application/octet-stream` so target HTML can
+never execute on the uvscope origin. Jobs belong to their creator (admins see all), are capped
+at 512 MiB, can be cancelled with `DELETE /api/http/download/:id`, and are pruned 10 minutes
+after they finish. Staged files do not survive a daemon restart.
 
 `POST /api/preview` stores a captured HTML document in memory (max 8 entries, 8 MiB each,
 120 s TTL) and returns a random token. `mode: "safe"` allows remote CSS/images/fonts/frames but

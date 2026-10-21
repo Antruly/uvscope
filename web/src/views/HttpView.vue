@@ -3,7 +3,7 @@ import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'v
 import Icon from '../components/Icon.vue'
 import Socks5ProxyFields from '../components/Socks5ProxyFields.vue'
 import { del, errorMessage, get, post } from '../api'
-import type { HistoryEntry, HttpHeader, HttpResult } from '../types'
+import type { HistoryEntry, HttpDownload, HttpHeader, HttpResult } from '../types'
 import { useUiStore } from '../stores/ui'
 import { useAuthStore } from '../stores/auth'
 import { useI18nStore } from '../stores/i18n'
@@ -39,6 +39,9 @@ const bodyType = ref('application/json')
 const timeoutMs = ref(20000)
 const insecure = ref(false)
 const decompress = ref(true)
+const downloading = ref(false)
+const downloadState = ref<HttpDownload | null>(null)
+let downloadTimer: number | undefined
 const proxy = ref({ enabled: false, host: '127.0.0.1', port: 1080, username: '', password: '' })
 const sending = ref(false)
 const result = ref<HttpResult | null>(null)
@@ -227,6 +230,12 @@ function cleanHeaders() {
 function downloadBody() {
   const res = result.value
   if (!res) return
+  // The probe clips at 4 MiB; ask the daemon to re-fetch and stream the full
+  // response to disk instead of handing the browser a truncated blob.
+  if (res.bodyTruncated) {
+    void startStreamDownload()
+    return
+  }
   let blob: Blob
   if (res.bodyEncoding === 'base64' && res.bodyBase64) {
     const binary = atob(res.bodyBase64)
@@ -252,6 +261,31 @@ async function copy(text: string) {
   }
 }
 
+function buildPayload() {
+  const outgoing = cleanHeaders()
+  if (body.value && !outgoing.some((header) => header.name.toLowerCase() === 'content-type')) {
+    outgoing.push({ name: 'content-type', value: bodyType.value })
+  }
+  return {
+    url: url.value.trim(),
+    method: method.value,
+    protocol: protocol.value,
+    headers: outgoing,
+    body: body.value,
+    timeoutMs: timeoutMs.value,
+    insecure: insecure.value,
+    decompress: decompress.value,
+    proxy: proxy.value.enabled
+      ? {
+          host: proxy.value.host.trim(),
+          port: proxy.value.port,
+          username: proxy.value.username,
+          password: proxy.value.password,
+        }
+      : undefined,
+  }
+}
+
 async function send() {
   if (!url.value.trim()) {
     ui.notify('warning', t('http.notify.urlRequired'))
@@ -266,29 +300,7 @@ async function send() {
     elapsed.value = Math.round(performance.now() - startedAt.value)
   }, 100)
   try {
-    const outgoing = cleanHeaders()
-    if (body.value && !outgoing.some((header) => header.name.toLowerCase() === 'content-type')) {
-      outgoing.push({ name: 'content-type', value: bodyType.value })
-    }
-    const payload = {
-      url: url.value.trim(),
-      method: method.value,
-      protocol: protocol.value,
-      headers: outgoing,
-      body: body.value,
-      timeoutMs: timeoutMs.value,
-      insecure: insecure.value,
-      decompress: decompress.value,
-      proxy: proxy.value.enabled
-        ? {
-            host: proxy.value.host.trim(),
-            port: proxy.value.port,
-            username: proxy.value.username,
-            password: proxy.value.password,
-          }
-        : undefined,
-    }
-    result.value = await post<HttpResult>('/api/http/send', payload)
+    result.value = await post<HttpResult>('/api/http/send', buildPayload())
     responseTab.value = 'body'
     await loadHistory()
     if (!result.value.ok) ui.notify('error', t('http.requestFailed'), result.value.error)
@@ -300,6 +312,86 @@ async function send() {
     if (ticker) window.clearInterval(ticker)
     elapsed.value = Math.round(performance.now() - startedAt.value)
   }
+}
+
+function stopDownloadPolling() {
+  if (downloadTimer) window.clearInterval(downloadTimer)
+  downloadTimer = undefined
+}
+
+function triggerBrowserDownload(url: string) {
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = ''
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
+function pollDownload(id: string) {
+  stopDownloadPolling()
+  downloadTimer = window.setInterval(async () => {
+    try {
+      const response = await get<{ ok: boolean; download?: HttpDownload }>(
+        `/api/http/download/${id}`,
+      )
+      const state = response.download
+      if (!state) return
+      downloadState.value = state
+      if (state.state === 'ready') {
+        stopDownloadPolling()
+        downloading.value = false
+        triggerBrowserDownload(state.url)
+        ui.notify('success', t('http.download.ready'), state.filename)
+      } else if (state.state === 'error' || state.state === 'cancelled') {
+        stopDownloadPolling()
+        downloading.value = false
+        if (state.state === 'error') {
+          ui.notify('error', t('http.download.failed'), state.error)
+        }
+      }
+    } catch {
+      // Keep polling; the daemon may be busy or restarting.
+    }
+  }, 400)
+}
+
+async function startStreamDownload() {
+  if (downloading.value || !url.value.trim()) return
+  downloading.value = true
+  downloadState.value = {
+    id: '',
+    state: 'running',
+    url: '',
+    bytes: 0,
+    totalBytes: -1,
+  }
+  try {
+    const response = await post<{ ok: boolean; error?: string; download?: HttpDownload }>(
+      '/api/http/download',
+      buildPayload(),
+    )
+    if (!response.ok || !response.download?.id) {
+      throw new Error(response.error || t('http.download.failed'))
+    }
+    downloadState.value = response.download
+    pollDownload(response.download.id)
+  } catch (err) {
+    downloading.value = false
+    downloadState.value = null
+    ui.toastError(err, t('http.download.failed'))
+  }
+}
+
+async function cancelDownload() {
+  const id = downloadState.value?.id
+  stopDownloadPolling()
+  downloading.value = false
+  downloadState.value = null
+  if (!id) return
+  await del(`/api/http/download/${id}`).catch(() => {
+    // The job expires on its own; cancellation is best-effort.
+  })
 }
 
 async function loadHistory() {
@@ -359,6 +451,7 @@ onActivated(() => void loadHistory())
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   if (ticker) window.clearInterval(ticker)
+  stopDownloadPolling()
   revokePreviewUrl()
   revokeScriptPreview()
 })
@@ -475,7 +568,13 @@ onBeforeUnmount(() => {
                 <span class="meta-pill mono">{{ result.timing?.totalMs ?? 0 }} ms</span>
                 <span class="meta-pill mono">{{ formatBytes(result.bodySize ?? 0) }}</span>
                 <button class="icon-button icon-button--sm" :title="t('http.response.copyBody')" @click="copy(responseBody)"><Icon name="copy" :size="15" /></button>
-                <button class="icon-button icon-button--sm" :title="t('http.response.downloadBody')" @click="downloadBody"><Icon name="download" :size="15" /></button>
+                <button class="icon-button icon-button--sm" :title="result.bodyTruncated ? t('http.download.streamTitle') : t('http.response.downloadBody')" @click="downloadBody"><Icon name="download" :size="15" /></button>
+                <span v-if="downloading || downloadState" class="meta-pill mono">
+                  {{ downloadState?.totalBytes && downloadState.totalBytes > 0
+                    ? t('http.download.progressTotal', { bytes: formatBytes(downloadState.bytes), total: formatBytes(downloadState.totalBytes) })
+                    : t('http.download.progress', { bytes: formatBytes(downloadState?.bytes ?? 0) }) }}
+                </span>
+                <button v-if="downloading" class="icon-button icon-button--sm" :title="t('http.download.cancel')" @click="cancelDownload"><Icon name="close" :size="14" /></button>
               </template>
             </div>
           </header>

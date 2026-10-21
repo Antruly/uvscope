@@ -261,8 +261,8 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 
 - HTTP/2 works over TLS (ALPN `h2`, stream IDs, GOAWAY and frame summaries); the runtime matrix
   still needs Windows and macOS coverage. HTTP/3/QUIC stay closed in release builds.
-- Preview can run scripts in an opt-in opaque-origin sandbox, but bodies are still capped at the
-  probe limit rather than streamed.
+- Preview and probes still cap bodies at 4 MiB; larger responses can be streamed to a staging
+  file and downloaded (512 MiB cap, HTTP/1.1, attachment-only).
 - Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
 - No WebSocket upgrade pass-through in the proxy.
 - Routing supports ordered exact / prefix / regex rules for redirects and path rewrites, but not

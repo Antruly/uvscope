@@ -135,6 +135,7 @@ Socks5Proxy proxy_field(const nlohmann::json& body) {
   return proxy;
 }
 
+
 struct TerminalWsAttachment {
   TerminalManager* manager = nullptr;
   std::string id;
@@ -336,6 +337,27 @@ std::vector<HttpHeaderInput> header_fields(const nlohmann::json& body) {
   return headers;
 }
 
+HttpProbeInput http_input_field(const nlohmann::json& body) {
+  HttpProbeInput input;
+  input.url = string_field(body, "url");
+  input.method = string_field(body, "method", "GET");
+  input.headers = header_fields(body);
+  input.body = string_field(body, "body");
+  input.timeout_ms = int_field(body, "timeoutMs", 20000);
+  input.protocol = string_field(body, "protocol", "auto");
+  input.insecure = bool_field(body, "insecure", false);
+  // `decompress` is the current name; `compression` is kept as an alias for
+  // older clients. Without either field, decode by default.
+  if (body.contains("decompress")) {
+    input.decompress = bool_field(body, "decompress", true);
+  } else if (body.contains("compression")) {
+    input.decompress = bool_field(body, "compression", true);
+  }
+  input.proxy = proxy_field(body);
+  input.max_body_bytes = 4 * 1024 * 1024;
+  return input;
+}
+
 std::vector<int> version_parts(std::string text) {
   text = trim(text);
   if (!text.empty() && (text[0] == 'v' || text[0] == 'V')) text.erase(text.begin());
@@ -448,6 +470,7 @@ bool Application::initialize() {
     if (server.auto_start) socks5_->start_server(server.id, nullptr);
   }
   certificates_.reset(new CertificateManager(options_.data_dir / "certs"));
+  downloads_.reset(new DownloadManager(options_.data_dir));
   terminal_.reset(new TerminalManager());
   if (!terminal_->available()) {
     std::fprintf(stderr, "uvscope: terminal sessions unavailable: %s\n",
@@ -556,6 +579,7 @@ int Application::run() {
 
   if (update_thread_.joinable()) update_thread_.join();
   if (proxies_) proxies_->stop_all();
+  if (downloads_) downloads_.reset();
   store_.close();
   return 0;
 }
@@ -877,23 +901,7 @@ void Application::register_debug_routes() {
     if (!principal) return;
     const auto body = parse_json(req, resp);
     if (!body) return;
-    HttpProbeInput input;
-    input.url = string_field(*body, "url");
-    input.method = string_field(*body, "method", "GET");
-    input.headers = header_fields(*body);
-    input.body = string_field(*body, "body");
-    input.timeout_ms = int_field(*body, "timeoutMs", 20000);
-    input.protocol = string_field(*body, "protocol", "auto");
-    input.insecure = bool_field(*body, "insecure", false);
-    // `decompress` is the current name; `compression` is kept as an alias for
-    // older clients. Without either field, decode by default.
-    if (body->contains("decompress")) {
-      input.decompress = bool_field(*body, "decompress", true);
-    } else if (body->contains("compression")) {
-      input.decompress = bool_field(*body, "compression", true);
-    }
-    input.proxy = proxy_field(*body);
-    input.max_body_bytes = 4 * 1024 * 1024;
+    const HttpProbeInput input = http_input_field(*body);
     if (input.url.empty()) {
       send_error(resp, 400, "url is required", "bad_request");
       return;
@@ -914,6 +922,90 @@ void Application::register_debug_routes() {
           owner.user = user;
           add_history(owner, "http", summary, result.body);
         });
+  });
+
+  app_.post("/api/http/download", [this](uvcpp::uvcpp_web_request& req,
+                                         uvcpp::uvcpp_web_response& resp,
+                                         uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "http", "debug");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const HttpProbeInput input = http_input_field(*body);
+    if (input.url.empty()) {
+      send_error(resp, 400, "url is required", "bad_request");
+      return;
+    }
+    if (!downloads_) {
+      send_error(resp, 503, "downloads are unavailable", "unavailable");
+      return;
+    }
+    std::string error;
+    const std::string id = downloads_->start(input, principal->user.id, &error);
+    if (id.empty()) {
+      send_error(resp, 400, error.empty() ? "could not start download" : error,
+                 "download_failed");
+      return;
+    }
+    DownloadSnapshot snapshot;
+    downloads_->snapshot(id, principal->user.id, principal->user.role == "admin", &snapshot);
+    send_json(resp, 200, {{"ok", true}, {"download", download_json(snapshot)}});
+  });
+
+  app_.get("/api/http/download/:id", [this](uvcpp::uvcpp_web_request& req,
+                                            uvcpp::uvcpp_web_response& resp,
+                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "http", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    DownloadSnapshot snapshot;
+    if (!id || !downloads_ ||
+        !downloads_->snapshot(*id, principal->user.id, principal->user.role == "admin",
+                              &snapshot)) {
+      send_error(resp, 404, "download not found", "not_found");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}, {"download", download_json(snapshot)}});
+  });
+
+  app_.del("/api/http/download/:id", [this](uvcpp::uvcpp_web_request& req,
+                                            uvcpp::uvcpp_web_response& resp,
+                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "http", "debug");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    std::string error;
+    if (!id || !downloads_ ||
+        !downloads_->cancel(*id, principal->user.id, principal->user.role == "admin",
+                            &error)) {
+      send_error(resp, 404, error.empty() ? "download not found" : error, "not_found");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  // Public by unguessable token, like /preview/:id. Always an attachment with
+  // a generic content type: serving target HTML inline on the uvscope origin
+  // would let it run with the workbench's cookies.
+  app_.get("/download/:id", [this](uvcpp::uvcpp_web_request& req,
+                                   uvcpp::uvcpp_web_response& resp,
+                                   uvcpp::uvcpp_web_next) {
+    const std::string* id = req.param("id");
+    const auto file = id && downloads_ ? downloads_->file(*id) : std::nullopt;
+    if (!file) {
+      resp.status(404).body("download not found or not ready", "text/plain; charset=utf-8");
+      resp.end();
+      return;
+    }
+    const int status =
+        file->statusCode >= 200 && file->statusCode <= 599 ? file->statusCode : 200;
+    resp.status(status)
+        .set_header("content-type", "application/octet-stream")
+        .set_header("content-disposition",
+                    "attachment; filename=\"" + file->filename + "\"")
+        .set_header("cache-control", "no-store")
+        .set_header("x-content-type-options", "nosniff");
+    resp.send_file(file->path.string(), file->bytes);
   });
 
   app_.post("/api/tcp/probe", [this](uvcpp::uvcpp_web_request& req,
