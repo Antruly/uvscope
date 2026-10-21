@@ -21,7 +21,7 @@ export const useAuthStore = defineStore('auth', () => {
   const setupRequired = ref(false)
   const initialized = ref(false)
   const loading = ref(false)
-  const version = ref('0.5.1')
+  const version = ref('0.5.2')
   const libuvcpp = ref('')
   const dataDir = ref('')
   const statusError = ref('')
