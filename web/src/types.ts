@@ -77,6 +77,10 @@ export interface ProxyRule {
   enabled: boolean
   matchType: 'exact' | 'prefix' | 'regex'
   pattern: string
+  method?: string
+  host?: string
+  headerName?: string
+  headerValue?: string
   action: 'redirect' | 'rewrite'
   status: number
   destination: string

@@ -88,7 +88,12 @@ struct ProxyRule {
   std::string name;
   bool enabled = true;
   std::string match_type = "prefix";  // exact | prefix | regex
-  std::string pattern;
+  std::string pattern;                // empty = any path (other conditions decide)
+  // Optional conditions, combined with AND. Empty means "no condition".
+  std::string method;       // comma-separated list, e.g. "GET,POST"
+  std::string host;         // exact or *.suffix; port ignored unless present
+  std::string header_name;  // header must exist when value is empty
+  std::string header_value;
   std::string action = "redirect";    // redirect | rewrite
   int status = 302;
   std::string destination;

@@ -344,12 +344,21 @@ fi
 
 PROXY_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/proxies" \
   -H 'content-type: application/json' \
-  -d "{\"name\":\"smoke\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${PROXY_PORT},\"target\":\"http://127.0.0.1:${PORT}\",\"start\":true,\"rules\":[{\"name\":\"redirect\",\"matchType\":\"exact\",\"pattern\":\"/smoke-redirect\",\"action\":\"redirect\",\"status\":301,\"destination\":\"/api/health\",\"preserveQuery\":true},{\"name\":\"rewrite\",\"matchType\":\"prefix\",\"pattern\":\"/smoke-rewrite\",\"action\":\"rewrite\",\"destination\":\"/api\$rest\",\"preserveQuery\":true}]}")"
+  -d "{\"name\":\"smoke\",\"listenHost\":\"127.0.0.1\",\"listenPort\":${PROXY_PORT},\"target\":\"http://127.0.0.1:${PORT}\",\"start\":true,\"rules\":[{\"name\":\"redirect\",\"matchType\":\"exact\",\"pattern\":\"/smoke-redirect\",\"action\":\"redirect\",\"status\":301,\"destination\":\"/api/health\",\"preserveQuery\":true},{\"name\":\"rewrite\",\"matchType\":\"prefix\",\"pattern\":\"/smoke-rewrite\",\"action\":\"rewrite\",\"destination\":\"/api\$rest\",\"preserveQuery\":true},{\"name\":\"method\",\"matchType\":\"exact\",\"pattern\":\"/smoke-method\",\"method\":\"POST\",\"action\":\"redirect\",\"status\":307,\"destination\":\"/api/health\",\"preserveQuery\":false},{\"name\":\"header\",\"matchType\":\"exact\",\"pattern\":\"/smoke-header\",\"headerName\":\"X-Smoke\",\"headerValue\":\"yes\",\"action\":\"redirect\",\"status\":302,\"destination\":\"/api/health\",\"preserveQuery\":false},{\"name\":\"host\",\"matchType\":\"exact\",\"pattern\":\"/smoke-host\",\"host\":\"proxy.test\",\"action\":\"redirect\",\"status\":301,\"destination\":\"/api/health\",\"preserveQuery\":false},{\"name\":\"combined\",\"pattern\":\"\",\"method\":\"POST,PUT\",\"host\":\"proxy.test\",\"headerName\":\"X-Secret\",\"headerValue\":\"1\",\"action\":\"redirect\",\"status\":308,\"destination\":\"/api/health\",\"preserveQuery\":false}]}")"
 
 sleep 0.3
 PROXIED="$(curl -fsS --max-time 5 "http://127.0.0.1:${PROXY_PORT}/api/health")"
 REDIRECT_HEADERS="$(curl -sS -D - -o /dev/null --max-time 5 "http://127.0.0.1:${PROXY_PORT}/smoke-redirect?x=1")"
 REWRITTEN="$(curl -fsS --max-time 5 "http://127.0.0.1:${PROXY_PORT}/smoke-rewrite/health?x=1")"
+
+METHOD_POST="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 -X POST "http://127.0.0.1:${PROXY_PORT}/smoke-method")"
+METHOD_GET="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 "http://127.0.0.1:${PROXY_PORT}/smoke-method")"
+HEADER_HIT="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 -H 'X-Smoke: yes' "http://127.0.0.1:${PROXY_PORT}/smoke-header")"
+HEADER_MISS="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 "http://127.0.0.1:${PROXY_PORT}/smoke-header")"
+HOST_HIT="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 -H 'Host: proxy.test' "http://127.0.0.1:${PROXY_PORT}/smoke-host")"
+HOST_MISS="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 "http://127.0.0.1:${PROXY_PORT}/smoke-host")"
+ALL_HIT="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 -X POST -H 'Host: proxy.test' -H 'X-Secret: 1' "http://127.0.0.1:${PROXY_PORT}/smoke-all")"
+ALL_MISS="$(curl -sS -o /dev/null -w '%{http_code}|%{redirect_url}' --max-time 5 -X POST -H 'Host: proxy.test' "http://127.0.0.1:${PROXY_PORT}/smoke-all")"
 
 SESSION_RESULT="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/tcp/sessions" \
   -H 'content-type: application/json' \
@@ -384,6 +393,10 @@ H2_RESULT="${H2_RESULT}" \
 COMP_GZIP="${COMP_GZIP}" COMP_DEFLATE="${COMP_DEFLATE}" COMP_BR="${COMP_BR}" \
 COMP_RAW="${COMP_RAW}" \
 REDIRECT_HEADERS="${REDIRECT_HEADERS}" REWRITTEN="${REWRITTEN}" \
+METHOD_POST="${METHOD_POST}" METHOD_GET="${METHOD_GET}" \
+HEADER_HIT="${HEADER_HIT}" HEADER_MISS="${HEADER_MISS}" \
+HOST_HIT="${HOST_HIT}" HOST_MISS="${HOST_MISS}" \
+ALL_HIT="${ALL_HIT}" ALL_MISS="${ALL_MISS}" \
 SESSION_RESULT="${SESSION_RESULT}" SEND_ONE="${SEND_ONE}" SEND_TWO="${SEND_TWO}" \
 EVENTS_RESULT="${EVENTS_RESULT}" python3 - <<'PY'
 import json
@@ -462,7 +475,7 @@ if os.environ.get("COMP_RAW"):
 proxy = json.loads(os.environ["PROXY_RESULT"])
 check(proxy.get("ok") is True, f"proxy creation failed: {proxy.get('error')}")
 check(any(p.get("running") for p in proxy.get("proxies", [])), "proxy is not running")
-check(any(len(p.get("rules", [])) == 2 for p in proxy.get("proxies", [])),
+check(any(len(p.get("rules", [])) == 6 for p in proxy.get("proxies", [])),
       f"proxy rules were not persisted: {proxy.get('proxies')}")
 redirect = os.environ["REDIRECT_HEADERS"].lower()
 check("301" in redirect, f"proxy redirect status missing: {redirect[:120]}")
@@ -471,6 +484,28 @@ check("location: /api/health?x=1" in redirect,
 rewritten = json.loads(os.environ["REWRITTEN"])
 check(rewritten.get("name") == "uvscope",
       f"proxy rewrite did not reach /api/health: {rewritten}")
+
+def status_of(name):
+    code, _, location = os.environ[name].partition("|")
+    return code, location
+
+def check_rule(name, expected, message):
+    code, location = status_of(name)
+    check(code == expected and bool(location),
+          f"{message}: status={code} location={location!r}")
+
+def check_miss(name, message):
+    code, location = status_of(name)
+    check(not location, f"{message}: status={code} location={location!r}")
+
+check_rule("METHOD_POST", "307", "method rule did not fire on POST")
+check_miss("METHOD_GET", "method rule fired on GET")
+check_rule("HEADER_HIT", "302", "header rule did not fire with the header")
+check_miss("HEADER_MISS", "header rule fired without the header")
+check_rule("HOST_HIT", "301", "host rule did not fire for proxy.test")
+check_miss("HOST_MISS", "host rule fired for the wrong host")
+check_rule("ALL_HIT", "308", "combined method+host+header rule did not fire")
+check_miss("ALL_MISS", "combined rule fired with a missing header")
 
 proxied = json.loads(os.environ["PROXIED"])
 check(proxied.get("ok") is True, "proxied health endpoint failed")

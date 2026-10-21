@@ -57,7 +57,8 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 ## 0.5 — gateway and team workflow
 
 - [x] Exact / prefix / regex routing with redirects and path rewrites
-- [ ] Header / method routing rules and multiple weighted upstreams
+- [x] Header / method / host routing conditions
+- [ ] Multiple weighted upstreams and retry policy
 - [ ] WebSocket pass-through
 - [ ] Retry policy and upstream health
 - [x] Certificate import / self-sign / selection

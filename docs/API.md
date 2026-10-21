@@ -305,6 +305,10 @@ wins. A rule is:
   "enabled": true,
   "matchType": "exact | prefix | regex",
   "pattern": "/old",
+  "method": "GET,POST",
+  "host": "api.example.com",
+  "headerName": "Authorization",
+  "headerValue": "Bearer dev",
   "action": "redirect | rewrite",
   "status": 301,
   "destination": "/new",
@@ -314,6 +318,11 @@ wins. A rule is:
 
 - Matching uses the raw request path (without the query). `exact` compares the whole path,
   `prefix` is a byte-prefix match, `regex` uses ECMAScript `std::regex_search`.
+- `method`, `host`, `headerName`/`headerValue` are optional conditions combined with AND. `method`
+  is a comma-separated, case-insensitive list. `host` matches case-insensitively with the port
+  ignored unless the pattern contains one, and `*.example.com` matches any subdomain.
+  `headerName` requires the header to exist; `headerValue` additionally requires an exact value.
+  An empty `pattern` matches every path, so a rule can be driven by method/host/header alone.
 - `redirect` answers with `status` (301, 302, 303, 307 or 308) and a `Location` header without
   contacting the upstream. `rewrite` replaces the upstream path and continues proxying; the configured target
   path is not prepended for a rewritten request.
@@ -322,8 +331,8 @@ wins. A rule is:
   `$scheme` (`http`/`https`). Unknown variables are left literal.
 - With `preserveQuery: true`, the original query is appended unless the destination already
   contains `?`; destinations using `$args` or `$request_uri` are not appended twice.
-- Invalid regexes, rewrite destinations that do not start with `/` or `$`, empty patterns or more
-  than 64 rules are rejected with `400 bad_request`.
+- Invalid regexes, rewrite destinations that do not start with `/` or `$`, rules without any
+  path/method/host/header condition, or more than 64 rules are rejected with `400 bad_request`.
 
 ## Virtual terminals
 

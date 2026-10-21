@@ -32,6 +32,42 @@ bool hop_by_hop(const std::string& name) {
 
 std::string iso_time() { return now_iso8601(); }
 
+bool method_matches(const std::string& list, const std::string& method) {
+  const std::string wanted = lower(trim(method));
+  std::size_t start = 0;
+  while (start <= list.size()) {
+    const std::size_t comma = list.find(',', start);
+    const std::string token = lower(trim(list.substr(
+        start, comma == std::string::npos ? std::string::npos : comma - start)));
+    if (token == wanted) return true;
+    if (comma == std::string::npos) break;
+    start = comma + 1;
+  }
+  return false;
+}
+
+std::string host_without_port(std::string host) {
+  if (!host.empty() && host.front() == '[') {
+    const std::size_t close = host.find(']');
+    if (close != std::string::npos) return host.substr(0, close + 1);
+  }
+  const std::size_t colon = host.rfind(':');
+  if (colon != std::string::npos && host.find(':') == colon) host.resize(colon);
+  return host;
+}
+
+bool host_matches(const std::string& pattern, const std::string& host) {
+  const std::string expected = lower(trim(pattern));
+  std::string actual = lower(trim(host));
+  if (expected.find(':') == std::string::npos) actual = host_without_port(actual);
+  if (expected.rfind("*.", 0) == 0) {
+    const std::string suffix = expected.substr(1);
+    return actual.size() > suffix.size() &&
+           actual.compare(actual.size() - suffix.size(), suffix.size(), suffix) == 0;
+  }
+  return expected == actual;
+}
+
 std::string replace_all(std::string value, const std::string& needle,
                         const std::string& replacement) {
   if (needle.empty()) return value;
@@ -123,10 +159,22 @@ struct ProxyManager::Runtime {
     // replace the upstream path (the target base path then does not apply).
     for (const auto& rule : config.rules) {
       if (!rule.enabled) continue;
+      if (!rule.method.empty() && !method_matches(rule.method, req.method_name())) {
+        continue;
+      }
+      if (!rule.host.empty() && !host_matches(rule.host, req.host())) continue;
+      if (!rule.header_name.empty()) {
+        const std::string value = req.header(rule.header_name);
+        if (rule.header_value.empty() ? value.empty() : value != rule.header_value) {
+          continue;
+        }
+      }
       bool matched = false;
       std::string rest;
       std::smatch capture;
-      if (rule.match_type == "exact") {
+      if (rule.pattern.empty()) {
+        matched = true;
+      } else if (rule.match_type == "exact") {
         matched = path == rule.pattern;
       } else if (rule.match_type == "prefix") {
         matched = path.rfind(rule.pattern, 0) == 0;

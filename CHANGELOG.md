@@ -4,6 +4,17 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Reverse proxy rules can match on HTTP method, Host and headers in addition to the path. Method
+  lists are comma-separated and case-insensitive; Host supports exact values and `*.suffix`
+  wildcards (port ignored unless specified); `headerName` requires a header and `headerValue`
+  pins its exact value. Conditions combine with AND, and an empty path pattern matches every
+  path, so rules can be driven by method/host/header alone. The proxy editor exposes the new
+  fields and the smoke test covers method, header, host and a combined rule.
+
 ## [0.4.3] - 2026-10-21
 
 ### Added

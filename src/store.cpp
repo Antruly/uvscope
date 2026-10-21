@@ -47,6 +47,10 @@ nlohmann::json proxy_rules_to_json(const std::vector<ProxyRule>& rules) {
                    {"enabled", rule.enabled},
                    {"matchType", rule.match_type},
                    {"pattern", rule.pattern},
+                   {"method", rule.method},
+                   {"host", rule.host},
+                   {"headerName", rule.header_name},
+                   {"headerValue", rule.header_value},
                    {"action", rule.action},
                    {"status", rule.status},
                    {"destination", rule.destination},
@@ -67,11 +71,19 @@ std::vector<ProxyRule> proxy_rules_from_json(const std::string& text) {
     rule.enabled = item.value("enabled", true);
     rule.match_type = item.value("matchType", std::string("prefix"));
     rule.pattern = item.value("pattern", std::string());
+    rule.method = item.value("method", std::string());
+    rule.host = item.value("host", std::string());
+    rule.header_name = item.value("headerName", std::string());
+    rule.header_value = item.value("headerValue", std::string());
     rule.action = item.value("action", std::string("redirect"));
     rule.status = item.value("status", 302);
     rule.destination = item.value("destination", std::string());
     rule.preserve_query = item.value("preserveQuery", true);
-    if (rule.id.empty() || rule.pattern.empty()) continue;
+    if (rule.id.empty()) continue;
+    if (rule.pattern.empty() && rule.method.empty() && rule.host.empty() &&
+        rule.header_name.empty()) {
+      continue;
+    }
     rules.push_back(std::move(rule));
   }
   return rules;

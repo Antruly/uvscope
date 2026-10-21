@@ -32,6 +32,10 @@ function blankRule(): ProxyRule {
     enabled: true,
     matchType: 'prefix',
     pattern: '',
+    method: '',
+    host: '',
+    headerName: '',
+    headerValue: '',
     action: 'redirect',
     status: 302,
     destination: '',
@@ -150,7 +154,10 @@ async function save(start = false) {
     return
   }
   for (const [index, rule] of form.value.rules.entries()) {
-    if (!rule.pattern.trim() || !rule.destination.trim()) {
+    const hasCondition = Boolean(
+      rule.pattern.trim() || rule.method?.trim() || rule.host?.trim() || rule.headerName?.trim(),
+    )
+    if (!hasCondition || !rule.destination.trim()) {
       formError.value = t('proxy.rules.incomplete', { index: index + 1 })
       return
     }
@@ -417,6 +424,26 @@ onBeforeUnmount(stopLogPolling)
                     <label class="field field--grow">
                       <span>{{ t('proxy.rules.pattern') }}</span>
                       <input v-model="rule.pattern" class="mono" :placeholder="t('proxy.rules.patternPlaceholder')" spellcheck="false" />
+                    </label>
+                  </div>
+                  <div class="form-grid form-grid--tight">
+                    <label class="field">
+                      <span>{{ t('proxy.rules.method') }}</span>
+                      <input v-model="rule.method" class="mono" placeholder="GET,POST" spellcheck="false" />
+                    </label>
+                    <label class="field field--grow">
+                      <span>{{ t('proxy.rules.host') }}</span>
+                      <input v-model="rule.host" class="mono" placeholder="api.example.com / *.example.com" spellcheck="false" />
+                    </label>
+                  </div>
+                  <div class="form-grid form-grid--tight">
+                    <label class="field">
+                      <span>{{ t('proxy.rules.headerName') }}</span>
+                      <input v-model="rule.headerName" class="mono" placeholder="Authorization" spellcheck="false" />
+                    </label>
+                    <label class="field field--grow">
+                      <span>{{ t('proxy.rules.headerValue') }}</span>
+                      <input v-model="rule.headerValue" class="mono" :placeholder="t('proxy.rules.headerValuePlaceholder')" spellcheck="false" />
                     </label>
                   </div>
                   <div class="form-grid form-grid--tight">

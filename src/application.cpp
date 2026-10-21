@@ -1,6 +1,7 @@
 #include "application.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -280,6 +281,13 @@ std::vector<ProxyRule> proxy_rules_field(const nlohmann::json& body, std::string
     rule.enabled = bool_field(item, "enabled", true);
     rule.match_type = lower(string_field(item, "matchType", "prefix"));
     rule.pattern = string_field(item, "pattern");
+    rule.method = trim(string_field(item, "method"));
+    for (char& c : rule.method) {
+      c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    rule.host = lower(trim(string_field(item, "host")));
+    rule.header_name = trim(string_field(item, "headerName"));
+    rule.header_value = string_field(item, "headerValue");
     rule.action = lower(string_field(item, "action", "redirect"));
     rule.status = int_field(item, "status", 302);
     rule.destination = string_field(item, "destination");
@@ -289,11 +297,44 @@ std::vector<ProxyRule> proxy_rules_field(const nlohmann::json& body, std::string
       if (error) *error = label + ": matchType must be exact, prefix or regex";
       return {};
     }
-    if (rule.pattern.empty() || rule.pattern.size() > 512) {
-      if (error) *error = label + ": pattern must be 1-512 characters";
+    if (rule.pattern.size() > 512) {
+      if (error) *error = label + ": pattern must be at most 512 characters";
       return {};
     }
-    if (rule.match_type == "regex") {
+    if (rule.pattern.empty() && rule.method.empty() && rule.host.empty() &&
+        rule.header_name.empty()) {
+      if (error) *error = label + ": needs a path pattern, method, host or header";
+      return {};
+    }
+    if (!rule.method.empty()) {
+      std::size_t start = 0;
+      while (start <= rule.method.size()) {
+        const std::size_t comma = rule.method.find(',', start);
+        const std::string token = trim(rule.method.substr(
+            start, comma == std::string::npos ? std::string::npos : comma - start));
+        if (token.empty() || token.size() > 20) {
+          if (error) *error = label + ": method must be a comma-separated list";
+          return {};
+        }
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+      }
+    }
+    if (rule.host.size() > 253 ||
+        rule.host.find_first_of(" \t\r\n/") != std::string::npos) {
+      if (error) *error = label + ": host is not a valid host name or *.suffix";
+      return {};
+    }
+    if (rule.header_name.size() > 128 ||
+        rule.header_name.find_first_of(":\r\n") != std::string::npos) {
+      if (error) *error = label + ": headerName is not a valid header";
+      return {};
+    }
+    if (rule.header_value.size() > 2048) {
+      if (error) *error = label + ": headerValue must be at most 2048 characters";
+      return {};
+    }
+    if (rule.match_type == "regex" && !rule.pattern.empty()) {
       try {
         std::regex compiled(rule.pattern);
         (void)compiled;
