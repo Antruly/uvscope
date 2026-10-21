@@ -1,6 +1,6 @@
 # uvscope 开发计划
 
-> 版本：0.4.2 发布
+> 版本：0.4.3 发布
 > 技术底座：libuvcpp 1.8.2 + Vue 3 + SQLite + libuvcpp WSDL/SOAP  
 > 目标：做一款覆盖 Web 调试、协议探测与可编程反向代理的本地瑞士军刀，并保持单机、可审计、可离线部署。
 
@@ -465,15 +465,15 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 ### 发布产物
 
 ```text
-uvscope-0.4.2-linux-x64.tar.gz
-uvscope-0.4.2-linux-arm64.tar.gz
-uvscope_0.4.2_amd64.deb
-uvscope_0.4.2_arm64.deb
-uvscope-0.4.2-1.x86_64.rpm
-uvscope-0.4.2-1.aarch64.rpm
-uvscope-0.4.2-mingw-x64.zip
-uvscope-0.4.2-setup.exe
-uvscope-0.4.2-macos-arm64.zip
+uvscope-0.4.3-linux-x64.tar.gz
+uvscope-0.4.3-linux-arm64.tar.gz
+uvscope_0.4.3_amd64.deb
+uvscope_0.4.3_arm64.deb
+uvscope-0.4.3-1.x86_64.rpm
+uvscope-0.4.3-1.aarch64.rpm
+uvscope-0.4.3-mingw-x64.zip
+uvscope-0.4.3-setup.exe
+uvscope-0.4.3-macos-arm64.zip
 ```
 
 ---
