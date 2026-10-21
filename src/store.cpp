@@ -130,6 +130,22 @@ bool Store::open(const std::filesystem::path& database_path, std::string* error)
   database_path_ = std::filesystem::absolute(database_path, ec);
   if (ec) database_path_ = database_path;
 
+  // A restore uploaded through /api/backup/restore is staged next to the live
+  // database and takes effect here, before anything opens it. Keep the previous
+  // file for manual recovery.
+  std::filesystem::path restore_path = database_path_;
+  restore_path += ".restore";
+  if (std::filesystem::exists(restore_path, ec)) {
+    std::filesystem::remove(database_path_.string() + "-wal", ec);
+    std::filesystem::remove(database_path_.string() + "-shm", ec);
+    if (std::filesystem::exists(database_path_, ec)) {
+      const std::string stamp = std::to_string(now_unix());
+      std::filesystem::rename(database_path_,
+                              database_path_.string() + ".pre-restore-" + stamp, ec);
+    }
+    std::filesystem::rename(restore_path, database_path_, ec);
+  }
+
   db_.set_timeout_ms(5000);
   const std::string url = "sqlite://" + database_path_.generic_string();
   const auto status = db_.open(url);
@@ -475,6 +491,14 @@ void Store::delete_session(const std::string& token) {
 
 void Store::delete_sessions_for_user(std::int64_t user_id) {
   exec("DELETE FROM sessions WHERE user_id = ?", {user_id}, nullptr);
+}
+
+bool Store::backup_database(const std::string& path, std::string* error) {
+  if (path.empty()) {
+    if (error) *error = "backup path is required";
+    return false;
+  }
+  return exec("VACUUM INTO ?", {path}, error);
 }
 
 void Store::cleanup_sessions() {

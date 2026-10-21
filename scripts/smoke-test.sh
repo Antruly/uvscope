@@ -1329,9 +1329,22 @@ check("auth.login_failed" in actions,
 check("settings.update" in actions,
       f"settings update missing from audit: {actions}")
 
+with opener.open(base + "/api/backup", timeout=30) as stream:
+    backup_bytes = stream.read()
+check(backup_bytes.startswith(b"SQLite format 3\x00"),
+      f"backup is not a SQLite database: {backup_bytes[:16]!r}")
+check(len(backup_bytes) > 512, f"backup is too small: {len(backup_bytes)}")
+restore_request = urllib.request.Request(
+    base + "/api/backup/restore", data=backup_bytes,
+    headers={"content-type": "application/octet-stream"}, method="POST")
+with opener.open(restore_request, timeout=30) as response:
+    restored = json.loads(response.read())
+check(restored.get("restartRequired") is True,
+      f"restore was not staged: {restored}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, audit)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, audit, backup)")
 PY

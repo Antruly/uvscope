@@ -153,6 +153,9 @@ class Store {
   ~Store();
 
   bool open(const std::filesystem::path& database_path, std::string* error);
+  // Consistent copy of the live database via VACUUM INTO. The caller owns the
+  // resulting file.
+  bool backup_database(const std::string& path, std::string* error);
   void close();
   bool is_open() const { return db_.is_open(); }
   const std::string& last_error() const { return last_error_; }

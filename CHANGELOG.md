@@ -4,6 +4,18 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- HTTP Studio can export the current request as a cURL command and import one (supports `-X`,
+  `-H`, `-d/--data*`, `--url`, `-k`, `-u`, `-b`, `-A`, `-e`, `--socks5-hostname` and `-F`).
+  It also exports the last response as HAR 1.2 and imports the first request from a HAR file.
+- Administrators can download a consistent SQLite backup (`GET /api/backup`) and upload a
+  replacement (`POST /api/backup/restore`). A restore is staged next to the live database and
+  applied on the next daemon start; the previous file is kept as
+  `uvscope.db.pre-restore-<timestamp>`.
+
 ## [0.5.1] - 2026-10-22
 
 ### Added

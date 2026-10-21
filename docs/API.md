@@ -19,6 +19,11 @@ cookie. Errors are `{ "ok": false, "error": "...", "code": "..." }`.
 | GET | `/api/auth/me` | dashboard | Current user, module flags and permissions |
 | POST | `/api/auth/logout` | cookie | Delete the session |
 | POST | `/api/auth/password` | dashboard | Change the current password and rotate the session |
+| GET | `/api/auth/sessions` | dashboard | Active sessions (admins see all, others their own) |
+| DELETE | `/api/auth/sessions/:id` | dashboard | Revoke a session (admins any, users their own) |
+| GET | `/api/audit?after=&limit=` | admin.users | Audit entries with actor, action, target, IP and time |
+| GET | `/api/backup` | admin.settings | Consistent SQLite database download (attachment) |
+| POST | `/api/backup/restore` | admin.settings | Upload a SQLite database; applied on the next daemon start |
 | GET | `/api/dashboard` | dashboard | Server/metrics/activity snapshot |
 | GET | `/api/history?kind=&limit=` | history.read | Recent activity summaries |
 | DELETE | `/api/history?kind=` | admin.reset | Clear one or all history kinds |

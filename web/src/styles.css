@@ -2779,6 +2779,9 @@ button.nav-item {
   color: var(--muted);
   word-break: break-word;
 }
+.hidden-file {
+  display: none;
+}
 .body-mode {
   display: inline-flex;
   gap: 2px;

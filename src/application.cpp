@@ -3072,6 +3072,71 @@ void Application::register_admin_routes() {
     send_json(resp, 200, {{"ok", true}, {"entries", entries}});
   });
 
+  app_.get("/api/backup", [this](uvcpp::uvcpp_web_request& req,
+                                 uvcpp::uvcpp_web_response& resp,
+                                 uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const auto path = options_.data_dir / ("backup-" + random_hex(8) + ".db");
+    std::string error;
+    if (!store_.backup_database(path.string(), &error)) {
+      send_error(resp, 500, error.empty() ? "could not create the backup" : error,
+                 "backup_failed");
+      return;
+    }
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) {
+      std::filesystem::remove(path, ec);
+      send_error(resp, 500, "could not read the backup file", "backup_failed");
+      return;
+    }
+    audit_event(store_, req, principal->user, "backup.download", "",
+                std::to_string(size) + " bytes");
+    resp.set_header("content-type", "application/octet-stream")
+        .set_header("content-disposition", "attachment; filename=\"uvscope-backup.db\"")
+        .set_header("cache-control", "no-store");
+    resp.send_file(path.string(), static_cast<std::int64_t>(size),
+                   [path](int, std::uint64_t) {
+                     std::error_code remove_ec;
+                     std::filesystem::remove(path, remove_ec);
+                   });
+  });
+
+  app_.post("/api/backup/restore", [this](uvcpp::uvcpp_web_request& req,
+                                          uvcpp::uvcpp_web_response& resp,
+                                          uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    if (req.body_size() < 512) {
+      send_error(resp, 400, "the uploaded database is too small", "bad_request");
+      return;
+    }
+    if (req.body_size() > 64 * 1024 * 1024) {
+      send_error(resp, 413, "the uploaded database exceeds 64 MiB", "too_large");
+      return;
+    }
+    const std::string data(req.body_data(), req.body_size());
+    const std::string magic("SQLite format 3\0", 16);
+    if (data.compare(0, magic.size(), magic) != 0) {
+      send_error(resp, 400, "the upload is not a SQLite database", "bad_request");
+      return;
+    }
+    const auto path = options_.data_dir / "uvscope.db.restore";
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(data.data(), static_cast<std::streamsize>(data.size()));
+    out.close();
+    if (!out) {
+      send_error(resp, 500, "could not stage the restore", "restore_failed");
+      return;
+    }
+    audit_event(store_, req, principal->user, "backup.restore", "",
+                std::to_string(data.size()) + " bytes");
+    send_json(resp, 200, {{"ok", true},
+                          {"restartRequired", true},
+                          {"size", data.size()}});
+  });
+
   app_.get("/api/settings", [this](uvcpp::uvcpp_web_request& req,
                                    uvcpp::uvcpp_web_response& resp,
                                    uvcpp::uvcpp_web_next) {

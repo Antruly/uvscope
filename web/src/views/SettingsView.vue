@@ -21,6 +21,7 @@ const loading = ref(true)
 const saving = ref(false)
 const updateInfo = ref<UpdateInfo | null>(null)
 const checkingUpdate = ref(false)
+const restoring = ref(false)
 
 const moduleMeta: Array<{ key: keyof ModuleMap; icon: string; titleKey: string; descriptionKey: string }> = [
   { key: 'http', icon: 'bolt', titleKey: 'settings.modules.http.title', descriptionKey: 'settings.modules.http.description' },
@@ -31,6 +32,31 @@ const moduleMeta: Array<{ key: keyof ModuleMap; icon: string; titleKey: string; 
   { key: 'proxy', icon: 'route', titleKey: 'settings.modules.proxy.title', descriptionKey: 'settings.modules.proxy.description' },
   { key: 'terminal', icon: 'terminal', titleKey: 'settings.modules.terminal.title', descriptionKey: 'settings.modules.terminal.description' },
 ]
+
+async function restoreBackup(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!window.confirm(t('settings.backup.confirm'))) return
+  restoring.value = true
+  try {
+    const response = await fetch('/api/backup/restore', {
+      method: 'POST',
+      body: file,
+      headers: { 'content-type': 'application/octet-stream' },
+    })
+    const payload = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || t('settings.backup.failed'))
+    }
+    ui.notify('success', t('settings.backup.staged'))
+  } catch (err) {
+    ui.toastError(err, t('settings.backup.failed'))
+  } finally {
+    restoring.value = false
+  }
+}
 
 async function load() {
   loading.value = true
@@ -172,6 +198,18 @@ onMounted(load)
           <div class="path-box"><span>{{ t('settings.dataDirectory') }}</span><code class="mono">{{ dataDir }}</code></div>
           <div class="path-box"><span>{{ t('settings.engine') }}</span><code class="mono">{{ t('settings.engineValue') }}</code></div>
           <p class="muted settings-note">{{ t('settings.storageNote') }}</p>
+        </section>
+
+        <section class="card">
+          <header class="card__head"><div><span class="eyebrow">{{ t('settings.backup.eyebrow') }}</span><h3>{{ t('settings.backup.title') }}</h3></div><Icon name="download" :size="18" class="muted" /></header>
+          <p class="muted settings-note">{{ t('settings.backup.hint') }}</p>
+          <div class="form-actions">
+            <a class="button" href="/api/backup" download><Icon name="download" :size="15" />{{ t('settings.backup.download') }}</a>
+            <label class="button button--ghost" :class="{ 'is-disabled': restoring }">
+              <Icon name="upload" :size="15" />{{ t('settings.backup.restore') }}
+              <input type="file" accept=".db,application/octet-stream" class="hidden-file" :disabled="restoring" @change="restoreBackup" />
+            </label>
+          </div>
         </section>
       </div>
 

@@ -45,6 +45,12 @@ const multipartFields = ref<Array<{ name: string; value: string; kind: 'text' | 
   { name: '', value: '', kind: 'text', file: null },
 ])
 const capabilities = ref({ http2: true, http3: false, quic: false, brotli: true })
+const curlOpen = ref(false)
+const curlText = ref('')
+const curlImportOpen = ref(false)
+const curlImportText = ref('')
+const curlImportError = ref('')
+const harInput = ref<HTMLInputElement | null>(null)
 const downloading = ref(false)
 const downloadState = ref<HttpDownload | null>(null)
 let downloadTimer: number | undefined
@@ -298,6 +304,372 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
   }
   return btoa(binary)
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function tokenizeCurl(input: string): string[] {
+  const tokens: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  let escaped = false
+  const text = input.replace(/\\\r?\n/g, ' ')
+  for (const c of text) {
+    if (escaped) {
+      current += c
+      escaped = false
+      continue
+    }
+    if (c === '\\' && quote !== "'") {
+      escaped = true
+      continue
+    }
+    if (quote) {
+      if (c === quote) quote = null
+      else current += c
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      continue
+    }
+    if (/\s/.test(c)) {
+      if (current) {
+        tokens.push(current)
+        current = ''
+      }
+      continue
+    }
+    current += c
+  }
+  if (current) tokens.push(current)
+  return tokens
+}
+
+function buildCurlCommand(): string {
+  const outgoing = cleanHeaders()
+  const hasContentType = outgoing.some((header) => header.name.toLowerCase() === 'content-type')
+  const lines: string[] = [`curl -X ${method.value} ${shellQuote(url.value.trim())}`]
+  let bodyArgument = ''
+  if (bodyMode.value === 'multipart') {
+    for (const field of multipartFields.value) {
+      const name = field.name.trim()
+      if (!name) continue
+      if (field.kind === 'file' && field.file) {
+        lines.push(`  -F ${shellQuote(`${name}=@${field.file.name}`)}`)
+      } else if (field.kind === 'text') {
+        lines.push(`  -F ${shellQuote(`${name}=${field.value}`)}`)
+      }
+    }
+  } else {
+    let encoded = body.value
+    if (bodyMode.value === 'urlencoded') {
+      const params = new URLSearchParams()
+      for (const field of urlEncodedFields.value) {
+        if (field.name.trim()) params.append(field.name.trim(), field.value)
+      }
+      encoded = params.toString()
+    }
+    if (encoded) bodyArgument = encoded
+  }
+  for (const header of outgoing) {
+    lines.push(`  -H ${shellQuote(`${header.name}: ${header.value}`)}`)
+  }
+  if (bodyMode.value === 'urlencoded' && !hasContentType) {
+    lines.push(`  -H ${shellQuote('content-type: application/x-www-form-urlencoded')}`)
+  } else if (bodyMode.value === 'raw' && bodyArgument && !hasContentType) {
+    lines.push(`  -H ${shellQuote(`content-type: ${bodyType.value}`)}`)
+  }
+  if (bodyArgument) lines.push(`  --data-binary ${shellQuote(bodyArgument)}`)
+  if (insecure.value) lines.push('  -k')
+  if (proxy.value.enabled) {
+    const auth = proxy.value.username
+      ? `${proxy.value.username}:${proxy.value.password}@`
+      : ''
+    lines.push(`  --socks5-hostname ${shellQuote(`${auth}${proxy.value.host.trim()}:${proxy.value.port}`)}`)
+  }
+  return lines.join(' \\\n')
+}
+
+function exportHar() {
+  const res = result.value
+  if (!res?.ok) {
+    ui.notify('warning', t('http.har.noResponse'))
+    return
+  }
+  const requestHeaders = res.request
+    ? cleanHeaders().map((header) => ({ name: header.name, value: header.value }))
+    : []
+  const responseHeaders = (res.headers || []).map((header) => ({ name: header.name, value: header.value }))
+  const started = res.startedAt || new Date().toISOString()
+  const har = {
+    log: {
+      version: '1.2',
+      creator: { name: 'uvscope', version: auth.version },
+      entries: [
+        {
+          startedDateTime: started,
+          time: res.timing?.totalMs ?? 0,
+          request: {
+            method: res.request?.method || method.value,
+            url: res.request?.url || url.value,
+            httpVersion: res.httpVersion || 'HTTP/1.1',
+            cookies: [],
+            headers: requestHeaders,
+            queryString: [],
+            headersSize: -1,
+            bodySize: res.bodySize ?? 0,
+          },
+          response: {
+            status: res.status ?? 0,
+            statusText: res.statusText || '',
+            httpVersion: res.httpVersion || 'HTTP/1.1',
+            cookies: [],
+            headers: responseHeaders,
+            content: {
+              size: res.bodySize ?? 0,
+              mimeType: contentType.value.split(';', 1)[0] || 'application/octet-stream',
+              text: res.bodyText || '',
+              encoding: res.bodyEncoding === 'base64' ? 'base64' : undefined,
+            },
+            redirectURL: '',
+            headersSize: -1,
+            bodySize: res.bodySize ?? 0,
+          },
+          cache: {},
+          timings: { send: 0, wait: res.timing?.totalMs ?? 0, receive: 0 },
+        },
+      ],
+    },
+  }
+  const blob = new Blob([JSON.stringify(har, null, 2)], { type: 'application/json' })
+  const anchor = document.createElement('a')
+  anchor.href = URL.createObjectURL(blob)
+  anchor.download = `uvscope-${Date.now()}.har`
+  anchor.click()
+  window.setTimeout(() => URL.revokeObjectURL(anchor.href), 1000)
+}
+
+function pickHarFile() {
+  harInput.value?.click()
+}
+
+async function importHar(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    const parsed = JSON.parse(await file.text())
+    const entries = Array.isArray(parsed?.log?.entries) ? parsed.log.entries : []
+    if (!entries.length) throw new Error(t('http.har.empty'))
+    const request = entries[0].request || {}
+    if (typeof request.url === 'string') url.value = request.url
+    if (typeof request.method === 'string') method.value = request.method.toUpperCase()
+    const harHeaders = Array.isArray(request.headers) ? request.headers : []
+    if (harHeaders.length) {
+      headers.value = harHeaders
+        .filter((header: Record<string, unknown>) => header && header.name)
+        .map((header: Record<string, unknown>) => ({
+          name: String(header.name),
+          value: String(header.value ?? ''),
+        }))
+    }
+    const post = request.postData
+    bodyMode.value = 'raw'
+    body.value = typeof post?.text === 'string' ? post.text : ''
+    const contentTypeHeader = harHeaders.find(
+      (header: Record<string, unknown>) => String(header.name).toLowerCase() === 'content-type',
+    )
+    const mime = String(post?.mimeType || contentTypeHeader?.value || '')
+    if (/json/i.test(mime)) bodyType.value = 'application/json'
+    else if (/xml/i.test(mime)) bodyType.value = 'application/xml'
+    else if (/x-www-form-urlencoded/i.test(mime)) bodyType.value = 'application/x-www-form-urlencoded'
+    else if (/octet-stream/i.test(mime)) bodyType.value = 'application/octet-stream'
+    else if (mime) bodyType.value = 'text/plain'
+    ui.notify('success', t('http.har.imported', { count: entries.length }))
+  } catch (err) {
+    ui.toastError(err, t('http.har.importFailed'))
+  }
+}
+
+function openCurlExport() {
+  curlText.value = buildCurlCommand()
+  curlOpen.value = true
+}
+
+async function copyCurl() {
+  try {
+    await navigator.clipboard.writeText(curlText.value)
+    ui.notify('success', t('http.notify.copied'))
+  } catch {
+    ui.notify('error', t('http.notify.clipboardDenied'))
+  }
+}
+
+function applyCurlImport() {
+  curlImportError.value = ''
+  const input = curlImportText.value.trim()
+  if (!input) return
+  const tokens = tokenizeCurl(input)
+  let target = ''
+  let parsedMethod = ''
+  const parsedHeaders: HttpHeader[] = []
+  const dataParts: string[] = []
+  const formFields: Array<{ name: string; value: string; kind: 'text' | 'file'; file: File | null }> = []
+  let insecureValue = false
+  let proxyValue: { host: string; port: number; username: string; password: string } | null = null
+  const take = (index: number) => (index + 1 < tokens.length ? tokens[index + 1] : '')
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i]
+    if (token === 'curl') continue
+    switch (token) {
+      case '-X':
+      case '--request':
+        parsedMethod = take(i).toUpperCase()
+        i += 1
+        break
+      case '-H':
+      case '--header': {
+        const header = take(i)
+        const colon = header.indexOf(':')
+        if (colon > 0) {
+          parsedHeaders.push({ name: header.slice(0, colon).trim(), value: header.slice(colon + 1).trim() })
+        }
+        i += 1
+        break
+      }
+      case '-d':
+      case '--data':
+      case '--data-raw':
+      case '--data-binary':
+        dataParts.push(take(i))
+        i += 1
+        break
+      case '--data-urlencode': {
+        const value = take(i)
+        dataParts.push(value.includes('=') ? value : `${value}=`)
+        i += 1
+        break
+      }
+      case '--url':
+        target = take(i)
+        i += 1
+        break
+      case '-k':
+      case '--insecure':
+        insecureValue = true
+        break
+      case '-u':
+      case '--user': {
+        const credentials = take(i)
+        const colon = credentials.indexOf(':')
+        const pair = colon >= 0 ? credentials : `${credentials}:`
+        parsedHeaders.push({ name: 'authorization', value: `Basic ${btoa(pair)}` })
+        i += 1
+        break
+      }
+      case '-b':
+      case '--cookie':
+        parsedHeaders.push({ name: 'cookie', value: take(i) })
+        i += 1
+        break
+      case '-A':
+      case '--user-agent':
+        parsedHeaders.push({ name: 'user-agent', value: take(i) })
+        i += 1
+        break
+      case '-e':
+      case '--referer':
+        parsedHeaders.push({ name: 'referer', value: take(i) })
+        i += 1
+        break
+      case '--socks5':
+      case '--socks5-hostname':
+      case '--socks5h': {
+        let value = take(i)
+        let username = ''
+        let password = ''
+        const at = value.lastIndexOf('@')
+        if (at > 0) {
+          const auth = value.slice(0, at)
+          value = value.slice(at + 1)
+          const colon = auth.indexOf(':')
+          username = colon >= 0 ? auth.slice(0, colon) : auth
+          password = colon >= 0 ? auth.slice(colon + 1) : ''
+        }
+        const colon = value.lastIndexOf(':')
+        if (colon > 0) {
+          proxyValue = {
+            host: value.slice(0, colon),
+            port: Number(value.slice(colon + 1)) || 1080,
+            username,
+            password,
+          }
+        }
+        i += 1
+        break
+      }
+      case '-F':
+      case '--form': {
+        const value = take(i)
+        const eq = value.indexOf('=')
+        if (eq > 0) {
+          const name = value.slice(0, eq)
+          const rest = value.slice(eq + 1)
+          if (rest.startsWith('@')) {
+            formFields.push({ name, value: '', kind: 'file', file: null })
+          } else {
+            formFields.push({ name, value: rest, kind: 'text', file: null })
+          }
+        }
+        i += 1
+        break
+      }
+      case '-I':
+      case '--head':
+        parsedMethod = 'HEAD'
+        break
+      case '--compressed':
+      case '-G':
+      case '--get':
+        break
+      default:
+        if (!token.startsWith('-') && !target) target = token
+        break
+    }
+  }
+  if (!target) {
+    curlImportError.value = t('http.curl.noUrl')
+    return
+  }
+  const rawBody = dataParts.join('&')
+  url.value = target
+  method.value = parsedMethod || (rawBody ? 'POST' : 'GET')
+  if (parsedHeaders.length) headers.value = parsedHeaders
+  const contentType = parsedHeaders.find((header) => header.name.toLowerCase() === 'content-type')?.value || ''
+  if (formFields.length) {
+    bodyMode.value = 'multipart'
+    multipartFields.value = formFields
+    body.value = ''
+  } else {
+    bodyMode.value = 'raw'
+    body.value = rawBody
+  }
+  if (/json/i.test(contentType)) bodyType.value = 'application/json'
+  else if (/xml/i.test(contentType)) bodyType.value = 'application/xml'
+  else if (/x-www-form-urlencoded/i.test(contentType)) bodyType.value = 'application/x-www-form-urlencoded'
+  else if (/octet-stream/i.test(contentType)) bodyType.value = 'application/octet-stream'
+  else if (contentType) bodyType.value = 'text/plain'
+  insecure.value = insecureValue
+  if (proxyValue) {
+    proxy.value = { enabled: true, ...proxyValue }
+  }
+  curlImportOpen.value = false
+  curlImportText.value = ''
+  ui.notify('success', t('http.curl.imported'))
 }
 
 async function buildPayload() {
@@ -560,6 +932,11 @@ onBeforeUnmount(() => {
         <p>{{ t('http.lead') }}</p>
       </div>
       <div class="page-head__actions">
+        <button class="button button--ghost" @click="openCurlExport"><Icon name="copy" :size="14" />{{ t('http.curl.export') }}</button>
+        <button class="button button--ghost" @click="curlImportOpen = true; curlImportError = ''"><Icon name="download" :size="14" />{{ t('http.curl.import') }}</button>
+        <button class="button button--ghost" @click="exportHar"><Icon name="download" :size="14" />HAR</button>
+        <button class="button button--ghost" @click="pickHarFile"><Icon name="upload" :size="14" />{{ t('http.har.import') }}</button>
+        <input ref="harInput" type="file" accept=".har,application/json" class="hidden-file" @change="importHar" />
         <span class="chip mono"><Icon name="terminal" :size="13" /> Ctrl + Enter</span>
       </div>
     </header>
@@ -937,5 +1314,44 @@ onBeforeUnmount(() => {
         </button>
       </aside>
     </div>
+
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="curlOpen" class="modal-scrim" @click.self="curlOpen = false">
+          <div class="modal-card modal-card--wide">
+            <header class="modal-head">
+              <div><span class="eyebrow">cURL</span><h3>{{ t('http.curl.exportTitle') }}</h3></div>
+              <button type="button" class="icon-button" @click="curlOpen = false"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <textarea v-model="curlText" class="code-input" readonly spellcheck="false" />
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="curlOpen = false">{{ t('http.curl.close') }}</button>
+              <button type="button" class="button button--primary" @click="copyCurl"><Icon name="copy" :size="15" />{{ t('http.curl.copy') }}</button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+      <Transition name="modal">
+        <div v-if="curlImportOpen" class="modal-scrim" @click.self="curlImportOpen = false">
+          <div class="modal-card modal-card--wide">
+            <header class="modal-head">
+              <div><span class="eyebrow">cURL</span><h3>{{ t('http.curl.importTitle') }}</h3></div>
+              <button type="button" class="icon-button" @click="curlImportOpen = false"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <p class="modal-hint">{{ t('http.curl.importHint') }}</p>
+              <textarea v-model="curlImportText" class="code-input" spellcheck="false" placeholder="curl -X POST 'https://…' -H 'content-type: application/json' -d '{…}'" />
+              <div v-if="curlImportError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ curlImportError }}</div>
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="curlImportOpen = false">{{ t('http.curl.cancel') }}</button>
+              <button type="button" class="button button--primary" @click="applyCurlImport"><Icon name="download" :size="15" />{{ t('http.curl.importAction') }}</button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
