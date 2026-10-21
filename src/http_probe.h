@@ -22,7 +22,9 @@ struct HttpProbeInput {
   int timeout_ms = 20000;
   std::string protocol = "auto";  // auto | http1 | http2 | http3
   bool insecure = false;
-  bool compression = false;
+  // Advertise gzip/deflate/br and decode the response in the probe. When
+  // false the body stays compressed and content-encoding is preserved.
+  bool decompress = true;
   Socks5Proxy proxy;
   std::size_t max_body_bytes = 4 * 1024 * 1024;
 };

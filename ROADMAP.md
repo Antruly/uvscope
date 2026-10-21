@@ -47,7 +47,8 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [ ] HTTP/2 runtime validation on the Windows and macOS CI jobs
 - [ ] HTTP/3 / QUIC client with QPACK / 0-RTT / migration events
 - [ ] Raw QUIC stream and datagram debugging
-- [ ] Compression decoding and streaming large bodies
+- [x] Compression decoding: gzip / deflate / brotli with a raw-body toggle
+- [ ] Streaming large bodies and downloads
 - [ ] Multipart upload and Range download
 - [x] Live peer certificate chain inspection
 - [ ] WebSocket ping/pong, close-code and backend relay mode

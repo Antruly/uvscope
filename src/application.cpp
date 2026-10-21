@@ -885,7 +885,13 @@ void Application::register_debug_routes() {
     input.timeout_ms = int_field(*body, "timeoutMs", 20000);
     input.protocol = string_field(*body, "protocol", "auto");
     input.insecure = bool_field(*body, "insecure", false);
-    input.compression = bool_field(*body, "compression", false);
+    // `decompress` is the current name; `compression` is kept as an alias for
+    // older clients. Without either field, decode by default.
+    if (body->contains("decompress")) {
+      input.decompress = bool_field(*body, "decompress", true);
+    } else if (body->contains("compression")) {
+      input.decompress = bool_field(*body, "compression", true);
+    }
     input.proxy = proxy_field(*body);
     input.max_body_bytes = 4 * 1024 * 1024;
     if (input.url.empty()) {

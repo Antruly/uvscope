@@ -4,6 +4,16 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- HTTP probes decode gzip, deflate and brotli responses by default (`decompress: true`, with
+  `compression` kept as an alias). Results report `contentEncoding`, `decoded`, `wireBodySize` and
+  the decoded `bodySize`; disabling decoding keeps the compressed bytes and the original
+  `content-encoding` header. The SDK now builds brotli from source (`UVCPP_ENABLE_BROTLI=OFF`
+  opts out), and the smoke test covers gzip, deflate, brotli and the raw path.
+
 ## [0.4.1] - 2026-10-21
 
 ### Fixed

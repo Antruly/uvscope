@@ -31,7 +31,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 
 | Method | Path | Body / result |
 | --- | --- | --- |
-| POST | `/api/http/send` | `{url, method, protocol, headers[{name,value}], body, timeoutMs, insecure, compression, proxy}` → probe result |
+| POST | `/api/http/send` | `{url, method, protocol, headers[{name,value}], body, timeoutMs, insecure, decompress, proxy}` → probe result |
 | POST | `/api/tcp/probe` | `{host, port, payload, encoding, connectTimeoutMs, readTimeoutMs, proxy}` |
 | POST | `/api/udp/probe` | `{host, port, payload, encoding, timeoutMs, proxy}` |
 | POST | `/api/tcp/sessions` | `{host, port, connectTimeoutMs, proxy}` → persistent TCP session |
@@ -81,7 +81,28 @@ the result rather than as an API error.
 `/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). A request
 without an explicit `user-agent` is sent with a current browser UA plus a `uvscope/<version>`
 token, so sites that serve bot or JS-redirect shims to unknown clients still return their normal
-HTML; an explicit header always wins. With
+HTML; an explicit header always wins.
+
+`decompress` (default `true`) advertises `accept-encoding: gzip, deflate, br` unless the request
+already has one, and decodes the response body. The result then carries:
+
+```json
+"compression": {
+  "requested": true,
+  "contentEncoding": "br",
+  "decoded": true,
+  "wireBodySize": 27,
+  "bodySize": 2800
+}
+```
+
+`wireBodySize` is the compressed size, `bodySize` the decoded size. When decoding is disabled with
+`decompress: false`, the body stays compressed (`bodyEncoding: "base64"`), `content-encoding` is
+preserved in `headers`, and no `compression` object is returned. An unsupported encoding (for
+example `zstd`) leaves the body untouched and adds `compression.error`. The older `compression`
+field is accepted as an alias for `decompress`.
+
+With
 `protocol: "http2"` over `https://`, the daemon negotiates ALPN `h2` and also returns
 `goaway: {received, errorCode, lastStreamId}` plus a frame summary:
 

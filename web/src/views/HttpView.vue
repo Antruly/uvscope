@@ -38,7 +38,7 @@ const body = ref('')
 const bodyType = ref('application/json')
 const timeoutMs = ref(20000)
 const insecure = ref(false)
-const compression = ref(false)
+const decompress = ref(true)
 const proxy = ref({ enabled: false, host: '127.0.0.1', port: 1080, username: '', password: '' })
 const sending = ref(false)
 const result = ref<HttpResult | null>(null)
@@ -278,7 +278,7 @@ async function send() {
       body: body.value,
       timeoutMs: timeoutMs.value,
       insecure: insecure.value,
-      compression: compression.value,
+      decompress: decompress.value,
       proxy: proxy.value.enabled
         ? {
             host: proxy.value.host.trim(),
@@ -418,7 +418,7 @@ onBeforeUnmount(() => {
             <div v-if="advancedOpen" class="advanced-row">
               <label><span>{{ t('http.timeout') }}</span><input v-model.number="timeoutMs" type="number" min="1000" max="120000" /></label>
               <label class="switch-field"><span>{{ t('http.allowInsecureTls') }}</span><button class="switch" :class="{ on: insecure }" @click="insecure = !insecure"><i /></button></label>
-              <label class="switch-field"><span>{{ t('http.requestCompression') }}</span><button class="switch" :class="{ on: compression }" @click="compression = !compression"><i /></button></label>
+              <label class="switch-field"><span>{{ t('http.requestCompression') }}</span><button class="switch" :class="{ on: decompress }" @click="decompress = !decompress"><i /></button></label>
             </div>
           </Transition>
           <Socks5ProxyFields v-if="advancedOpen" v-model="proxy" />
@@ -620,6 +620,20 @@ onBeforeUnmount(() => {
                 <div><span>{{ t('http.timing.protocol') }}</span><strong>{{ result.httpVersion || '—' }}</strong></div>
                 <div><span>ALPN</span><strong class="mono">{{ result.alpn || '—' }}</strong></div>
                 <div><span>{{ t('http.timing.bodyBytes') }}</span><strong>{{ result.bodySize ?? 0 }}</strong></div>
+                <div v-if="result.compression?.contentEncoding">
+                  <span>{{ t('http.compression.encoding') }}</span>
+                  <strong class="mono">{{ result.compression.contentEncoding }}{{ result.compression.decoded ? ' ✓' : '' }}</strong>
+                </div>
+                <div v-if="result.compression?.wireBodySize !== undefined">
+                  <span>{{ t('http.compression.wire') }}</span>
+                  <strong class="mono">
+                    {{ formatBytes(result.compression.wireBodySize) }} → {{ formatBytes(result.compression.bodySize) }}
+                  </strong>
+                </div>
+                <div v-if="result.compression?.error">
+                  <span>{{ t('http.compression.failed') }}</span>
+                  <strong class="mono">{{ result.compression.error }}</strong>
+                </div>
                 <div><span>{{ t('http.timing.streamId') }}</span><strong class="mono">{{ result.streamId ?? 0 }}</strong></div>
                 <div><span>{{ t('http.timing.retryable') }}</span><strong>{{ result.retryable ? t('http.timing.yes') : t('http.timing.no') }}</strong></div>
                 <div v-if="result.goaway">

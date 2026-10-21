@@ -10,6 +10,9 @@
 #include <ssl/uvcpp_ssl_context.h>
 #include <web/uvcpp_http_client.h>
 #include <web/uvcpp_http_common.h>
+#if UVCPP_ZLIB_ENABLE || UVCPP_BROTLI_ENABLE
+#include <web/uvcpp_http_compress.h>
+#endif
 #include <web/uvcpp_http_request.h>
 #include <web/uvcpp_http_response.h>
 
@@ -94,6 +97,57 @@ nlohmann::json headers_json(const uvcpp::http_headers& headers) {
     out.push_back({{"name", header.name}, {"value", header.value}});
   }
   return out;
+}
+
+struct DecompressionInfo {
+  bool requested = false;
+  bool decoded = false;
+  std::string encoding;
+  std::string error;
+  std::size_t wire_size = 0;
+};
+
+// Decode the response here rather than through
+// `uvcpp_http_client::set_compression_enabled()`: that path strips
+// content-encoding and content-length, so the probe could no longer report the
+// negotiated encoding or the wire size. The body stays compressed unless this
+// function succeeds.
+DecompressionInfo decode_response(uvcpp::uvcpp_http_response& response, bool requested) {
+  DecompressionInfo info;
+  info.requested = requested;
+  if (!requested) return info;
+  const std::string encoding = lower(
+      trim(uvcpp::http_get_header(response.headers, "content-encoding")));
+  if (encoding.empty() || encoding == "identity") return info;
+  info.encoding = encoding;
+  info.wire_size = response.body.size();
+#if UVCPP_ZLIB_ENABLE || UVCPP_BROTLI_ENABLE
+  const bool supported =
+      encoding == "gzip" || encoding == "x-gzip" || encoding == "deflate" ||
+      encoding == "x-deflate"
+#if UVCPP_BROTLI_ENABLE
+      || encoding == "br"
+#endif
+      ;
+  if (!supported) {
+    info.error = "unsupported content-encoding: " + encoding;
+    return info;
+  }
+  const auto result = uvcpp::http_compress::decompress(
+      response.body.get_const_data(), response.body.size());
+  if (!result.success) {
+    info.error = "could not decode " + encoding + " body";
+    return info;
+  }
+  response.body.clear();
+  response.body.clone(result.data);
+  response.remove_header("content-encoding");
+  response.remove_header("content-length");
+  info.decoded = true;
+#else
+  info.error = "this build has no decompression support";
+#endif
+  return info;
 }
 
 std::string clip_body(const std::string& body, std::size_t max_bytes, bool* truncated) {
@@ -226,12 +280,14 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
   req.url = url_path_with_query(url);
   bool has_host = false;
   bool has_user_agent = false;
+  bool has_accept_encoding = false;
   for (const auto& header : input.headers) {
     const std::string name = lower(trim(header.name));
     if (name.empty()) continue;
     if (name == "content-length" || name == "connection" || name == "transfer-encoding") continue;
     if (name == "host") has_host = true;
     if (name == "user-agent") has_user_agent = true;
+    if (name == "accept-encoding") has_accept_encoding = true;
     req.set_header(header.name, header.value);
   }
   if (!has_host) req.set_header("host", url.port == (tls ? 443 : 80) ? url.host : url.host + ":" + std::to_string(url.port));
@@ -256,6 +312,15 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
 #endif
     req.set_header("user-agent", std::string(kBrowserUa) + " uvscope/" UVSCOPE_VERSION);
   }
+#if UVCPP_ZLIB_ENABLE || UVCPP_BROTLI_ENABLE
+  if (input.decompress && !has_accept_encoding) {
+#if UVCPP_BROTLI_ENABLE
+    req.set_header("accept-encoding", "gzip, deflate, br");
+#else
+    req.set_header("accept-encoding", "gzip, deflate");
+#endif
+  }
+#endif
   req.body.clone_data(input.body.data(), input.body.size());
 
   std::unique_ptr<uvcpp::uvcpp_ssl_context> ssl;
@@ -269,9 +334,6 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
 
   uvcpp::uvcpp_http_client client;
   if (ssl) client.set_ssl_context(ssl.get());
-#if UVCPP_ZLIB_ENABLE
-  client.set_compression_enabled(input.compression);
-#endif
   if (input.proxy.enabled()) {
     std::string proxy_error;
     if (!input.proxy.valid(&proxy_error)) {
@@ -435,6 +497,7 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
                                         .count()}};
   }
 
+  const DecompressionInfo decompression = decode_response(response, input.decompress);
   std::string body = response.body.to_string();
   const std::size_t full_size = body.size();
   bool truncated = false;
@@ -449,6 +512,17 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
   result["headers"] = headers_json(response.headers);
   result["bodySize"] = full_size;
   result["bodyTruncated"] = truncated;
+  if (decompression.requested) {
+    nlohmann::json compression = {{"requested", true},
+                                  {"contentEncoding", decompression.encoding},
+                                  {"decoded", decompression.decoded},
+                                  {"bodySize", full_size}};
+    if (!decompression.encoding.empty()) {
+      compression["wireBodySize"] = decompression.wire_size;
+    }
+    if (!decompression.error.empty()) compression["error"] = decompression.error;
+    result["compression"] = std::move(compression);
+  }
   result["bodyEncoding"] = text ? "utf8" : "base64";
   result["bodyText"] = text ? body : std::string();
   result["bodyBase64"] = text ? std::string() : base64_encode(body);

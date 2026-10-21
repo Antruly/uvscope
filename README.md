@@ -34,6 +34,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Area | Status |
 | --- | --- |
 | HTTP/1.1 request debugger with headers, body, timing and history | ✅ Stable |
+| gzip / deflate / brotli decoding with a raw-body toggle | ✅ New in 0.4.1 |
 | HTTP/2 over TLS with ALPN, stream IDs, GOAWAY and frame summary | ✅ New in 0.4.0 |
 | Response preview: sandboxed HTML, images, audio, video and PDF | ✅ Stable (opt-in scripts) |
 | Chinese / English UI with browser-language detection and manual switch | ✅ Stable |

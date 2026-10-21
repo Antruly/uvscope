@@ -162,6 +162,14 @@ export interface HttpResult {
     maxFrames: number
     frames: Http2Frame[]
   }
+  compression?: {
+    requested: boolean
+    contentEncoding: string
+    decoded: boolean
+    wireBodySize?: number
+    bodySize: number
+    error?: string
+  }
   startedAt?: string
   finishedAt?: string
 }

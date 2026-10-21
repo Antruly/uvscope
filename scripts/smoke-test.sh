@@ -12,14 +12,20 @@ SOCKS5_PORT="${7:-18792}"
 SOCKS5_AUTH_PORT="${8:-18793}"
 SOCKS5_UDP_TARGET_PORT="${9:-18794}"
 H2_PORT="${10:-18795}"
+COMP_PORT="${11:-18796}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
 PID=""
 ECHO_PID=""
 H2_PID=""
+COMP_PID=""
 
 cleanup() {
+  if [[ -n "${COMP_PID}" ]] && kill -0 "${COMP_PID}" 2>/dev/null; then
+    kill "${COMP_PID}" 2>/dev/null || true
+    wait "${COMP_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${H2_PID}" ]] && kill -0 "${H2_PID}" 2>/dev/null; then
     kill "${H2_PID}" 2>/dev/null || true
     wait "${H2_PID}" 2>/dev/null || true
@@ -148,6 +154,43 @@ else
   echo "skipping HTTP/2 smoke: node or openssl is not available" >&2
 fi
 
+# gzip / deflate / brotli decoding and the raw-bytes path.
+COMP_GZIP=""
+COMP_DEFLATE=""
+COMP_BR=""
+COMP_RAW=""
+if command -v node >/dev/null 2>&1; then
+  COMP_DIR="${DATA_DIR}/compression"
+  mkdir -p "${COMP_DIR}"
+  node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compression-test-server.mjs" \
+    "${COMP_PORT}" >"${COMP_DIR}/server.log" 2>&1 &
+  COMP_PID=$!
+  for _ in $(seq 1 80); do
+    if grep -q "COMPRESSION LISTENING" "${COMP_DIR}/server.log" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  if ! grep -q "COMPRESSION LISTENING" "${COMP_DIR}/server.log" 2>/dev/null; then
+    echo "compression test server did not start" >&2
+    cat "${COMP_DIR}/server.log" >&2
+    exit 1
+  fi
+  for encoding in gzip deflate br; do
+    payload="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/http/send" \
+      -H 'content-type: application/json' \
+      -d "{\"url\":\"http://127.0.0.1:${COMP_PORT}/${encoding}\",\"method\":\"GET\",\"headers\":[],\"body\":\"\",\"timeoutMs\":5000,\"decompress\":true}")"
+    if [[ "${encoding}" == "gzip" ]]; then COMP_GZIP="${payload}"; fi
+    if [[ "${encoding}" == "deflate" ]]; then COMP_DEFLATE="${payload}"; fi
+    if [[ "${encoding}" == "br" ]]; then COMP_BR="${payload}"; fi
+  done
+  COMP_RAW="$(curl -fsS -b "${COOKIE_JAR}" -X POST "http://127.0.0.1:${PORT}/api/http/send" \
+    -H 'content-type: application/json' \
+    -d "{\"url\":\"http://127.0.0.1:${COMP_PORT}/gzip\",\"method\":\"GET\",\"headers\":[],\"body\":\"\",\"timeoutMs\":5000,\"decompress\":false}")"
+else
+  echo "skipping compression smoke: node is not available" >&2
+fi
+
 # The daemon must serve the built SPA, not Vite's dev index (which loads
 # /src/main.ts and leaves the UI blank when served statically).
 ROOT_HTML="$(curl -fsS "http://127.0.0.1:${PORT}/")"
@@ -237,6 +280,8 @@ curl -fsS -b "${COOKIE_JAR}" -X DELETE "http://127.0.0.1:${PORT}/api/tcp/session
 
 HTTP_RESULT="${HTTP_RESULT}" PROXY_RESULT="${PROXY_RESULT}" PROXIED="${PROXIED}" \
 H2_RESULT="${H2_RESULT}" \
+COMP_GZIP="${COMP_GZIP}" COMP_DEFLATE="${COMP_DEFLATE}" COMP_BR="${COMP_BR}" \
+COMP_RAW="${COMP_RAW}" \
 REDIRECT_HEADERS="${REDIRECT_HEADERS}" REWRITTEN="${REWRITTEN}" \
 SESSION_RESULT="${SESSION_RESULT}" SEND_ONE="${SEND_ONE}" SEND_TWO="${SEND_TWO}" \
 EVENTS_RESULT="${EVENTS_RESULT}" python3 - <<'PY'
@@ -280,6 +325,39 @@ if os.environ.get("H2_RESULT"):
         check(h2.get("h2", {}).get("frameCount", 0) >= len(frames),
               "HTTP/2 frame count is smaller than the captured frames")
 
+compression_checked = False
+for label, env_name, encoding in (
+    ("gzip", "COMP_GZIP", "gzip"),
+    ("deflate", "COMP_DEFLATE", "deflate"),
+    ("brotli", "COMP_BR", "br"),
+):
+    raw = os.environ.get(env_name)
+    if not raw:
+        continue
+    decoded = json.loads(raw)
+    info = decoded.get("compression") or {}
+    compression_checked = True
+    check(decoded.get("ok") is True, f"{label} probe failed: {decoded.get('error')}")
+    check(decoded.get("bodyText", "").startswith("compressed-ok"),
+          f"{label} body was not decoded: {decoded.get('bodyText', '')[:40]!r}")
+    check(info.get("decoded") is True, f"{label} was not marked decoded: {info}")
+    check(info.get("contentEncoding") == encoding,
+          f"{label} contentEncoding was {info.get('contentEncoding')}")
+    check(info.get("wireBodySize", 0) > 0 and
+          info.get("wireBodySize", 0) < info.get("bodySize", 0),
+          f"{label} wire/decoded sizes look wrong: {info}")
+
+if os.environ.get("COMP_RAW"):
+    raw_result = json.loads(os.environ["COMP_RAW"])
+    check(raw_result.get("ok") is True, f"raw compression probe failed: {raw_result.get('error')}")
+    check(raw_result.get("bodyEncoding") == "base64",
+          f"raw compressed body should be binary: {raw_result.get('bodyEncoding')}")
+    check(raw_result.get("compression") is None,
+          "raw compressed response should not claim decompression")
+    encodings = [h.get("value") for h in raw_result.get("headers", [])
+                 if h.get("name", "").lower() == "content-encoding"]
+    check(encodings == ["gzip"], f"raw response lost content-encoding: {encodings}")
+
 proxy = json.loads(os.environ["PROXY_RESULT"])
 check(proxy.get("ok") is True, f"proxy creation failed: {proxy.get('error')}")
 check(any(p.get("running") for p in proxy.get("proxies", [])), "proxy is not running")
@@ -317,7 +395,8 @@ if failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
 print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP session"
-      + (", HTTP/2" if h2_checked else "") + ")")
+      + (", HTTP/2" if h2_checked else "")
+      + (", compression" if compression_checked else "") + ")")
 PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
