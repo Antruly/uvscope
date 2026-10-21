@@ -378,6 +378,18 @@ std::vector<HttpHeaderInput> header_fields(const nlohmann::json& body) {
   return headers;
 }
 
+void audit_event(Store& store, const uvcpp::uvcpp_web_request& req,
+                 const User& user, const std::string& action,
+                 const std::string& target, const std::string& detail) {
+  store.audit(user.id, user.username, action, target, detail, req.peer_ip());
+}
+
+void audit_event(Store& store, const uvcpp::uvcpp_web_request& req,
+                 const std::string& username, const std::string& action,
+                 const std::string& target, const std::string& detail) {
+  store.audit(0, username, action, target, detail, req.peer_ip());
+}
+
 HttpProbeInput http_input_field(const nlohmann::json& body) {
   HttpProbeInput input;
   input.url = string_field(body, "url");
@@ -736,6 +748,8 @@ void Application::register_public_routes() {
       send_error(resp, 500, "administrator created but could not be reloaded");
       return;
     }
+    audit_event(store_, req, *user, "setup.init", username,
+                "initial administrator created");
     const std::string token = store_.create_session(user->id);
     Auth::set_cookie(resp, token, 7 * 24 * 60 * 60, !options_.tls_cert.empty());
     store_.set_last_login(user->id);
@@ -757,9 +771,12 @@ void Application::register_public_routes() {
     std::string error;
     const auto user = store_.verify_login(username, password, &error);
     if (!user) {
+      audit_event(store_, req, username, "auth.login_failed", username,
+                  "invalid credentials");
       send_error(resp, 401, "invalid username or password", "invalid_credentials");
       return;
     }
+    audit_event(store_, req, *user, "auth.login", username, "");
     const std::string token = store_.create_session(user->id);
     Auth::set_cookie(resp, token, 7 * 24 * 60 * 60, !options_.tls_cert.empty());
     store_.set_last_login(user->id);
@@ -775,6 +792,10 @@ void Application::register_auth_routes() {
   app_.post("/api/auth/logout", [this](uvcpp::uvcpp_web_request& req,
                                        uvcpp::uvcpp_web_response& resp,
                                        uvcpp::uvcpp_web_next) {
+    const auto current = auth_.current(req);
+    if (current) {
+      audit_event(store_, req, current->user, "auth.logout", current->user.username, "");
+    }
     const std::string token = session_token(req);
     if (!token.empty()) store_.delete_session(token);
     Auth::clear_cookie(resp);
@@ -797,6 +818,54 @@ void Application::register_auth_routes() {
                  {"debug", role_can(principal->user.role, "debug")}}}});
   });
 
+  app_.get("/api/auth/sessions", [this](uvcpp::uvcpp_web_request& req,
+                                         uvcpp::uvcpp_web_response& resp,
+                                         uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "dashboard");
+    if (!principal) return;
+    const std::string token = session_token(req);
+    const std::string current = token.empty() ? std::string() : sha256_hex(token);
+    const bool admin = principal->user.role == "admin";
+    nlohmann::json sessions = nlohmann::json::array();
+    for (const auto& info : store_.active_sessions()) {
+      if (!admin && info.user_id != principal->user.id) continue;
+      sessions.push_back({{"id", info.id},
+                          {"userId", info.user_id},
+                          {"username", info.username},
+                          {"role", info.role},
+                          {"createdAt", info.created_at},
+                          {"expiresAt", info.expires_at},
+                          {"current", info.id == current}});
+    }
+    send_json(resp, 200, {{"ok", true}, {"sessions", sessions}});
+  });
+
+  app_.del("/api/auth/sessions/:id", [this](uvcpp::uvcpp_web_request& req,
+                                            uvcpp::uvcpp_web_response& resp,
+                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "dashboard");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (id == nullptr || id->empty()) {
+      send_error(resp, 400, "session id is required", "bad_request");
+      return;
+    }
+    const auto sessions = store_.active_sessions();
+    const auto target = std::find_if(
+        sessions.begin(), sessions.end(),
+        [&id](const SessionInfo& info) { return info.id == *id; });
+    if (target == sessions.end() ||
+        (principal->user.role != "admin" &&
+         target->user_id != principal->user.id)) {
+      send_error(resp, 404, "session not found", "not_found");
+      return;
+    }
+    const std::string username = target->username;
+    store_.delete_session_by_hash(*id);
+    audit_event(store_, req, principal->user, "auth.session_revoke", username, "");
+    send_ok(resp);
+  });
+
   app_.post("/api/auth/password", [this](uvcpp::uvcpp_web_request& req,
                                          uvcpp::uvcpp_web_response& resp,
                                          uvcpp::uvcpp_web_next) {
@@ -815,6 +884,8 @@ void Application::register_auth_routes() {
       send_error(resp, 400, error, "password_change_failed");
       return;
     }
+    audit_event(store_, req, principal->user, "auth.password",
+                principal->user.username, "sessions rotated");
     store_.delete_sessions_for_user(principal->user.id);
     const std::string token = store_.create_session(principal->user.id);
     Auth::set_cookie(resp, token, 7 * 24 * 60 * 60, !options_.tls_cert.empty());
@@ -2671,6 +2742,9 @@ void Application::register_proxy_routes() {
       send_error(resp, 400, error, "proxy_save_failed");
       return;
     }
+    audit_event(store_, req, principal->user,
+                existing ? "proxy.update" : "proxy.create", config.name,
+                config.listen_host + ":" + std::to_string(config.listen_port));
     const bool should_start = bool_field(*body, "start", false);
     // reload() restarts a running proxy in place; only start when it is still
     // stopped, otherwise this would report a spurious "already running".
@@ -2692,12 +2766,15 @@ void Application::register_proxy_routes() {
       send_error(resp, 400, "proxy id is required", "bad_request");
       return;
     }
+    const auto existing = store_.proxy(*id);
     std::string error;
     proxies_->stop(*id, nullptr);
     if (!store_.delete_proxy(*id, &error)) {
       send_error(resp, 500, error);
       return;
     }
+    audit_event(store_, req, principal->user, "proxy.delete",
+                existing ? existing->name : *id, "");
     send_json(resp, 200, {{"ok", true}, {"proxies", proxy_view()}});
   });
 
@@ -2716,6 +2793,9 @@ void Application::register_proxy_routes() {
       send_error(resp, 502, error, "proxy_start_failed");
       return;
     }
+    const auto existing = store_.proxy(*id);
+    audit_event(store_, req, principal->user, "proxy.start",
+                existing ? existing->name : *id, "");
     send_json(resp, 200, {{"ok", true}, {"proxies", proxy_view()}});
   });
 
@@ -2734,6 +2814,9 @@ void Application::register_proxy_routes() {
       send_error(resp, 400, error, "proxy_stop_failed");
       return;
     }
+    const auto existing = store_.proxy(*id);
+    audit_event(store_, req, principal->user, "proxy.stop",
+                existing ? existing->name : *id, "");
     send_json(resp, 200, {{"ok", true}, {"proxies", proxy_view()}});
   });
 
@@ -2759,6 +2842,34 @@ void Application::register_proxy_routes() {
 // Admin
 // ---------------------------------------------------------------------------
 void Application::register_admin_routes() {
+  app_.get("/api/audit", [this](uvcpp::uvcpp_web_request& req,
+                                uvcpp::uvcpp_web_response& resp,
+                                uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.users");
+    if (!principal) return;
+    std::int64_t after = 0;
+    if (const std::string* value = req.query("after")) {
+      after = std::strtoll(value->c_str(), nullptr, 10);
+    }
+    int limit = 200;
+    if (const std::string* value = req.query("limit")) {
+      const int parsed = std::atoi(value->c_str());
+      if (parsed > 0) limit = parsed;
+    }
+    nlohmann::json entries = nlohmann::json::array();
+    for (const auto& entry : store_.audit_entries(after, limit)) {
+      entries.push_back({{"id", entry.id},
+                         {"at", entry.at},
+                         {"userId", entry.user_id},
+                         {"username", entry.username},
+                         {"action", entry.action},
+                         {"target", entry.target},
+                         {"detail", entry.detail},
+                         {"ip", entry.ip}});
+    }
+    send_json(resp, 200, {{"ok", true}, {"entries", entries}});
+  });
+
   app_.get("/api/settings", [this](uvcpp::uvcpp_web_request& req,
                                    uvcpp::uvcpp_web_response& resp,
                                    uvcpp::uvcpp_web_next) {
@@ -2802,6 +2913,7 @@ void Application::register_admin_routes() {
         }
       }
     }
+    audit_event(store_, req, principal->user, "settings.update", "", "");
     send_json(resp, 200, {{"ok", true}, {"modules", store_.module_states()}});
   });
 
@@ -2831,6 +2943,7 @@ void Application::register_admin_routes() {
       return;
     }
     const auto created = store_.user_by_username(username);
+    audit_event(store_, req, principal->user, "user.create", username, "role=" + role);
     send_json(resp, 201, {{"ok", true}, {"user", created ? user_json(*created) : nlohmann::json()}});
   });
 
@@ -2868,6 +2981,8 @@ void Application::register_admin_routes() {
       return;
     }
     const auto updated = store_.user_by_id(id);
+    audit_event(store_, req, principal->user, "user.update",
+                updated ? updated->username : std::to_string(id), "admin.users");
     send_json(resp, 200, {{"ok", true}, {"user", updated ? user_json(*updated) : nlohmann::json()}});
   });
 
@@ -2886,11 +3001,14 @@ void Application::register_admin_routes() {
       send_error(resp, 400, "you cannot delete your own account", "self_delete");
       return;
     }
+    const auto target_user = store_.user_by_id(id);
     std::string error;
     if (!store_.delete_user(id, &error)) {
       send_error(resp, 400, error, "user_delete_failed");
       return;
     }
+    audit_event(store_, req, principal->user, "user.delete",
+                target_user ? target_user->username : std::to_string(id), "");
     send_ok(resp);
   });
 

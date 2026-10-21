@@ -59,14 +59,14 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Exact / prefix / regex routing with redirects and path rewrites
 - [x] Header / method / host routing conditions
 - [x] Multiple weighted upstreams and retry policy
-- [ ] WebSocket pass-through
+- [x] WebSocket pass-through
 - [x] Active upstream health checks
 - [x] Certificate import / self-sign / selection
 - [x] Per-instance QPS, latency and traffic metrics
 - [ ] Collections, environments and variable substitution
 - [ ] Pre-request / post-response scripts
 - [ ] HAR, cURL, OpenAPI and Postman import/export
-- [ ] Audit log and active session management
+- [x] Audit log and active session management
 - [ ] Backup / restore / migrations
 - [ ] Supervisor + IPC for long-lived services
 

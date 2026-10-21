@@ -87,6 +87,27 @@ export interface ProxyRule {
   preserveQuery: boolean
 }
 
+export interface ActiveSession {
+  id: string
+  userId: number
+  username: string
+  role: string
+  createdAt: string
+  expiresAt: number
+  current: boolean
+}
+
+export interface AuditEntry {
+  id: number
+  at: string
+  userId: number
+  username: string
+  action: string
+  target: string
+  detail: string
+  ip: string
+}
+
 export interface ProxyUpstream {
   url: string
   weight: number

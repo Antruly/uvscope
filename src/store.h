@@ -27,6 +27,26 @@ struct Session {
   std::int64_t expires_at = 0;
 };
 
+struct SessionInfo {
+  std::string id;  // token hash, never the token itself
+  std::int64_t user_id = 0;
+  std::string username;
+  std::string role;
+  std::string created_at;
+  std::int64_t expires_at = 0;
+};
+
+struct AuditEntry {
+  std::int64_t id = 0;
+  std::string at;
+  std::int64_t user_id = 0;
+  std::string username;
+  std::string action;
+  std::string target;
+  std::string detail;
+  std::string ip;
+};
+
 struct HistoryItem {
   std::int64_t id = 0;
   std::int64_t user_id = 0;
@@ -153,6 +173,15 @@ class Store {
   void delete_session(const std::string& token);
   void delete_sessions_for_user(std::int64_t user_id);
   void cleanup_sessions();
+  std::vector<SessionInfo> active_sessions() const;
+  bool delete_session_by_hash(const std::string& hash);
+
+  // Append a security/team event. `username` is recorded even when the user
+  // does not exist (failed logins), so user_id may be 0.
+  void audit(std::int64_t user_id, const std::string& username,
+             const std::string& action, const std::string& target,
+             const std::string& detail, const std::string& ip);
+  std::vector<AuditEntry> audit_entries(std::int64_t after, int limit) const;
 
   std::vector<User> list_users() const;
   bool create_user(const std::string& username, const std::string& password,

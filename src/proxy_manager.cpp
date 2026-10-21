@@ -6,6 +6,7 @@
 #include <memory>
 #include <random>
 #include <condition_variable>
+#include <deque>
 #include <map>
 #include <regex>
 #include <sstream>
@@ -16,7 +17,10 @@
 #include <web/uvcpp_http_client.h>
 #include <web/uvcpp_http_request.h>
 #include <web/uvcpp_http_response.h>
+#include <web/uvcpp_ws_client.h>
+#include <web/uvcpp_ws_connection.h>
 #include <webapp/uvcpp_web_app.h>
+#include <webapp/uvcpp_web_ws.h>
 
 #include "util.h"
 
@@ -144,6 +148,177 @@ std::string expand_destination(const ProxyRule& rule, const std::string& path,
     }
   }
   return out;
+}
+
+struct WsRelayCommand {
+  enum Kind { Text, Binary, Close } kind = Text;
+  std::string data;
+  int code = 1000;
+  std::string reason;
+};
+
+// Shared by the proxy loop (downstream callbacks) and one upstream thread.
+// `downstream` and `downstream_closed` are only touched on the proxy loop:
+// callbacks run there, and upstream messages are delivered through app->post().
+struct WsRelay {
+  std::mutex mutex;
+  std::deque<WsRelayCommand> commands;
+  std::atomic<uv_async_t*> wake{nullptr};
+  std::atomic<bool> stop{false};
+  uvcpp::uvcpp_web_app* app = nullptr;
+  uvcpp::uvcpp_ws_connection* downstream = nullptr;
+  bool downstream_closed = false;
+};
+
+void relay_push(const std::shared_ptr<WsRelay>& relay, WsRelayCommand command) {
+  {
+    std::lock_guard<std::mutex> lock(relay->mutex);
+    if (relay->stop.load()) return;
+    relay->commands.push_back(std::move(command));
+  }
+  if (uv_async_t* wake = relay->wake.load()) uv_async_send(wake);
+}
+
+void relay_to_downstream(const std::shared_ptr<WsRelay>& relay, int kind,
+                         const std::string& data, int code = 1000,
+                         const std::string& reason = std::string()) {
+  auto* app = relay->app;
+  if (app == nullptr) return;
+  app->post([relay, kind, data, code, reason] {
+    if (relay->downstream_closed || relay->downstream == nullptr) return;
+    if (kind == 1) {
+      relay->downstream->send_text(data.data(), data.size());
+    } else if (kind == 2) {
+      relay->downstream->send_binary(data.data(), data.size());
+    } else {
+      relay->downstream_closed = true;
+      relay->downstream->close(static_cast<uvcpp::ws_close_code>(code), reason);
+    }
+  });
+}
+
+struct WsUpstreamContext {
+  std::shared_ptr<WsRelay> relay;
+  uvcpp::uvcpp_ws_client* client = nullptr;
+};
+
+void upstream_wake(uv_async_t* handle) {
+  auto* context = static_cast<WsUpstreamContext*>(handle->data);
+  if (context == nullptr || context->client == nullptr) return;
+  std::deque<WsRelayCommand> pending;
+  {
+    std::lock_guard<std::mutex> lock(context->relay->mutex);
+    pending.swap(context->relay->commands);
+  }
+  for (const auto& command : pending) {
+    if (command.kind == WsRelayCommand::Close) {
+      if (context->client->session() != nullptr) {
+        context->client->close(static_cast<uvcpp::ws_close_code>(command.code),
+                               command.reason);
+      }
+      continue;
+    }
+    if (context->client->session() == nullptr) {
+      continue;
+    }
+    if (command.kind == WsRelayCommand::Text) {
+      context->client->send_text(command.data.data(), command.data.size());
+    } else {
+      context->client->send_binary(command.data.data(), command.data.size());
+    }
+  }
+}
+
+void upstream_timeout(uv_timer_t* timer) {
+  auto* context = static_cast<WsUpstreamContext*>(timer->data);
+  if (context == nullptr || context->client == nullptr) return;
+  if (context->client->session() != nullptr) return;
+  relay_to_downstream(context->relay, 3, std::string(), 1011,
+                      "upstream connect timed out");
+  context->client->close(uvcpp::ws_close_code::GOING_AWAY, "connect timeout");
+  context->client->stop();
+}
+
+void run_ws_upstream(std::shared_ptr<WsRelay> relay, std::string url,
+                     bool tls, std::vector<std::pair<std::string, std::string>> headers) {
+  uvcpp::uvcpp_ssl_context ssl(uvcpp::tls_mode::CLIENT, uvcpp::tls_version::TLS_1_2);
+  uvcpp::uvcpp_ws_client client;
+  if (tls) {
+    const std::string ca = find_ca_bundle(executable_dir(nullptr));
+    if (!ca.empty()) ssl.load_ca_file(ca);
+    ssl.set_verify_mode(uvcpp::tls_verify_mode::PEER_STRICT);
+    client.set_ssl_context(&ssl);
+  }
+  for (const auto& header : headers) {
+    client.set_handshake_header(header.first, header.second);
+  }
+  WsUpstreamContext context;
+  context.relay = relay;
+  context.client = &client;
+  uvcpp::uvcpp_loop* loop = client.get_loop();
+  uv_loop_t* raw_loop =
+      loop == nullptr ? nullptr : reinterpret_cast<uv_loop_t*>(loop->get_handle());
+  auto* wake = new uv_async_t();
+  auto* timer = new uv_timer_t();
+  if (raw_loop == nullptr || uv_async_init(raw_loop, wake, upstream_wake) != 0 ||
+      uv_timer_init(raw_loop, timer) != 0) {
+    delete wake;
+    delete timer;
+    relay_to_downstream(relay, 3, std::string(), 1011,
+                        "could not start the upstream loop");
+    return;
+  }
+  wake->data = new WsUpstreamContext(context);
+  timer->data = new WsUpstreamContext(context);
+  relay->wake.store(wake);
+  uv_timer_start(timer, upstream_timeout, 15000, 0);
+
+  client.on_text([relay](const std::string& message) {
+    relay_to_downstream(relay, 1, message);
+  });
+  client.on_binary([relay](const std::uint8_t* data, std::size_t len) {
+    relay_to_downstream(relay, 2, std::string(reinterpret_cast<const char*>(data), len));
+  });
+  client.on_close([relay, &client](uvcpp::ws_close_code code, const std::string& reason) {
+    relay->stop.store(true);
+    relay_to_downstream(relay, 3, std::string(), static_cast<int>(code), reason);
+    client.stop();
+  });
+  client.on_error([relay, &client](int, const std::string& message) {
+    relay->stop.store(true);
+    relay_to_downstream(relay, 3, std::string(), 1011, message);
+    client.stop();
+  });
+
+  const int connect_rc = client.connect(
+      url, [relay](uvcpp::uvcpp_ws_connection*, int error) {
+        if (error != 0) {
+          relay->stop.store(true);
+          relay_to_downstream(relay, 3, std::string(), 1011,
+                              "upstream connect failed: " + uv_error_string(error));
+          return;
+        }
+        if (uv_async_t* handle = relay->wake.load()) uv_async_send(handle);
+      });
+  if (connect_rc != 0) {
+    relay->stop.store(true);
+    relay_to_downstream(relay, 3, std::string(), 1011,
+                        "could not start upstream connection: " +
+                            uv_error_string(connect_rc));
+  } else {
+    client.run(UV_RUN_DEFAULT);
+  }
+  relay->wake.store(nullptr);
+  uv_timer_stop(timer);
+  uv_close(reinterpret_cast<uv_handle_t*>(timer), [](uv_handle_t* handle) {
+    delete static_cast<WsUpstreamContext*>(handle->data);
+    delete reinterpret_cast<uv_timer_t*>(handle);
+  });
+  uv_close(reinterpret_cast<uv_handle_t*>(wake), [](uv_handle_t* handle) {
+    delete static_cast<WsUpstreamContext*>(handle->data);
+    delete reinterpret_cast<uv_async_t*>(handle);
+  });
+  client.run(UV_RUN_NOWAIT);
 }
 
 }  // namespace
@@ -580,6 +755,66 @@ struct ProxyManager::Runtime {
             {"status5xx", status_5xx}};
   }
 
+  void relay_websocket(uvcpp::uvcpp_web_ws_request& ws) {
+    auto* conn = ws.connection();
+    if (conn == nullptr) return;
+    const std::string source =
+        config.upstreams.empty() ? config.target : config.upstreams.front().url;
+    const ParsedUrl upstream = parse_url(source);
+    if (!upstream.valid ||
+        (upstream.scheme != "http" && upstream.scheme != "https")) {
+      conn->close(uvcpp::ws_close_code::INTERNAL_ERROR, "invalid upstream");
+      return;
+    }
+    const bool tls = upstream.scheme == "https";
+    std::string url = std::string(tls ? "wss://" : "ws://") + upstream.host;
+    const int default_port = tls ? 443 : 80;
+    if (upstream.port != default_port) url += ":" + std::to_string(upstream.port);
+    std::string path = ws.path();
+    if (path.empty()) path = "/";
+    if (upstream.path != "/" && !upstream.path.empty()) {
+      path = join_path(upstream.path, path);
+    }
+    url += path;
+    const std::string query = ws.request().query_string();
+    if (!query.empty()) url += "?" + query;
+
+    auto relay = std::make_shared<WsRelay>();
+    relay->app = app.get();
+    relay->downstream = conn;
+    conn->on_text([relay](const std::string& message) {
+      WsRelayCommand command;
+      command.kind = WsRelayCommand::Text;
+      command.data = message;
+      relay_push(relay, std::move(command));
+    });
+    conn->on_binary([relay](const std::uint8_t* data, std::size_t len) {
+      WsRelayCommand command;
+      command.kind = WsRelayCommand::Binary;
+      command.data.assign(reinterpret_cast<const char*>(data), len);
+      relay_push(relay, std::move(command));
+    });
+    conn->on_close([relay](uvcpp::ws_close_code code, const std::string& reason) {
+      relay->downstream_closed = true;
+      WsRelayCommand command;
+      command.kind = WsRelayCommand::Close;
+      command.code = static_cast<int>(code);
+      command.reason = reason;
+      relay_push(relay, std::move(command));
+    });
+
+    std::vector<std::pair<std::string, std::string>> headers;
+    for (const auto& header : ws.request().headers()) {
+      const std::string name = lower(header.name);
+      if (name == "host" || name == "upgrade" || name == "connection" ||
+          name.rfind("sec-websocket-", 0) == 0 || name == "proxy-connection") {
+        continue;
+      }
+      headers.emplace_back(header.name, header.value);
+    }
+    std::thread(run_ws_upstream, relay, url, tls, std::move(headers)).detach();
+  }
+
   ~Runtime() {
     stop_health_checks();
     if (app) {
@@ -682,6 +917,11 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
                              uvcpp::uvcpp_web_next) { raw->forward(req, resp); };
   app->any("/", handler);
   app->any("/*path", handler);
+  auto ws_handler = [raw](uvcpp::uvcpp_web_ws_request& ws) {
+    raw->relay_websocket(ws);
+  };
+  app->websocket("/", ws_handler);
+  app->websocket("/*path", ws_handler);
   const int rc = app->start();
   if (rc != 0) {
     const std::string detail = "bind/listen failed: " + uv_error_string(rc) + " on " +

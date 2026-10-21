@@ -334,6 +334,16 @@ wins. A rule is:
 - Invalid regexes, rewrite destinations that do not start with `/` or `$`, rules without any
   path/method/host/header condition, or more than 64 rules are rejected with `400 bad_request`.
 
+### WebSocket pass-through
+
+A reverse proxy answers WebSocket upgrades on every path and relays them to its **first
+configured upstream** (`target` when `upstreams` is empty). `http://` targets become `ws://` and
+`https://` targets become `wss://`; the upstream base path, request path and query are preserved.
+Client headers other than hop-by-hop and `Sec-WebSocket-*` headers are forwarded, so
+`Authorization`, `Cookie` and `Origin` reach the upstream. Text and binary messages and
+close codes/reasons are relayed in both directions; the upstream TLS certificate is verified
+strictly. Routing rules and weighted/health-aware selection do not apply to upgrades.
+
 ### Proxy metrics
 
 Every proxy snapshot in `GET /api/proxies` carries `metrics` computed from the last 60 seconds

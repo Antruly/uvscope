@@ -2,7 +2,7 @@
 import { onActivated, onMounted, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import { del, errorMessage, get, patch, post } from '../api'
-import type { User } from '../types'
+import type { ActiveSession, AuditEntry, User } from '../types'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
 import { useI18nStore } from '../stores/i18n'
@@ -22,6 +22,10 @@ const formError = ref('')
 const saving = ref(false)
 const resetFor = ref<User | null>(null)
 const resetPassword = ref('')
+const sessions = ref<ActiveSession[]>([])
+const sessionsLoading = ref(false)
+const audit = ref<AuditEntry[]>([])
+const auditLoading = ref(false)
 
 async function load() {
   loading.value = true
@@ -118,12 +122,56 @@ async function saveReset() {
   }
 }
 
+async function loadSessions() {
+  sessionsLoading.value = true
+  try {
+    const response = await get<{ sessions: ActiveSession[] }>('/api/auth/sessions')
+    sessions.value = response.sessions
+  } catch (err) {
+    ui.toastError(err, t('users.error.sessions'))
+  } finally {
+    sessionsLoading.value = false
+  }
+}
+
+async function loadAudit() {
+  auditLoading.value = true
+  try {
+    const response = await get<{ entries: AuditEntry[] }>('/api/audit?limit=100')
+    audit.value = response.entries.slice(-100).reverse()
+  } catch (err) {
+    ui.toastError(err, t('users.error.audit'))
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+async function revokeSession(session: ActiveSession) {
+  if (!window.confirm(t('users.sessions.confirm', { username: session.username }))) return
+  try {
+    await del(`/api/auth/sessions/${session.id}`)
+    await loadSessions()
+    await loadAudit()
+    ui.notify('success', t('users.sessions.revoked'))
+  } catch (err) {
+    ui.toastError(err, t('users.sessions.revokeFailed'))
+  }
+}
+
 function initials(name: string) {
   return name.slice(0, 2).toUpperCase()
 }
 
-onMounted(load)
-onActivated(load)
+onMounted(() => {
+  void load()
+  void loadSessions()
+  void loadAudit()
+})
+onActivated(() => {
+  void load()
+  void loadSessions()
+  void loadAudit()
+})
 </script>
 
 <template>
@@ -178,6 +226,46 @@ onActivated(load)
             <button class="icon-button icon-button--sm icon-button--danger" :title="t('users.action.deleteUser')" :disabled="user.id === auth.user?.id" @click="remove(user)"><Icon name="trash" :size="15" /></button>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <header class="card__head">
+        <div><span class="eyebrow">{{ t('users.sessions.eyebrow') }}</span><h3>{{ t('users.sessions.title') }}</h3></div>
+        <button class="ghost-toggle" @click="loadSessions"><Icon name="refresh" :size="14" />{{ t('users.sessions.refresh') }}</button>
+      </header>
+      <div v-if="sessionsLoading" class="proxy-loading"><span class="spinner" />{{ t('users.loading') }}</div>
+      <div v-else class="user-table">
+        <div class="user-table__head">
+          <span>{{ t('users.sessions.user') }}</span><span>{{ t('users.sessions.role') }}</span><span>{{ t('users.sessions.created') }}</span><span>{{ t('users.sessions.expires') }}</span><span />
+        </div>
+        <div v-for="session in sessions" :key="session.id" class="user-row">
+          <div class="user-cell"><strong>{{ session.username }}</strong><em v-if="session.current">{{ t('users.sessions.current') }}</em></div>
+          <div class="mono">{{ session.role }}</div>
+          <div class="user-login">{{ new Date(session.createdAt).toLocaleString() }}</div>
+          <div class="user-login">{{ new Date(session.expiresAt * 1000).toLocaleString() }}</div>
+          <div class="user-actions">
+            <button class="icon-button icon-button--sm icon-button--danger" :title="t('users.sessions.revoke')" @click="revokeSession(session)"><Icon name="close" :size="15" /></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <header class="card__head">
+        <div><span class="eyebrow">{{ t('users.audit.eyebrow') }}</span><h3>{{ t('users.audit.title') }}</h3></div>
+        <button class="ghost-toggle" @click="loadAudit"><Icon name="refresh" :size="14" />{{ t('users.audit.refresh') }}</button>
+      </header>
+      <div v-if="auditLoading" class="proxy-loading"><span class="spinner" />{{ t('users.loading') }}</div>
+      <div v-else class="audit-list">
+        <div v-for="entry in audit" :key="entry.id" class="audit-row">
+          <span class="mono audit-row__time">{{ new Date(entry.at).toLocaleString() }}</span>
+          <span class="kind-chip">{{ entry.action }}</span>
+          <span class="audit-row__user">{{ entry.username || '—' }}</span>
+          <span class="audit-row__target mono">{{ entry.target || '—' }}</span>
+          <span class="mono audit-row__ip">{{ entry.ip || '—' }}</span>
+        </div>
+        <div v-if="!audit.length" class="proxy-rules-empty">{{ t('users.audit.empty') }}</div>
       </div>
     </section>
 

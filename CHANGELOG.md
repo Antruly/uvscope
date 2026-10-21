@@ -8,6 +8,17 @@ All notable changes to uvscope are documented here. The format is based on
 
 ### Added
 
+- Audit log and active session management. Security-relevant actions (setup, login success/failure,
+  logout, password change, session revocation, user create/update/delete, settings updates, proxy
+  create/update/delete/start/stop) are recorded with the actor, target, IP and timestamp.
+  `GET /api/audit` (admin) returns the log; `GET /api/auth/sessions` lists active sessions and
+  `DELETE /api/auth/sessions/:id` revokes one (admins may revoke any session, users their own).
+  The Users & Roles page shows both cards.
+- Reverse proxies pass WebSocket upgrades through: the client handshake is answered locally and
+  relayed to the first configured upstream (`ws://`, or `wss://` for an `https://` target) with
+  the client's non-hop-by-hop headers, preserving path and query. Text and binary messages, and
+  close codes/reasons, are relayed in both directions. Routing rules and weighted selection do
+  not apply to upgrades; TLS to the upstream is verified strictly.
 - Proxies with more than one upstream now check each upstream actively: a background probe
   performs a TCP/TLS connect every 10 seconds (3-second timeout), marks the result with latency
   and the last error, and selection skips unhealthy upstreams while at least one healthy

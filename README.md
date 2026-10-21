@@ -56,6 +56,8 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Weighted upstreams with failover and retries | ✅ New in 0.4.4 |
 | Per-proxy QPS, p50/p95 latency and status counts | ✅ New in 0.4.5 |
 | Active upstream health checks (TCP/TLS, 10 s) | ✅ New in 0.4.5 |
+| WebSocket pass-through in the reverse proxy | ✅ New in 0.4.5 |
+| Audit log and active session revocation | ✅ New in 0.5.0 |
 | SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
 | Module toggles, factory reset, update check, about/help | ✅ Stable |
 | HTTP/3 and QUIC transports | 🗺️ Roadmap |

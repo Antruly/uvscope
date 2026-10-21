@@ -16,6 +16,7 @@ COMP_PORT="${11:-18796}"
 WS_PORT="${12:-18797}"
 MULTI_PORT="${13:-18798}"
 DEAD_PORT="${14:-18799}"
+WS_PROXY_PORT="${15:-18800}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -559,7 +560,7 @@ print("smoke test OK (setup, login, HTTP probe, reverse proxy, persistent TCP se
 PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
-PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" \
+PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" WS_PORT="${WS_PORT}" WS_PROXY_PORT="${WS_PROXY_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -570,6 +571,7 @@ import http.cookiejar
 import json
 import os
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -1196,9 +1198,120 @@ check(dead_entry.get("checked") is True and dead_entry.get("healthy") is False,
 check(live_entry.get("checked") is True and live_entry.get("healthy") is True,
       f"live upstream was not marked healthy: {live_entry}")
 
+if os.environ.get("WS_PROXY_PORT") and os.environ.get("WS_PORT"):
+    status, created = call("POST", "/api/proxies", {
+        "name": "smoke-ws-proxy",
+        "listenHost": "127.0.0.1",
+        "listenPort": int(os.environ["WS_PROXY_PORT"]),
+        "target": "http://127.0.0.1:" + os.environ["WS_PORT"],
+        "start": True,
+        "rules": [],
+    })
+    check(status == 200 and created.get("ok") is True,
+          f"WebSocket proxy creation failed: {created}")
+
+    def ws_connect(port, path):
+        sock = socket.create_connection(("127.0.0.1", port), timeout=8)
+        key = base64.b64encode(os.urandom(16)).decode()
+        request = (f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                   f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                   f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
+                   f"X-Smoke: ok\r\n\r\n")
+        sock.sendall(request.encode())
+        response = b""
+        while b"\r\n\r\n" not in response:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        return sock, response
+
+    def ws_send(sock, opcode, payload):
+        mask = os.urandom(4)
+        length = len(payload)
+        if length < 126:
+            head = struct.pack("!BB", 0x80 | opcode, 0x80 | length)
+        elif length < 65536:
+            head = struct.pack("!BBH", 0x80 | opcode, 0x80 | 126, length)
+        else:
+            head = struct.pack("!BBQ", 0x80 | opcode, 0x80 | 127, length)
+        masked = bytes(payload[i] ^ mask[i % 4] for i in range(length))
+        sock.sendall(head + mask + masked)
+
+    def ws_read(sock):
+        head = sock.recv(2)
+        if len(head) < 2:
+            return None, b""
+        first, second = head
+        opcode = first & 0x0f
+        length = second & 0x7f
+        if length == 126:
+            length = struct.unpack("!H", sock.recv(2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", sock.recv(8))[0]
+        mask = sock.recv(4) if second & 0x80 else b""
+        data = b""
+        while len(data) < length:
+            chunk = sock.recv(length - len(data))
+            if not chunk:
+                break
+            data += chunk
+        if mask:
+            data = bytes(data[i] ^ mask[i % 4] for i in range(len(data)))
+        return opcode, data
+
+    sock = None
+    try:
+        sock, response = ws_connect(int(os.environ["WS_PROXY_PORT"]), "/echo")
+        check(response.startswith(b"HTTP/1.1 101"),
+              f"WebSocket proxy handshake failed: {response[:80]!r}")
+        ws_send(sock, 0x1, b"ws-proxy")
+        opcode, data = ws_read(sock)
+        check(opcode == 0x1 and data == b"echo:ws-proxy",
+              f"WebSocket proxy echo mismatch: {opcode} {data!r}")
+        ws_send(sock, 0x2, b"\x01\x02")
+        opcode, data = ws_read(sock)
+        check(opcode == 0x2 and data == b"echo:\x01\x02",
+              f"WebSocket proxy binary mismatch: {opcode} {data!r}")
+        ws_send(sock, 0x8, struct.pack("!H", 1000) + b"bye")
+        opcode, data = ws_read(sock)
+        check(opcode == 0x8 and data[:2] == struct.pack("!H", 1000),
+              f"WebSocket proxy close mismatch: {opcode} {data[:2]!r}")
+    finally:
+        if sock is not None:
+            sock.close()
+    ws_proxy = next((item for item in created.get("proxies", [])
+                     if item.get("name") == "smoke-ws-proxy"), {})
+    if ws_proxy.get("id"):
+        call("DELETE", "/api/proxies/" + ws_proxy["id"])
+
+status, sessions = call("GET", "/api/auth/sessions")
+session_list = sessions.get("sessions", [])
+check(any(item.get("current") for item in session_list),
+      f"current session was not marked: {sessions}")
+check(len(session_list) >= 1, f"no active sessions listed: {sessions}")
+
+# A failed login is audited even though it creates no session.
+try:
+    bad = urllib.request.Request(
+        base + "/api/auth/login",
+        data=json.dumps({"username": "admin", "password": "wrong"}).encode(),
+        headers={"content-type": "application/json"}, method="POST")
+    urllib.request.urlopen(bad, timeout=5)
+except urllib.error.HTTPError:
+    pass
+
+status, audit_payload = call("GET", "/api/audit?limit=200")
+actions = [item.get("action") for item in audit_payload.get("entries", [])]
+check("setup.init" in actions, f"setup.init missing from audit: {actions}")
+check("auth.login_failed" in actions,
+      f"failed login missing from audit: {actions}")
+check("settings.update" in actions,
+      f"settings update missing from audit: {actions}")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, audit)")
 PY

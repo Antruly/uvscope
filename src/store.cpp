@@ -188,7 +188,7 @@ std::optional<uvcpp::uvcpp_db_table> Store::query(
 }
 
 bool Store::migrate(std::string* error) {
-  const std::array<const char*, 10> statements = {
+  const std::vector<const char*> statements = {
       R"(CREATE TABLE IF NOT EXISTS meta (
            key TEXT PRIMARY KEY,
            value TEXT NOT NULL
@@ -208,6 +208,17 @@ bool Store::migrate(std::string* error) {
            created_at TEXT NOT NULL,
            expires_at INTEGER NOT NULL
          ))",
+      R"(CREATE TABLE IF NOT EXISTS audit (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           at TEXT NOT NULL,
+           user_id INTEGER NOT NULL DEFAULT 0,
+           username TEXT NOT NULL DEFAULT '',
+           action TEXT NOT NULL,
+           target TEXT NOT NULL DEFAULT '',
+           detail TEXT NOT NULL DEFAULT '',
+           ip TEXT NOT NULL DEFAULT ''
+         ))",
+      R"(CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(id DESC))",
       R"(CREATE TABLE IF NOT EXISTS settings (
            key TEXT PRIMARY KEY,
            value TEXT NOT NULL,
@@ -468,6 +479,68 @@ void Store::delete_sessions_for_user(std::int64_t user_id) {
 
 void Store::cleanup_sessions() {
   exec("DELETE FROM sessions WHERE expires_at <= " + std::to_string(now_unix()), nullptr);
+}
+
+std::vector<SessionInfo> Store::active_sessions() const {
+  std::vector<SessionInfo> out;
+  const auto table = query(
+      "SELECT s.token_hash, s.user_id, u.username, u.role, s.created_at, s.expires_at "
+      "FROM sessions s JOIN users u ON u.id = s.user_id "
+      "WHERE s.expires_at > ? ORDER BY s.created_at DESC",
+      {now_unix()});
+  if (!table) return out;
+  for (const auto& row : table->rows()) {
+    SessionInfo info;
+    info.id = row["token_hash"].to_text();
+    info.user_id = row["user_id"].to_int64();
+    info.username = row["username"].to_text();
+    info.role = row["role"].to_text();
+    info.created_at = row["created_at"].to_text();
+    info.expires_at = row["expires_at"].to_int64();
+    out.push_back(std::move(info));
+  }
+  return out;
+}
+
+bool Store::delete_session_by_hash(const std::string& hash) {
+  if (hash.empty()) return false;
+  return exec("DELETE FROM sessions WHERE token_hash = ?", {hash}, nullptr);
+}
+
+void Store::audit(std::int64_t user_id, const std::string& username,
+                  const std::string& action, const std::string& target,
+                  const std::string& detail, const std::string& ip) {
+  const std::string at = now_iso8601();
+  db_.execute(
+      "INSERT INTO audit(at,user_id,username,action,target,detail,ip) "
+      "VALUES(?,?,?,?,?,?,?)",
+      {at, user_id, username, action, target, detail, ip}, nullptr);
+  // Keep the log bounded; the oldest rows are the least useful for a local tool.
+  exec("DELETE FROM audit WHERE id <= (SELECT COALESCE(MAX(id),0) - 10000 FROM audit)",
+       {}, nullptr);
+}
+
+std::vector<AuditEntry> Store::audit_entries(std::int64_t after, int limit) const {
+  std::vector<AuditEntry> out;
+  if (limit <= 0 || limit > 500) limit = 200;
+  const auto table = query(
+      "SELECT id,at,user_id,username,action,target,detail,ip FROM audit "
+      "WHERE id > ? ORDER BY id ASC LIMIT ?",
+      {after, limit});
+  if (!table) return out;
+  for (const auto& row : table->rows()) {
+    AuditEntry entry;
+    entry.id = row["id"].to_int64();
+    entry.at = row["at"].to_text();
+    entry.user_id = row["user_id"].to_int64();
+    entry.username = row["username"].to_text();
+    entry.action = row["action"].to_text();
+    entry.target = row["target"].to_text();
+    entry.detail = row["detail"].to_text();
+    entry.ip = row["ip"].to_text();
+    out.push_back(std::move(entry));
+  }
+  return out;
 }
 
 std::vector<User> Store::list_users() const {

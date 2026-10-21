@@ -5072,6 +5072,41 @@ button.nav-item {
 /* --------------------------------------------------------------------------
    Users
    -------------------------------------------------------------------------- */
+.audit-list {
+  display: flex;
+  flex-direction: column;
+}
+.audit-row {
+  display: grid;
+  grid-template-columns: 150px 170px minmax(80px, 0.8fr) minmax(120px, 1.6fr) 110px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+}
+.audit-row__time,
+.audit-row__ip {
+  color: var(--faint);
+}
+.audit-row__ip {
+  text-align: right;
+}
+.audit-row__user {
+  font-weight: 600;
+  color: var(--text);
+}
+.audit-row__target {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .audit-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 .user-table {
   padding: 8px 16px 14px;
 }
