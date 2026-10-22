@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(uvscope
-  VERSION 0.7.0
+  VERSION 0.8.0
   DESCRIPTION "A libuvcpp-powered multi-protocol web debugging workbench and gateway"
   HOMEPAGE_URL "https://github.com/Antruly/uvscope"
   LANGUAGES CXX)

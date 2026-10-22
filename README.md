@@ -29,7 +29,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 
 ![HTTP Studio](docs/screenshots/http-studio.png)
 
-## What is in 0.7.0
+## What is in 0.8.0
 
 | Area | Status |
 | --- | --- |
@@ -41,7 +41,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Service supervisor with desired-state restarts | ✅ New in 0.7.0 |
 | SQLite backup download and staged restore | ✅ New in 0.5.2 |
 | gzip / deflate / brotli decoding with a raw-body toggle | ✅ New in 0.4.2 |
-| Large-response streaming download with progress and cancel | ✅ New in 0.4.3 |
+| Large-response streaming download with progress, cancel and Range resume | ✅ New in 0.4.3; resume in 0.8.0 |
 | HTTP/2 over TLS with ALPN, stream IDs, GOAWAY and frame summary | ✅ New in 0.4.0 |
 | Response preview: sandboxed HTML, images, audio, video and PDF | ✅ Stable (opt-in scripts) |
 | Chinese / English UI with browser-language detection and manual switch | ✅ Stable |
@@ -56,7 +56,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | SOCKS5 per-session bytes, datagrams and duration | ✅ New in 0.4.0 |
 | TLS certificate decoder (PEM / DER) and live peer-chain probe | ✅ New in 0.4.0 |
 | TLS certificate vault: generate, import, inspect, download, delete | ✅ New in 0.4.0 |
-| Local root CA, CA-signed server certificates and in-place renewal | ✅ New |
+| Local root CA, CA-signed server certificates and in-place renewal | ✅ New in 0.8.0 |
 | Virtual terminal (Unix PTY / Windows ConPTY) with command library | ✅ New in 0.4.0, off by default |
 | SOAP 1.1 + WSDL operation discovery | ✅ Stable |
 | Managed HTTP reverse proxy with live logs and routing rules | ✅ Stable (method/host/header conditions in 0.4.4) |
@@ -64,6 +64,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Per-proxy QPS, p50/p95 latency and status counts | ✅ New in 0.4.5 |
 | Active upstream health checks (TCP/TLS, 10 s) | ✅ New in 0.4.5 |
 | WebSocket pass-through in the reverse proxy | ✅ New in 0.4.5 |
+| WebSocket upgrades honor routing rules and healthy weighted upstreams | ✅ New in 0.8.0 |
 | Audit log and active session revocation | ✅ New in 0.5.0 |
 | SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
 | Module toggles, factory reset, update check, about/help | ✅ Stable |
@@ -86,10 +87,10 @@ than falling back to a direct connection.
 
 ## Download
 
-Prebuilt **v0.7.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.7.0):
+Prebuilt **v0.8.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.8.0):
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.7.0-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.8.0-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 The Windows executable and installer share the uvscope icon; Linux packages install the hicolor
