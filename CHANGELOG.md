@@ -19,6 +19,12 @@ All notable changes to uvscope are documented here. The format is based on
   `GET /api/tls/ca/cert` downloads the root. The TLS Inspector gains a local CA card, an issuer
   selector in the generate dialog, and a renew action per certificate. Self-check covers the CA
   lifecycle and the smoke test verifies issued and renewed chains with `openssl verify`.
+- Reverse-proxy WebSocket upgrades now use the same routing rules and upstream selection as
+  HTTP: method/host/header conditions and rewrite destinations are applied, and the weighted
+  upstream list is filtered by active health checks. Redirect rules are skipped because the 101
+  handshake has already been sent. Upgrade log entries record `action: "upgrade"`, `status: 101`,
+  the chosen upstream and the matched rule. The smoke test routes an upgrade through a redirect
+  rule, a header-gated rewrite rule and a dead upstream to prove the behavior.
 
 ## [0.7.0] - 2026-10-22
 

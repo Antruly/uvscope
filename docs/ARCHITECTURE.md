@@ -270,8 +270,9 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 - Preview and probes still cap bodies at 4 MiB; larger responses can be streamed to a staging
   file and downloaded (512 MiB cap, HTTP/1.1, attachment-only).
 - Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
-- WebSocket upgrades are relayed to the first upstream; routing rules and weighted selection do
-  not apply to them, and relayed frames are not logged individually.
+- WebSocket upgrades use the same routing conditions/rewrites and health-filtered weighted
+  upstream selection as HTTP. Redirect rules are skipped after the 101 handshake, relayed frames
+  are not logged individually, and retries do not apply to upgrades.
 - Routing supports ordered exact / prefix / regex rules plus method/host/header conditions, and
   weighted upstreams with bounded retries. There is no active health checking or circuit
   breaking.

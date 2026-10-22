@@ -17,6 +17,7 @@ WS_PORT="${12:-18797}"
 MULTI_PORT="${13:-18798}"
 DEAD_PORT="${14:-18799}"
 WS_PROXY_PORT="${15:-18800}"
+WS_ROUTE_PORT="${16:-18801}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -169,6 +170,8 @@ def handle(conn):
         if not chunk:
             return
         data += chunk
+    request_line = data.split(b'\r\n', 1)[0].split()
+    path = request_line[1].decode('latin1') if len(request_line) > 1 else '/'
     headers = {}
     for line in data.decode('latin1').split('\r\n')[1:]:
         if ':' in line:
@@ -189,7 +192,8 @@ def handle(conn):
             break
         opcode, payload = frame
         if opcode in (0x1, 0x2):
-            send_frame(conn, opcode, b'echo:' + payload)
+            prefix = (b'alt:' + path.encode() + b':') if path.startswith('/alt') else b'echo:'
+            send_frame(conn, opcode, prefix + payload)
         elif opcode == 0x9:
             send_frame(conn, 0xA, payload)
         elif opcode == 0x8:
@@ -581,6 +585,7 @@ PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
 PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" WS_PORT="${WS_PORT}" WS_PROXY_PORT="${WS_PROXY_PORT}" \
+WS_ROUTE_PORT="${WS_ROUTE_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -1367,6 +1372,71 @@ if os.environ.get("WS_PROXY_PORT") and os.environ.get("WS_PORT"):
                      if item.get("name") == "smoke-ws-proxy"), {})
     if ws_proxy.get("id"):
         call("DELETE", "/api/proxies/" + ws_proxy["id"])
+
+    # WebSocket upgrades share the HTTP routing rules and healthy-upstream
+    # selection. The redirect rule cannot apply after the 101 and is skipped;
+    # the rewrite rule then matches on the X-Smoke header and selects the live
+    # upstream over the dead one.
+    status, routed = call("POST", "/api/proxies", {
+        "name": "smoke-ws-route",
+        "listenHost": "127.0.0.1",
+        "listenPort": int(os.environ["WS_ROUTE_PORT"]),
+        "target": "http://127.0.0.1:" + os.environ["WS_PORT"],
+        "upstreams": [
+            {"url": "http://127.0.0.1:" + os.environ["DEAD_PORT"], "weight": 1},
+            {"url": "http://127.0.0.1:" + os.environ["WS_PORT"], "weight": 1},
+        ],
+        "start": True,
+        "rules": [
+            {"name": "ws-redirect", "matchType": "prefix", "pattern": "/ws-route",
+             "action": "redirect", "status": 302, "destination": "/elsewhere"},
+            {"name": "ws-rewrite", "matchType": "prefix", "pattern": "/ws-route",
+             "headerName": "X-Smoke", "headerValue": "ok",
+             "action": "rewrite", "destination": "/alt", "preserveQuery": False},
+        ],
+    })
+    check(status == 200 and routed.get("ok") is True,
+          f"WebSocket routing proxy creation failed: {routed}")
+    routed_id = next((item.get("id") for item in routed.get("proxies", [])
+                      if item.get("name") == "smoke-ws-route"), "")
+    check(bool(routed_id), "WebSocket routing proxy id missing")
+    if routed_id:
+        healthy = False
+        for _ in range(80):
+            status, payload = call("GET", "/api/proxies")
+            entry = next((item for item in payload.get("proxies", [])
+                          if item.get("id") == routed_id), {})
+            dead = next((item for item in entry.get("health", [])
+                         if os.environ["DEAD_PORT"] in item.get("url", "")), {})
+            if dead.get("checked") and dead.get("healthy") is False:
+                healthy = True
+                break
+            time.sleep(0.1)
+        check(healthy, "dead WebSocket upstream was not marked unhealthy")
+        sock = None
+        try:
+            sock, response = ws_connect(int(os.environ["WS_ROUTE_PORT"]),
+                                        "/ws-route?x=1")
+            check(response.startswith(b"HTTP/1.1 101"),
+                  f"routed WebSocket handshake failed: {response[:80]!r}")
+            ws_send(sock, 0x1, b"route")
+            opcode, data = ws_read(sock)
+            check(opcode == 0x1 and data == b"alt:/alt:route",
+                  f"WebSocket rewrite/upstream selection failed: {opcode} {data!r}")
+            ws_send(sock, 0x8, struct.pack("!H", 1000))
+            ws_read(sock)
+        finally:
+            if sock is not None:
+                sock.close()
+        status, log_payload = call(
+            "GET", f"/api/proxies/{routed_id}/logs?after=0")
+        upgrade = next((item for item in log_payload.get("logs", [])
+                        if item.get("status") == 101), {})
+        check(upgrade.get("rule") == "ws-rewrite",
+              f"WebSocket upgrade log did not record the rewrite rule: {upgrade}")
+        check(os.environ["WS_PORT"] in upgrade.get("upstream", ""),
+              f"WebSocket upgrade used the wrong upstream: {upgrade}")
+        call("DELETE", "/api/proxies/" + routed_id)
 
 status, sessions = call("GET", "/api/auth/sessions")
 session_list = sessions.get("sessions", [])

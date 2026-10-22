@@ -454,6 +454,29 @@ self-check 覆盖 CA 创建、签发、续期与路径保持；smoke 额外用 `
 
 不做：CA 轮换、CRL/OCSP、证书吊销列表、自动续期调度。
 
+### S8 — WebSocket 路由与上游选择（已实现）
+
+边界：`src/proxy_manager.cpp`、`docs/API.md`、smoke。
+
+内容：
+
+- WebSocket Upgrade 复用反向代理的 method/host/header 条件与 rewrite 规则；
+- 上游选择复用健康过滤后的加权列表；
+- `redirect` 规则在 101 已发出后跳过，由后续匹配规则生效；
+- 升级日志记录 `action: "upgrade"`、`status: 101`、实际 upstream 与命中的 rule。
+
+验收：
+
+```sh
+./scripts/build.sh
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 新增 `WS_ROUTE_PORT`：同时配置 redirect、带 Header 条件的 rewrite 和一个死上游，
+断言升级命中 rewrite、落到存活上游，并在代理日志中找到 rule/upstream。
+
+不做：升级阶段重试、逐帧日志、握手前 redirect 分流。
+
 ---
 
 ### 风险与回退（本迭代）

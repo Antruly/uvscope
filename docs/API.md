@@ -387,13 +387,22 @@ wins. A rule is:
 
 ### WebSocket pass-through
 
-A reverse proxy answers WebSocket upgrades on every path and relays them to its **first
-configured upstream** (`target` when `upstreams` is empty). `http://` targets become `ws://` and
-`https://` targets become `wss://`; the upstream base path, request path and query are preserved.
+A reverse proxy answers WebSocket upgrades on every path and relays them to a configured upstream
+(`target` when `upstreams` is empty). `http://` targets become `ws://` and `https://` targets
+become `wss://`. Upstream selection uses the same weighted list and health filtering as HTTP
+forwarding; retries do not apply to upgrades.
+
+Routing rules also apply to upgrades: `method`, `host` and `headerName`/`headerValue`
+conditions are evaluated, and `rewrite` rules replace the upstream path before the handshake
+(`preserveQuery` and the destination variables behave as for HTTP). A `redirect` rule is skipped
+because the downstream `101 Switching Protocols` has already been sent; the next matching rule
+wins. Without a rewrite, the upstream base path, request path and query are preserved.
+
 Client headers other than hop-by-hop and `Sec-WebSocket-*` headers are forwarded, so
 `Authorization`, `Cookie` and `Origin` reach the upstream. Text and binary messages and
 close codes/reasons are relayed in both directions; the upstream TLS certificate is verified
-strictly. Routing rules and weighted/health-aware selection do not apply to upgrades.
+strictly. Each accepted upgrade is logged with `action: "upgrade"`, `status: 101`, the selected
+`upstream` and the matched `rule` when one applied; relayed frames are not logged individually.
 
 ### Proxy metrics
 

@@ -68,7 +68,7 @@ const en: Record<string, string> = {
   'proxy.editor.certPath': 'Certificate path',
   'proxy.editor.keyPath': 'Private key path',
   'proxy.editor.hint':
-    'HTTP/1.1 forwarding with ordered redirect/rewrite rules. WebSocket upgrade pass-through is still on the roadmap.',
+    'HTTP/1.1 forwarding with ordered redirect/rewrite rules, weighted upstreams with health checks, and WebSocket upgrade pass-through.',
   'proxy.editor.cancel': 'Cancel',
   'proxy.editor.save': 'Save & start',
 
@@ -184,7 +184,7 @@ const zh: Record<string, string> = {
   'proxy.editor.customCert': '自定义路径',
   'proxy.editor.certPath': '证书路径',
   'proxy.editor.keyPath': '私钥路径',
-  'proxy.editor.hint': 'HTTP/1.1 转发，支持按顺序执行的跳转/改写规则。WebSocket 升级透传仍在规划中。',
+  'proxy.editor.hint': 'HTTP/1.1 转发，支持按顺序执行的跳转/改写规则、带健康检查的加权上游，以及 WebSocket 升级透传。',
   'proxy.editor.cancel': '取消',
   'proxy.editor.save': '保存并启动',
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <functional>
 #include <memory>
 #include <random>
 #include <condition_variable>
@@ -469,64 +470,75 @@ struct ProxyManager::Runtime {
     while (log_entries.size() > 500) log_entries.pop_front();
   }
 
-  void forward(uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp) {
-    const auto started = std::chrono::steady_clock::now();
-    requests.fetch_add(1);
-    std::vector<ProxyCandidate> candidates;
+  std::vector<ProxyCandidate> candidate_list() const {
+    std::vector<ProxyCandidate> out;
     if (config.upstreams.empty()) {
       ProxyCandidate candidate;
       candidate.url = config.target;
       candidate.parsed = parse_url(config.target);
       candidate.weight = 1;
-      if (candidate.parsed.valid) candidates.push_back(std::move(candidate));
-    } else {
-      for (const auto& upstream : config.upstreams) {
-        ProxyCandidate candidate;
-        candidate.url = upstream.url;
-        candidate.parsed = parse_url(upstream.url);
-        candidate.weight = std::max(1, upstream.weight);
-        if (candidate.parsed.valid && (candidate.parsed.scheme == "http" ||
-                                       candidate.parsed.scheme == "https")) {
-          candidates.push_back(std::move(candidate));
-        }
+      if (candidate.parsed.valid) out.push_back(std::move(candidate));
+      return out;
+    }
+    for (const auto& upstream : config.upstreams) {
+      ProxyCandidate candidate;
+      candidate.url = upstream.url;
+      candidate.parsed = parse_url(upstream.url);
+      candidate.weight = std::max(1, upstream.weight);
+      if (candidate.parsed.valid && (candidate.parsed.scheme == "http" ||
+                                     candidate.parsed.scheme == "https")) {
+        out.push_back(std::move(candidate));
       }
     }
+    return out;
+  }
+
+  // Drops upstreams known to be unhealthy while at least one healthy upstream
+  // remains. Unchecked upstreams count as healthy, matching HTTP forwarding.
+  std::vector<ProxyCandidate> selectable_candidates() const {
+    std::vector<ProxyCandidate> out = candidate_list();
     bool any_healthy = false;
-    for (const auto& candidate : candidates) {
+    for (const auto& candidate : out) {
       if (is_healthy(candidate.url)) any_healthy = true;
     }
     if (any_healthy) {
-      candidates.erase(
-          std::remove_if(candidates.begin(), candidates.end(),
-                         [this](const ProxyCandidate& candidate) {
-                           return !is_healthy(candidate.url);
-                         }),
-          candidates.end());
+      out.erase(std::remove_if(out.begin(), out.end(),
+                               [this](const ProxyCandidate& candidate) {
+                                 return !is_healthy(candidate.url);
+                               }),
+                out.end());
     }
-    if (candidates.empty()) {
-      errors.fetch_add(1);
-      resp.status(502).json_str("{\"error\":\"invalid proxy target\"}");
-      resp.end();
-      add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
-               {"error", "invalid proxy target"}, {"latencyMs", 0}});
-      return;
-    }
+    return out;
+  }
 
-    std::string path = req.raw_path();
-    if (path.empty()) path = "/";
-    std::string query = req.query_string();
+  struct RuleOutcome {
+    bool matched = false;
+    bool redirect = false;
+    int status = 0;
+    std::string rule;
+    std::string location;
+    std::string path;
+    std::string query;
     bool rewritten = false;
+  };
 
-    // First enabled matching rule wins. Redirects answer immediately; rewrites
-    // replace the upstream path (the target base path then does not apply).
+  // First enabled matching rule wins. Redirect actions are returned to the
+  // caller; `skip_redirects` lets WebSocket upgrades ignore them because the
+  // 101 handshake has already been accepted and cannot be redirected.
+  RuleOutcome resolve_rules(
+      const std::string& method, const std::string& host,
+      const std::string& request_path, const std::string& request_query,
+      const std::function<std::string(const std::string&)>& header,
+      bool skip_redirects) const {
+    RuleOutcome out;
+    out.path = request_path.empty() ? "/" : request_path;
+    out.query = request_query;
     for (const auto& rule : config.rules) {
       if (!rule.enabled) continue;
-      if (!rule.method.empty() && !method_matches(rule.method, req.method_name())) {
-        continue;
-      }
-      if (!rule.host.empty() && !host_matches(rule.host, req.host())) continue;
+      if (!rule.method.empty() && !method_matches(rule.method, method)) continue;
+      if (!rule.host.empty() && !host_matches(rule.host, host)) continue;
       if (!rule.header_name.empty()) {
-        const std::string value = req.header(rule.header_name);
+        const std::string value = header(rule.header_name);
         if (rule.header_value.empty() ? value.empty() : value != rule.header_value) {
           continue;
         }
@@ -537,45 +549,82 @@ struct ProxyManager::Runtime {
       if (rule.pattern.empty()) {
         matched = true;
       } else if (rule.match_type == "exact") {
-        matched = path == rule.pattern;
+        matched = out.path == rule.pattern;
       } else if (rule.match_type == "prefix") {
-        matched = path.rfind(rule.pattern, 0) == 0;
-        if (matched) rest = path.substr(rule.pattern.size());
+        matched = out.path.rfind(rule.pattern, 0) == 0;
+        if (matched) rest = out.path.substr(rule.pattern.size());
       } else if (rule.match_type == "regex") {
         try {
-          matched = std::regex_search(path, capture, std::regex(rule.pattern));
+          matched = std::regex_search(out.path, capture, std::regex(rule.pattern));
         } catch (const std::regex_error&) {
           matched = false;
         }
       }
       if (!matched) continue;
-
-      const std::string location = expand_destination(
-          rule, path, query, req.host(), config.tls ? "https" : "http", rest, capture);
+      const std::string location =
+          expand_destination(rule, out.path, out.query, host,
+                             config.tls ? "https" : "http", rest, capture);
+      const std::string rule_name = rule.name.empty() ? rule.id : rule.name;
       if (rule.action == "redirect") {
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                 std::chrono::steady_clock::now() - started)
-                                 .count();
-        resp.status(rule.status)
-            .set_header("location", location)
-            .set_header("cache-control", "no-store")
-            .set_header("x-uvscope-proxy", config.id);
-        resp.end();
-        record(rule.status, static_cast<double>(elapsed));
-        add_log({{"method", req.method_name()}, {"path", req.raw_url()},
-                 {"status", rule.status}, {"rule", rule.name.empty() ? rule.id : rule.name},
-                 {"action", "redirect"}, {"location", location}, {"latencyMs", elapsed},
-                 {"bytes", 0}});
-        return;
+        if (skip_redirects) continue;
+        out.matched = true;
+        out.redirect = true;
+        out.status = rule.status;
+        out.rule = rule_name;
+        out.location = location;
+        return out;
       }
-      // rewrite
       const std::size_t split = location.find('?');
-      path = split == std::string::npos ? location : location.substr(0, split);
-      query = split == std::string::npos ? std::string() : location.substr(split + 1);
-      if (path.empty()) path = "/";
-      rewritten = true;
-      break;
+      out.path = split == std::string::npos ? location : location.substr(0, split);
+      out.query = split == std::string::npos ? std::string() : location.substr(split + 1);
+      if (out.path.empty()) out.path = "/";
+      out.matched = true;
+      out.rewritten = true;
+      out.rule = rule_name;
+      return out;
     }
+    return out;
+  }
+
+  void forward(uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp) {
+    const auto started = std::chrono::steady_clock::now();
+    requests.fetch_add(1);
+    std::vector<ProxyCandidate> candidates = selectable_candidates();
+    if (candidates.empty()) {
+      errors.fetch_add(1);
+      resp.status(502).json_str("{\"error\":\"invalid proxy target\"}");
+      resp.end();
+      add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
+               {"error", "invalid proxy target"}, {"latencyMs", 0}});
+      return;
+    }
+
+    // First enabled matching rule wins. Redirects answer immediately; rewrites
+    // replace the upstream path (the target base path then does not apply).
+    const RuleOutcome route =
+        resolve_rules(req.method_name(), req.host(), req.raw_path(),
+                      req.query_string(),
+                      [&req](const std::string& name) { return req.header(name); },
+                      false);
+    if (route.redirect) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - started)
+                               .count();
+      resp.status(route.status)
+          .set_header("location", route.location)
+          .set_header("cache-control", "no-store")
+          .set_header("x-uvscope-proxy", config.id);
+      resp.end();
+      record(route.status, static_cast<double>(elapsed));
+      add_log({{"method", req.method_name()}, {"path", req.raw_url()},
+               {"status", route.status}, {"rule", route.rule},
+               {"action", "redirect"}, {"location", route.location},
+               {"latencyMs", elapsed}, {"bytes", 0}});
+      return;
+    }
+    std::string path = route.path;
+    std::string query = route.query;
+    const bool rewritten = route.rewritten;
 
     std::vector<std::pair<std::string, std::string>> forwarded_headers;
     for (const auto& header : req.headers()) {
@@ -682,9 +731,12 @@ struct ProxyManager::Runtime {
                         .dump());
       resp.end();
       record(502, static_cast<double>(elapsed));
-      add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
-               {"error", message}, {"attempts", attempts}, {"upstream", used_url},
-               {"latencyMs", elapsed}, {"bytes", 0}});
+      nlohmann::json entry = {{"method", req.method_name()}, {"path", req.raw_url()},
+                              {"status", 502}, {"error", message},
+                              {"attempts", attempts}, {"upstream", used_url},
+                              {"latencyMs", elapsed}, {"bytes", 0}};
+      if (route.matched) entry["rule"] = route.rule;
+      add_log(entry);
       return;
     }
 
@@ -710,9 +762,12 @@ struct ProxyManager::Runtime {
     resp.set_header("x-uvscope-proxy", config.id);
     resp.end();
     record(static_cast<int>(response.status_code), static_cast<double>(elapsed));
-    add_log({{"method", req.method_name()}, {"path", req.raw_url()},
-             {"status", static_cast<int>(response.status_code)}, {"latencyMs", elapsed},
-             {"attempts", attempts}, {"upstream", used_url}, {"bytes", body.size()}});
+    nlohmann::json entry = {
+        {"method", req.method_name()}, {"path", req.raw_url()},
+        {"status", static_cast<int>(response.status_code)}, {"latencyMs", elapsed},
+        {"attempts", attempts}, {"upstream", used_url}, {"bytes", body.size()}};
+    if (route.matched) entry["rule"] = route.rule;
+    add_log(entry);
   }
 
   nlohmann::json metrics_snapshot() const {
@@ -758,26 +813,58 @@ struct ProxyManager::Runtime {
   void relay_websocket(uvcpp::uvcpp_web_ws_request& ws) {
     auto* conn = ws.connection();
     if (conn == nullptr) return;
-    const std::string source =
-        config.upstreams.empty() ? config.target : config.upstreams.front().url;
-    const ParsedUrl upstream = parse_url(source);
-    if (!upstream.valid ||
-        (upstream.scheme != "http" && upstream.scheme != "https")) {
+    const auto started = std::chrono::steady_clock::now();
+    requests.fetch_add(1);
+    std::vector<ProxyCandidate> candidates = selectable_candidates();
+    if (candidates.empty()) {
+      errors.fetch_add(1);
       conn->close(uvcpp::ws_close_code::INTERNAL_ERROR, "invalid upstream");
+      add_log({{"method", "GET"}, {"path", ws.request().raw_url()},
+               {"status", 0}, {"error", "invalid proxy target"},
+               {"action", "upgrade"}, {"latencyMs", 0}});
       return;
     }
+    std::vector<bool> tried(candidates.size(), false);
+    const int index = pick_candidate(rng, candidates, tried);
+    if (index < 0) {
+      errors.fetch_add(1);
+      conn->close(uvcpp::ws_close_code::INTERNAL_ERROR, "no upstream available");
+      add_log({{"method", "GET"}, {"path", ws.request().raw_url()},
+               {"status", 0}, {"error", "no upstream available"},
+               {"action", "upgrade"}, {"latencyMs", 0}});
+      return;
+    }
+    const ProxyCandidate& candidate = candidates[static_cast<std::size_t>(index)];
+    const ParsedUrl& upstream = candidate.parsed;
+
+    // Redirect rules are skipped: the downstream 101 has already been sent and
+    // cannot be turned into a redirect. Rewrites and conditions still apply.
+    const RuleOutcome route = resolve_rules(
+        ws.request().method_name(), ws.request().host(), ws.path(),
+        ws.request().query_string(),
+        [&ws](const std::string& name) { return ws.header(name); }, true);
+
     const bool tls = upstream.scheme == "https";
     std::string url = std::string(tls ? "wss://" : "ws://") + upstream.host;
     const int default_port = tls ? 443 : 80;
     if (upstream.port != default_port) url += ":" + std::to_string(upstream.port);
-    std::string path = ws.path();
-    if (path.empty()) path = "/";
-    if (upstream.path != "/" && !upstream.path.empty()) {
+    std::string path = route.path;
+    if (!route.rewritten && upstream.path != "/" && !upstream.path.empty()) {
       path = join_path(upstream.path, path);
     }
     url += path;
-    const std::string query = ws.request().query_string();
-    if (!query.empty()) url += "?" + query;
+    if (!route.query.empty()) url += "?" + route.query;
+
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - started)
+                             .count();
+    record(101, static_cast<double>(elapsed));
+    nlohmann::json entry = {{"method", "GET"}, {"path", ws.request().raw_url()},
+                            {"status", 101}, {"action", "upgrade"},
+                            {"upstream", candidate.url}, {"latencyMs", elapsed},
+                            {"bytes", 0}};
+    if (route.matched) entry["rule"] = route.rule;
+    add_log(entry);
 
     auto relay = std::make_shared<WsRelay>();
     relay->app = app.get();
