@@ -270,4 +270,5 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   weighted upstreams with bounded retries. There is no active health checking or circuit
   breaking.
 - The `history` table stores summaries, not full bodies.
-- No IPC supervisor yet; all long-lived services are threads in the daemon.
+- Long-lived proxies are supervised in-process (desired state, restart on runtime stop); process
+  isolation and IPC for the service runtimes are still missing.

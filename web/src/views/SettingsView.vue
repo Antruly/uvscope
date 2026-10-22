@@ -22,6 +22,7 @@ const saving = ref(false)
 const updateInfo = ref<UpdateInfo | null>(null)
 const checkingUpdate = ref(false)
 const restoring = ref(false)
+const supervisorServices = ref<Array<Record<string, unknown>>>([])
 
 const moduleMeta: Array<{ key: keyof ModuleMap; icon: string; titleKey: string; descriptionKey: string }> = [
   { key: 'http', icon: 'bolt', titleKey: 'settings.modules.http.title', descriptionKey: 'settings.modules.http.description' },
@@ -32,6 +33,25 @@ const moduleMeta: Array<{ key: keyof ModuleMap; icon: string; titleKey: string; 
   { key: 'proxy', icon: 'route', titleKey: 'settings.modules.proxy.title', descriptionKey: 'settings.modules.proxy.description' },
   { key: 'terminal', icon: 'terminal', titleKey: 'settings.modules.terminal.title', descriptionKey: 'settings.modules.terminal.description' },
 ]
+
+async function loadSupervisor() {
+  try {
+    const response = await get<{ services?: Array<Record<string, unknown>> }>('/api/supervisor')
+    supervisorServices.value = response.services || []
+  } catch {
+    // Supervision is optional; the settings page stays usable without it.
+  }
+}
+
+async function restartSupervisor(id: string) {
+  try {
+    await post(`/api/supervisor/${id}/restart`)
+    await loadSupervisor()
+    ui.notify('success', t('settings.supervisor.restarted'))
+  } catch (err) {
+    ui.toastError(err, t('settings.supervisor.failed'))
+  }
+}
 
 async function restoreBackup(event: Event) {
   const input = event.target as HTMLInputElement
@@ -132,7 +152,10 @@ async function factoryReset() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadSupervisor()
+})
 </script>
 
 <template>
@@ -209,6 +232,19 @@ onMounted(load)
               <Icon name="upload" :size="15" />{{ t('settings.backup.restore') }}
               <input type="file" accept=".db,application/octet-stream" class="hidden-file" :disabled="restoring" @change="restoreBackup" />
             </label>
+          </div>
+        </section>
+
+        <section class="card">
+          <header class="card__head"><div><span class="eyebrow">{{ t('settings.supervisor.eyebrow') }}</span><h3>{{ t('settings.supervisor.title') }}</h3></div><button class="ghost-toggle" @click="loadSupervisor"><Icon name="refresh" :size="14" />{{ t('settings.supervisor.refresh') }}</button></header>
+          <p class="muted settings-note">{{ t('settings.supervisor.hint') }}</p>
+          <div v-if="!supervisorServices.length" class="proxy-rules-empty">{{ t('settings.supervisor.empty') }}</div>
+          <div v-for="service in supervisorServices" :key="String(service.id)" class="user-row">
+            <div class="user-cell"><strong>{{ service.name }}</strong><small class="mono">{{ service.kind }}</small></div>
+            <div class="mono">{{ service.desired ? t('settings.supervisor.desired') : t('settings.supervisor.stopped') }} · {{ service.running ? t('settings.supervisor.running') : t('settings.supervisor.down') }} · {{ service.restarts }} {{ t('settings.supervisor.restarts') }}</div>
+            <div class="user-actions">
+              <button class="button" @click="restartSupervisor(String(service.id))">{{ t('settings.supervisor.restart') }}</button>
+            </div>
           </div>
         </section>
       </div>

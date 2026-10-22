@@ -596,6 +596,16 @@ Application::~Application() {
   if (proxies_) proxies_->stop_all();
 }
 
+void Application::supervise_proxy(const ProxyConfig& config, bool desired) {
+  if (!supervisor_) return;
+  const std::string id = config.id;
+  supervisor_->register_service(
+      "proxy", id, config.name, desired,
+      [this, id](std::string* error) { return proxies_->start(id, error); },
+      [this, id](std::string* error) { return proxies_->stop(id, error); },
+      [this, id] { return proxies_->is_running(id); });
+}
+
 bool Application::initialize() {
   std::string error;
   if (!ensure_directory(options_.data_dir, &error)) {
@@ -607,6 +617,8 @@ bool Application::initialize() {
     return false;
   }
   proxies_.reset(new ProxyManager(store_));
+  supervisor_.reset(new Supervisor(
+      [this](std::function<void()> fn) { app_.post(std::move(fn)); }));
   transport_.reset(new TransportManager());
   if (!transport_->available()) {
     std::fprintf(stderr, "uvscope: transport sessions unavailable: %s\n",
@@ -616,6 +628,9 @@ bool Application::initialize() {
       if (!transport_->add_listener(listener, nullptr)) continue;
       if (listener.auto_start) transport_->start_listener(listener.id, nullptr);
     }
+  }
+  for (const auto& config : store_.proxies()) {
+    supervise_proxy(config, config.auto_start);
   }
   socks5_.reset(new Socks5Manager());
   for (const auto& server : store_.socks5_servers()) {
@@ -730,10 +745,13 @@ int Application::run() {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
 
+  if (supervisor_) supervisor_->stop();
+
   app_.stop();
 
   app_.join();
 
+  if (supervisor_) supervisor_.reset();
   if (update_thread_.joinable()) update_thread_.join();
   if (proxies_) proxies_->stop_all();
   if (downloads_) downloads_.reset();
@@ -3075,9 +3093,11 @@ void Application::register_proxy_routes() {
     // stopped, otherwise this would report a spurious "already running".
     if (should_start && !proxies_->is_running(config.id) &&
         !proxies_->start(config.id, &error)) {
+      supervise_proxy(config, false);
       send_json(resp, 200, {{"ok", true}, {"warning", error}, {"proxies", proxy_view()}});
       return;
     }
+    supervise_proxy(config, should_start || proxies_->is_running(config.id));
     send_json(resp, 200, {{"ok", true}, {"proxies", proxy_view()}});
   });
 
@@ -3098,6 +3118,7 @@ void Application::register_proxy_routes() {
       send_error(resp, 500, error);
       return;
     }
+    if (supervisor_) supervisor_->unregister_service(*id);
     audit_event(store_, req, principal->user, "proxy.delete",
                 existing ? existing->name : *id, "");
     send_json(resp, 200, {{"ok", true}, {"proxies", proxy_view()}});
@@ -3119,6 +3140,7 @@ void Application::register_proxy_routes() {
       return;
     }
     const auto existing = store_.proxy(*id);
+    if (supervisor_) supervisor_->set_desired(*id, true);
     audit_event(store_, req, principal->user, "proxy.start",
                 existing ? existing->name : *id, "");
     send_json(resp, 200, {{"ok", true}, {"proxies", proxy_view()}});
@@ -3140,6 +3162,7 @@ void Application::register_proxy_routes() {
       return;
     }
     const auto existing = store_.proxy(*id);
+    if (supervisor_) supervisor_->set_desired(*id, false);
     audit_event(store_, req, principal->user, "proxy.stop",
                 existing ? existing->name : *id, "");
     send_json(resp, 200, {{"ok", true}, {"proxies", proxy_view()}});
@@ -3167,6 +3190,64 @@ void Application::register_proxy_routes() {
 // Admin
 // ---------------------------------------------------------------------------
 void Application::register_admin_routes() {
+  app_.get("/api/supervisor", [this](uvcpp::uvcpp_web_request& req,
+                                     uvcpp::uvcpp_web_response& resp,
+                                     uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    if (!supervisor_) {
+      send_json(resp, 200, {{"ok", true}, {"services", nlohmann::json::array()}});
+      return;
+    }
+    send_json(resp, 200, supervisor_->snapshot());
+  });
+
+  app_.get("/api/supervisor/events", [this](uvcpp::uvcpp_web_request& req,
+                                            uvcpp::uvcpp_web_response& resp,
+                                            uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    std::uint64_t after = 0;
+    if (const std::string* value = req.query("after")) {
+      after = std::strtoull(value->c_str(), nullptr, 10);
+    }
+    int limit = 200;
+    if (const std::string* value = req.query("limit")) {
+      limit = std::atoi(value->c_str());
+    }
+    if (!supervisor_) {
+      send_json(resp, 200, {{"ok", true}, {"events", nlohmann::json::array()}});
+      return;
+    }
+    send_json(resp, 200, supervisor_->events(after, limit));
+  });
+
+  app_.post("/api/supervisor/:id/restart", [this](uvcpp::uvcpp_web_request& req,
+                                                   uvcpp::uvcpp_web_response& resp,
+                                                   uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !supervisor_ || !supervisor_->restart(*id)) {
+      send_error(resp, 404, "supervised service not found", "not_found");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.post("/api/supervisor/:id/stop-runtime", [this](uvcpp::uvcpp_web_request& req,
+                                                        uvcpp::uvcpp_web_response& resp,
+                                                        uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id || !supervisor_ || !supervisor_->stop_runtime(*id)) {
+      send_error(resp, 404, "supervised service not found", "not_found");
+      return;
+    }
+    send_json(resp, 200, {{"ok", true}});
+  });
+
   app_.get("/api/audit", [this](uvcpp::uvcpp_web_request& req,
                                 uvcpp::uvcpp_web_response& resp,
                                 uvcpp::uvcpp_web_next) {

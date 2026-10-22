@@ -68,7 +68,8 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] cURL, HAR, OpenAPI and Postman import/export (HAR export is one entry)
 - [x] Audit log and active session management
 - [x] Backup download and staged restore (migrations still ad hoc)
-- [ ] Supervisor + IPC for long-lived services
+- [~] In-process service supervisor with desired-state restarts
+- [ ] Process isolation + IPC for long-lived services
 
 ## 1.0 — stable
 

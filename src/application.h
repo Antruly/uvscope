@@ -20,6 +20,7 @@
 #include "quic_manager.h"
 #include "socks5_manager.h"
 #include "store.h"
+#include "supervisor.h"
 #include "terminal_manager.h"
 #include "transport_manager.h"
 #include "ws_manager.h"
@@ -86,6 +87,7 @@ class Application {
   nlohmann::json update_payload();
   nlohmann::json proxy_view() const;
   bool initialize();
+  void supervise_proxy(const ProxyConfig& config, bool desired);
 
   AppOptions options_;
   Store store_;
@@ -97,6 +99,7 @@ class Application {
   std::unique_ptr<DownloadManager> downloads_;
   std::unique_ptr<WsManager> ws_;
   std::unique_ptr<QuicManager> quic_;
+  std::unique_ptr<Supervisor> supervisor_;
   std::unique_ptr<CertificateManager> certificates_;
   PreviewStore previews_;
   uvcpp::uvcpp_web_app app_;

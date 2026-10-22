@@ -38,6 +38,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | cURL / HAR import and export | ✅ New in 0.5.2 |
 | Environments with {{variables}}, saved request collections, OpenAPI/Postman import | ✅ New in 0.6.0 |
 | Pre-request / post-response scripts with assertions | ✅ New in 0.6.1 |
+| Service supervisor with desired-state restarts | ✅ New in 0.7.0 |
 | SQLite backup download and staged restore | ✅ New in 0.5.2 |
 | gzip / deflate / brotli decoding with a raw-body toggle | ✅ New in 0.4.2 |
 | Large-response streaming download with progress and cancel | ✅ New in 0.4.3 |

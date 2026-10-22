@@ -1364,9 +1364,29 @@ check(workspace.get("collections", [{}])[0].get("items", [{}])[0].get("url") ==
 status, _ = call("PUT", "/api/http/workspace", {"collections": "invalid"})
 check(status == 400, f"invalid workspace was accepted: {status}")
 
+status, supervisor_payload = call("GET", "/api/supervisor")
+supervised = next((item for item in supervisor_payload.get("services", [])
+                   if item.get("name") == "smoke"), {})
+check(supervised.get("desired") is True and supervised.get("running") is True,
+      f"smoke proxy is not supervised as running: {supervised}")
+supervised_id = supervised.get("id", "")
+status, failed = call("POST", f"/api/supervisor/{supervised_id}/stop-runtime")
+check(status == 200 and failed.get("ok") is True,
+      f"could not stop the supervised runtime: {failed}")
+restarted = False
+for _ in range(60):
+    time.sleep(0.2)
+    _, current = call("GET", "/api/supervisor")
+    entry = next((item for item in current.get("services", [])
+                  if item.get("id") == supervised_id), {})
+    if entry.get("running") is True and entry.get("restarts", 0) >= 1:
+        restarted = True
+        break
+check(restarted, "supervisor did not restart the proxy runtime")
+
 if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, audit, backup, workspace)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, audit, backup, workspace, supervisor)")
 PY

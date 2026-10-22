@@ -4,6 +4,17 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Long-lived reverse proxies are supervised: the daemon records the desired run state when a
+  proxy is started or stopped, a watchdog restarts desired services whose runtime stops, and
+  `GET /api/supervisor` reports desired/running/restart counts and recent events. Admins can
+  restart a service or force a runtime stop through `POST /api/supervisor/:id/restart` and
+  `POST /api/supervisor/:id/stop-runtime`; Settings shows the supervisor card. This is
+  in-process supervision — process isolation and IPC for the runtimes remain future work.
+
 ## [0.6.1] - 2026-10-22
 
 ### Added
