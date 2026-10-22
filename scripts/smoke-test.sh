@@ -590,6 +590,7 @@ import hashlib
 import http.cookiejar
 import json
 import os
+import shutil
 import socket
 import struct
 import subprocess
@@ -984,6 +985,11 @@ if cert_meta:
     check(status == 200 and imported.get("ok") is True,
           f"certificate import failed: {imported}")
     if imported.get("certificate", {}).get("id"):
+        status, renew_imported = call(
+            "POST", f"/api/tls/certificates/{imported['certificate']['id']}/renew",
+            {"days": 30})
+        check(status == 409 and renew_imported.get("code") == "not_renewable",
+              f"imported certificate renewal was not refused: {renew_imported}")
         status, deleted = call(
             "DELETE", f"/api/tls/certificates/{imported['certificate']['id']}")
         check(status == 200 and deleted.get("ok") is True,
@@ -992,6 +998,63 @@ if cert_meta:
     check(status == 200 and deleted.get("ok") is True,
           f"generated certificate delete failed: {deleted}")
     check(not os.path.exists(cert_meta["certPath"]), "certificate files were not removed")
+
+# Local CA: create the root, issue a signed leaf, verify the chain with OpenSSL,
+# then renew the leaf in place.
+status, ca_status = call("GET", "/api/tls/ca")
+check(status == 200 and ca_status.get("exists") is False,
+      f"fresh vault unexpectedly has a local CA: {ca_status}")
+status, created_ca = call("POST", "/api/tls/ca", {
+    "commonName": "uvscope smoke CA", "days": 365,
+})
+check(status == 200 and created_ca.get("ok") is True,
+      f"local CA creation failed: {created_ca}")
+ca_meta = created_ca.get("ca", {})
+check(ca_meta.get("exists") is True and ca_meta.get("subject"),
+      f"local CA status is incomplete: {ca_meta}")
+if ca_meta.get("certPath"):
+    check(os.path.exists(ca_meta["certPath"]), "local CA cert.pem is missing")
+    with opener.open(base + "/api/tls/ca/cert", timeout=10) as response:
+        downloaded_ca = response.read().decode()
+    check("BEGIN CERTIFICATE" in downloaded_ca,
+          "local CA download did not return a PEM certificate")
+
+status, issued_ca = call("POST", "/api/tls/certificates/generate", {
+    "name": "smoke-ca-leaf", "commonName": "localhost",
+    "sans": ["localhost", "127.0.0.1"], "days": 30,
+    "keyType": "ec", "keyBits": 256, "signedBy": "ca",
+})
+issued_meta = issued_ca.get("certificate", {})
+check(status == 200 and issued_meta.get("source") == "ca",
+      f"CA-signed certificate generation failed: {issued_ca}")
+if issued_meta and ca_meta.get("certPath"):
+    check(issued_meta.get("certificateCount", 0) >= 2,
+          f"issued bundle does not include the root: {issued_meta}")
+    check(issued_meta.get("issuer") == ca_meta.get("subject"),
+          f"issued certificate issuer mismatch: {issued_meta.get('issuer')} != {ca_meta.get('subject')}")
+    if shutil.which("openssl"):
+        verify = subprocess.run(
+            ["openssl", "verify", "-CAfile", ca_meta["certPath"], issued_meta["certPath"]],
+            capture_output=True, text=True)
+        check(verify.returncode == 0,
+              f"openssl verify rejected the issued chain: {verify.stdout}{verify.stderr}")
+    status, renewed = call(
+        "POST", f"/api/tls/certificates/{issued_meta['id']}/renew", {"days": 30})
+    renewed_meta = renewed.get("certificate", {})
+    check(status == 200 and renewed_meta.get("renewCount") == 1,
+          f"certificate renewal failed: {renewed}")
+    check(renewed_meta.get("certPath") == issued_meta.get("certPath") and
+          renewed_meta.get("keyPath") == issued_meta.get("keyPath"),
+          "renewal changed the certificate paths")
+    if shutil.which("openssl"):
+        verify = subprocess.run(
+            ["openssl", "verify", "-CAfile", ca_meta["certPath"], renewed_meta["certPath"]],
+            capture_output=True, text=True)
+        check(verify.returncode == 0,
+              f"openssl verify rejected the renewed chain: {verify.stdout}{verify.stderr}")
+    status, deleted = call("DELETE", f"/api/tls/certificates/{issued_meta['id']}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"issued certificate delete failed: {deleted}")
 
 # Virtual terminal: the module is off by default, then a real PTY round-trip.
 status, settings = call("PUT", "/api/settings", {"modules": {"terminal": True}})
@@ -1388,5 +1451,5 @@ if failures:
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)
     sys.exit(1)
-print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, audit, backup, workspace, supervisor)")
+print("smoke test OK (listener TCP/UDP, SOCKS5, outbound proxy, preview modes, downloads, WebSocket, proxy metrics, health checks, WS pass-through, TLS CA/renewal, audit, backup, workspace, supervisor)")
 PY

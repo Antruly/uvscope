@@ -56,6 +56,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | SOCKS5 per-session bytes, datagrams and duration | ✅ New in 0.4.0 |
 | TLS certificate decoder (PEM / DER) and live peer-chain probe | ✅ New in 0.4.0 |
 | TLS certificate vault: generate, import, inspect, download, delete | ✅ New in 0.4.0 |
+| Local root CA, CA-signed server certificates and in-place renewal | ✅ New |
 | Virtual terminal (Unix PTY / Windows ConPTY) with command library | ✅ New in 0.4.0, off by default |
 | SOAP 1.1 + WSDL operation discovery | ✅ Stable |
 | Managed HTTP reverse proxy with live logs and routing rules | ✅ Stable (method/host/header conditions in 0.4.4) |

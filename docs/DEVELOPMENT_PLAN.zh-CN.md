@@ -428,6 +428,32 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 - 再开放客户端、stream/datagram 调试；
 - 未通过前发布构建继续关闭。
 
+### S7 — 本地 CA 与证书续期（已实现）
+
+边界：`src/certificate_manager.*`、`/api/tls/ca*` 与证书续期路由、TLS 检查器证书库区、
+`docs/API.md`、Help、self-check 与 smoke。
+
+内容：
+
+- 一次性创建本地根 CA（`<data>/ca/`，私钥 0600），状态查询与根证书下载；
+- `signedBy: "ca"` 签发叶证书，`cert.pem` 写入叶证书 + 根证书，有效期不超过 CA 剩余时间；
+- `POST /api/tls/certificates/:id/renew` 原地续期自签名/CA 签发证书，保留 id、路径、名称与
+  密钥类型；导入证书拒绝续期；
+- 前端证书库增加 CA 卡片、签发方式选择与续期按钮。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+self-check 覆盖 CA 创建、签发、续期与路径保持；smoke 额外用 `openssl verify` 校验签发和续期
+后的证书链。
+
+不做：CA 轮换、CRL/OCSP、证书吊销列表、自动续期调度。
+
 ---
 
 ### 风险与回退（本迭代）

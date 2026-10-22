@@ -142,6 +142,12 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
 - POSIX permissions are 0700 for the certificate directory and 0600 for keys; the API exposes
   only metadata and local paths. Deleting an in-use certificate is refused.
 - The reverse proxy editor can pick a managed certificate and fills its local cert/key paths.
+- An optional local root CA lives in `<data>/ca/` (`cert.pem`, 0600 `key.pem`, `meta.json`).
+  Leaves issued through `signedBy: "ca"` are signed by the root, stored as leaf + root bundles,
+  and clamped to the root's remaining lifetime. Renewal rebuilds a generated or CA-signed leaf in
+  place (same id and paths, SANs read back from the current leaf) so existing proxy configs stay
+  valid; the TLS listener reads the files at start, so restart the proxy to load the new material.
+  Imported certificates are never re-signed.
 
 ## Command catalog
 

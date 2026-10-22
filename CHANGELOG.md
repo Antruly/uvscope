@@ -4,6 +4,22 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Local TLS certificate authority and certificate renewal. An admin can create one root CA
+  (`POST /api/tls/ca`, root under `<data>/ca/` with a 0600 key) and issue server certificates
+  signed by it (`signedBy: "ca"` on the existing generate endpoint). Issued bundles contain the
+  leaf and root, are clamped to the CA's remaining lifetime, and record `source: "ca"` plus the
+  CA subject. `POST /api/tls/certificates/:id/renew` rebuilds generated and CA-signed
+  certificates in place with the same id, paths and key type, reading SANs back from the current
+  leaf; imported certificates are refused. Existing proxy configs stay valid; restart a proxy to
+  load renewed files. `GET /api/tls/ca` reports status and
+  `GET /api/tls/ca/cert` downloads the root. The TLS Inspector gains a local CA card, an issuer
+  selector in the generate dialog, and a renew action per certificate. Self-check covers the CA
+  lifecycle and the smoke test verifies issued and renewed chains with `openssl verify`.
+
 ## [0.7.0] - 2026-10-22
 
 ### Added

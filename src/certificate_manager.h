@@ -36,7 +36,19 @@ class CertificateManager {
   nlohmann::json get(const std::string& id) const;
   nlohmann::json generate(const GenerateCertificateInput& input, std::string* error);
   nlohmann::json import(const ImportCertificateInput& input, std::string* error);
+  // Rebuild a generated or CA-signed certificate in place, keeping its id and
+  // paths so existing proxy configs stay valid (the listener reloads files on
+  // restart). Imported certificates cannot be renewed.
+  nlohmann::json renew(const std::string& id, int days, std::string* error);
   bool remove(const std::string& id, std::string* error);
+
+  // Local certificate authority used to issue server certificates. The CA
+  // lives next to the vault in <data>/ca/ and is created once by an admin.
+  nlohmann::json ca_status() const;
+  nlohmann::json create_ca(const std::string& common_name, int days, std::string* error);
+  nlohmann::json issue(const GenerateCertificateInput& input, std::string* error);
+  bool ca_exists() const;
+  std::optional<std::string> ca_cert_path() const;
 
   std::optional<std::string> cert_path(const std::string& id) const;
   std::optional<std::string> key_path(const std::string& id) const;
@@ -44,6 +56,8 @@ class CertificateManager {
   const std::filesystem::path& directory() const { return directory_; }
 
  private:
+  std::filesystem::path ca_directory() const;
+
   std::filesystem::path directory_;
 };
 

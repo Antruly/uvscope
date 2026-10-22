@@ -317,6 +317,31 @@ encrypted keys are decrypted with the optional `password`. Files live under `<da
 `cert.pem`, `key.pem` (0600) and `meta.json`. The API never returns key material, only local
 `certPath`/`keyPath` values that the reverse proxy editor can select.
 
+`generate` accepts `signedBy` (`"self"`, the default, or `"ca"`). With `"ca"` the leaf is
+signed by the local CA, `cert.pem` contains the leaf followed by the root, and the metadata
+records `source: "ca"`. If no CA exists the API returns `409 ca_missing`; an expired CA returns
+`409 ca_expired`.
+
+`POST /api/tls/certificates/:id/renew` rebuilds a generated or CA-signed certificate in place with
+the same id, paths, name and key type. SANs are read from the current leaf. The body accepts
+`days` (1–3650, default 365); CA-signed leaves are clamped to the remaining CA lifetime. Imported
+certificates return `409 not_renewable`. The response contains the updated metadata including
+`renewCount` and `renewedAt`.
+
+### Local certificate authority
+
+The local CA is a single root stored under `<data>/ca/` (`cert.pem`, 0600 `key.pem`,
+`meta.json`):
+
+- `GET /api/tls/ca` returns `{ ok, exists, subject, notBefore, notAfter, daysRemaining, expired,
+  fingerprintSha256, certPath }`.
+- `POST /api/tls/ca` creates it once (`commonName`, `days`, default `uvscope Local CA` / 3650).
+  A second call returns `409 ca_exists`.
+- `GET /api/tls/ca/cert` downloads the root certificate as PEM.
+
+The CA key never leaves the daemon. Deleting the vault does not remove the CA; delete the
+`<data>/ca` directory to start over.
+
 Deleting a certificate still referenced by a proxy returns `409 certificate_in_use`.
 
 ## Reverse proxy routing rules

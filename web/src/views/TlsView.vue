@@ -37,6 +37,26 @@ interface ManagedCertificate {
   certificateCount: number
   certPath: string
   keyPath: string
+  renewable?: boolean
+  renewCount?: number
+  renewedAt?: string
+  caId?: string
+  caSubject?: string
+}
+
+interface LocalCa {
+  ok: boolean
+  exists: boolean
+  name?: string
+  subject?: string
+  notBefore?: string
+  notAfter?: string
+  daysRemaining?: number
+  expired?: boolean
+  createdAt?: string
+  fingerprintSha256?: string
+  certPath?: string
+  publicKey?: { algorithm: string; bits: number }
 }
 
 const certificates = ref<ManagedCertificate[]>([])
@@ -52,7 +72,14 @@ const genForm = ref({
   days: 365,
   keyType: 'rsa' as 'rsa' | 'ec',
   keyBits: 2048,
+  signedBy: 'self' as 'self' | 'ca',
 })
+const ca = ref<LocalCa | null>(null)
+const caLoading = ref(false)
+const caError = ref('')
+const caBusy = ref(false)
+const caOpen = ref(false)
+const caForm = ref({ commonName: 'uvscope Local CA', days: 3650 })
 const importForm = ref({ name: '', certPem: '', keyPem: '', password: '' })
 const certFile = ref<HTMLInputElement | null>(null)
 const keyFile = ref<HTMLInputElement | null>(null)
@@ -178,6 +205,78 @@ async function loadCertificates() {
   }
 }
 
+async function loadCa() {
+  caLoading.value = true
+  caError.value = ''
+  try {
+    ca.value = await get<LocalCa>('/api/tls/ca')
+    if (ca.value.exists && ca.value.expired) {
+      caError.value = t('tls.ca.expiredWarning')
+    }
+  } catch (err) {
+    caError.value = errorMessage(err)
+  } finally {
+    caLoading.value = false
+  }
+}
+
+async function createCa() {
+  caBusy.value = true
+  caError.value = ''
+  try {
+    const response = await post<{ ok: boolean; ca?: LocalCa; error?: string }>(
+      '/api/tls/ca',
+      caForm.value,
+    )
+    if (!response.ok || !response.ca) {
+      caError.value = response.error || t('tls.ca.createFailed')
+      return
+    }
+    caOpen.value = false
+    ca.value = response.ca
+    ui.notify('success', t('tls.ca.created'), response.ca.subject)
+  } catch (err) {
+    caError.value = errorMessage(err)
+  } finally {
+    caBusy.value = false
+  }
+}
+
+function downloadCa() {
+  window.open('/api/tls/ca/cert', '_blank', 'noopener')
+}
+
+function openIssue() {
+  genForm.value.signedBy = 'ca'
+  generateOpen.value = true
+  certError.value = ''
+}
+
+function canRenew(cert: ManagedCertificate) {
+  if (cert.renewable === true) return true
+  return cert.renewable === undefined && (cert.source === 'generated' || cert.source === 'ca')
+}
+
+async function renewCertificate(cert: ManagedCertificate) {
+  if (!window.confirm(t('tls.vault.renewConfirm', { name: cert.name }))) return
+  try {
+    const response = await post<{
+      ok: boolean
+      certificate?: ManagedCertificate
+      error?: string
+    }>(`/api/tls/certificates/${cert.id}/renew`, { days: 365 })
+    if (!response.ok || !response.certificate) {
+      ui.notify('error', t('tls.vault.renewFailed'), response.error)
+      return
+    }
+    const index = certificates.value.findIndex((item) => item.id === cert.id)
+    if (index >= 0) certificates.value[index] = response.certificate
+    ui.notify('success', t('tls.vault.renewed'), response.certificate.notAfter)
+  } catch (err) {
+    ui.toastError(err, t('tls.vault.renewFailed'))
+  }
+}
+
 function splitSans(value: string) {
   return value
     .split(/[\n,]+/)
@@ -198,6 +297,7 @@ async function generateCertificate() {
         days: genForm.value.days,
         keyType: genForm.value.keyType,
         keyBits: genForm.value.keyBits,
+        signedBy: genForm.value.signedBy,
       },
     )
     if (!response.ok || !response.certificate) {
@@ -290,6 +390,7 @@ function downloadCertificate(cert: ManagedCertificate) {
 
 onMounted(() => {
   void loadCertificates()
+  void loadCa()
 })
 </script>
 
@@ -455,6 +556,53 @@ onMounted(() => {
       </section>
     </div>
 
+    <section class="card cert-vault tls-ca">
+      <header class="card__head">
+        <div>
+          <span class="eyebrow">{{ t('tls.ca.eyebrow') }}</span>
+          <h3>{{ t('tls.ca.title') }}</h3>
+        </div>
+        <div v-if="canManage" class="card__tools">
+          <button v-if="!ca?.exists" class="button button--sm" @click="caOpen = true; caError = ''">
+            <Icon name="plus" :size="14" />{{ t('tls.ca.create') }}
+          </button>
+          <template v-else>
+            <button class="button button--sm" @click="downloadCa()">
+              <Icon name="download" :size="14" />{{ t('tls.ca.download') }}
+            </button>
+            <button class="button button--sm" :disabled="ca?.expired" @click="openIssue">
+              <Icon name="plus" :size="14" />{{ t('tls.ca.issue') }}
+            </button>
+          </template>
+        </div>
+      </header>
+      <p class="muted cert-vault__lead">{{ t('tls.ca.lead') }}</p>
+      <div v-if="caError" class="inline-alert inline-alert--danger">
+        <Icon name="alert" :size="16" />{{ caError }}
+      </div>
+      <div v-if="caLoading" class="session-empty"><span class="spinner" /></div>
+      <div v-else-if="ca?.exists" class="vault-item">
+        <div class="vault-main">
+          <strong>{{ ca.name || ca.subject }}</strong>
+          <small>
+            {{ ca.subject }} ·
+            {{ ca.expired ? t('tls.ca.expired') : t('tls.result.daysLeft', { count: ca.daysRemaining ?? 0 }) }}
+            <template v-if="ca.notAfter"> · {{ ca.notAfter }}</template>
+          </small>
+          <code class="mono">{{ ca.fingerprintSha256 }}</code>
+        </div>
+        <div class="vault-actions">
+          <span class="status-pill" :class="ca.expired ? 'status-pill--bad' : 'status-pill--ok'">
+            {{ ca.expired ? t('tls.ca.expired') : t('tls.ca.valid') }}
+          </span>
+        </div>
+      </div>
+      <div v-else class="session-empty">
+        <Icon name="lock" :size="20" />
+        <span>{{ t('tls.ca.empty') }}</span>
+      </div>
+    </section>
+
     <section class="card cert-vault">
       <header class="card__head">
         <div>
@@ -487,6 +635,14 @@ onMounted(() => {
             <button class="icon-button icon-button--sm" :title="t('tls.vault.download')" @click="downloadCertificate(cert)">
               <Icon name="download" :size="14" />
             </button>
+            <button
+              v-if="canManage && canRenew(cert)"
+              class="icon-button icon-button--sm"
+              :title="t('tls.vault.renew')"
+              @click="renewCertificate(cert)"
+            >
+              <Icon name="refresh" :size="14" />
+            </button>
             <button v-if="canManage" class="icon-button icon-button--sm icon-button--danger" :title="t('tls.vault.delete')" @click="deleteCertificate(cert)">
               <Icon name="trash" :size="14" />
             </button>
@@ -504,7 +660,7 @@ onMounted(() => {
         <div v-if="generateOpen" class="modal-scrim" @click.self="generateOpen = false">
           <form class="modal-card modal-card--wide" @submit.prevent="generateCertificate">
             <header class="modal-head">
-              <div><span class="eyebrow">{{ t('tls.vault.eyebrow') }}</span><h3>{{ t('tls.generate.title') }}</h3></div>
+              <div><span class="eyebrow">{{ t('tls.vault.eyebrow') }}</span><h3>{{ genForm.signedBy === 'ca' ? t('tls.generate.titleCa') : t('tls.generate.title') }}</h3></div>
               <button type="button" class="icon-button" @click="generateOpen = false"><Icon name="close" :size="18" /></button>
             </header>
             <div class="modal-body">
@@ -514,6 +670,14 @@ onMounted(() => {
               </div>
               <label class="field"><span>{{ t('tls.generate.sans') }}</span><textarea v-model="genForm.sans" class="code-input code-input--short" spellcheck="false" :placeholder="t('tls.generate.sansPlaceholder')" /></label>
               <div class="form-grid">
+                <label class="field">
+                  <span>{{ t('tls.generate.signedBy') }}</span>
+                  <select v-model="genForm.signedBy" class="select">
+                    <option value="self">{{ t('tls.generate.signedBySelf') }}</option>
+                    <option value="ca" :disabled="!ca?.exists">{{ t('tls.generate.signedByCa') }}</option>
+                  </select>
+                  <small v-if="!ca?.exists" class="muted">{{ t('tls.generate.caMissing') }}</small>
+                </label>
                 <label class="field"><span>{{ t('tls.generate.days') }}</span><input v-model.number="genForm.days" type="number" min="1" max="3650" class="mono" /></label>
                 <label class="field"><span>{{ t('tls.generate.keyType') }}</span>
                   <select v-model="genForm.keyType" class="select" @change="genForm.keyBits = genForm.keyType === 'ec' ? 256 : 2048">
@@ -536,12 +700,37 @@ onMounted(() => {
                 </label>
               </div>
               <div v-if="certError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ certError }}</div>
-              <p class="modal-hint">{{ t('tls.generate.hint') }}</p>
+              <p class="modal-hint">{{ genForm.signedBy === 'ca' ? t('tls.generate.caHint') : t('tls.generate.hint') }}</p>
             </div>
             <footer class="modal-foot">
               <button type="button" class="button" @click="generateOpen = false">{{ t('tls.generate.cancel') }}</button>
               <button type="submit" class="button button--primary" :disabled="certBusy">
                 <span v-if="certBusy" class="spinner" /><Icon v-else name="plus" :size="15" />{{ t('tls.generate.action') }}
+              </button>
+            </footer>
+          </form>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="caOpen" class="modal-scrim" @click.self="caOpen = false">
+          <form class="modal-card" @submit.prevent="createCa">
+            <header class="modal-head">
+              <div><span class="eyebrow">{{ t('tls.ca.eyebrow') }}</span><h3>{{ t('tls.ca.createTitle') }}</h3></div>
+              <button type="button" class="icon-button" @click="caOpen = false"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <label class="field"><span>{{ t('tls.ca.commonName') }}</span><input v-model="caForm.commonName" class="mono" /></label>
+              <label class="field"><span>{{ t('tls.ca.days') }}</span><input v-model.number="caForm.days" type="number" min="1" max="7300" class="mono" /></label>
+              <div v-if="caError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ caError }}</div>
+              <p class="modal-hint">{{ t('tls.ca.createHint') }}</p>
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="caOpen = false">{{ t('tls.generate.cancel') }}</button>
+              <button type="submit" class="button button--primary" :disabled="caBusy">
+                <span v-if="caBusy" class="spinner" /><Icon v-else name="lock" :size="15" />{{ t('tls.ca.createAction') }}
               </button>
             </footer>
           </form>

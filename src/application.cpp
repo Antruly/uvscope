@@ -2834,11 +2834,126 @@ void Application::register_certificate_routes() {
                   if (!trim(current).empty()) input.sans.push_back(trim(current));
                 }
               }
+              const std::string signed_by =
+                  lower(string_field(*body, "signedBy", "self"));
+              if (!signed_by.empty() && signed_by != "self" && signed_by != "ca") {
+                send_error(resp, 400, "signedBy must be self or ca", "bad_request");
+                return;
+              }
               std::string error;
-              auto result = certificates_->generate(input, &error);
+              nlohmann::json result;
+              if (signed_by == "ca") {
+                if (!certificates_->ca_exists()) {
+                  send_error(resp, 409, "local CA is not configured", "ca_missing");
+                  return;
+                }
+                if (certificates_->ca_status().value("expired", false)) {
+                  send_error(resp, 409, "local CA has expired", "ca_expired");
+                  return;
+                }
+                result = certificates_->issue(input, &error);
+              } else {
+                result = certificates_->generate(input, &error);
+              }
               if (!result.is_object()) {
                 send_error(resp, 400, error.empty() ? "could not generate certificate" : error,
                            "certificate_failed");
+                return;
+              }
+              send_json(resp, 200, result);
+            });
+
+  app_.get("/api/tls/ca", [this](uvcpp::uvcpp_web_request& req,
+                                 uvcpp::uvcpp_web_response& resp,
+                                 uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tls", "debug");
+    if (!principal) return;
+    if (!certificates_) {
+      send_error(resp, 503, "certificate store is unavailable", "unavailable");
+      return;
+    }
+    send_json(resp, 200, certificates_->ca_status());
+  });
+
+  app_.post("/api/tls/ca", [this](uvcpp::uvcpp_web_request& req,
+                                  uvcpp::uvcpp_web_response& resp,
+                                  uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "tls", "admin.settings");
+    if (!principal) return;
+    if (!certificates_) {
+      send_error(resp, 503, "certificate store is unavailable", "unavailable");
+      return;
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const std::string common_name =
+        string_field(*body, "commonName", "uvscope Local CA");
+    const int days = int_field(*body, "days", 3650);
+    std::string error;
+    auto result = certificates_->create_ca(common_name, days, &error);
+    if (!result.is_object()) {
+      const bool exists = error == "local CA already exists";
+      send_error(resp, exists ? 409 : 400,
+                 error.empty() ? "could not create the local CA" : error,
+                 exists ? "ca_exists" : "ca_failed");
+      return;
+    }
+    send_json(resp, 200, result);
+  });
+
+  app_.get("/api/tls/ca/cert",
+           [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                  uvcpp::uvcpp_web_next) {
+             const auto principal = auth_.require_module(req, resp, "tls", "debug");
+             if (!principal) return;
+             const auto path = certificates_ ? certificates_->ca_cert_path() : std::nullopt;
+             const std::string pem = path ? read_file(*path, 4 * 1024 * 1024)
+                                          : std::string();
+             if (pem.empty()) {
+               send_error(resp, 404, "local CA is not configured", "ca_missing");
+               return;
+             }
+             resp.status(200)
+                 .set_header("Cache-Control", "no-store")
+                 .set_header("Content-Type", "application/x-pem-file")
+                 .set_header("Content-Disposition",
+                             "attachment; filename=\"uvscope-local-ca.pem\"")
+                 .body(pem);
+             resp.end();
+           });
+
+  app_.post("/api/tls/certificates/:id/renew",
+            [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                   uvcpp::uvcpp_web_next) {
+              const auto principal =
+                  auth_.require_module(req, resp, "tls", "admin.settings");
+              if (!principal) return;
+              const std::string* id = req.param("id");
+              if (!id || !certificates_) {
+                send_error(resp, 404, "certificate not found", "not_found");
+                return;
+              }
+              const auto body = parse_json(req, resp);
+              if (!body) return;
+              const int days = int_field(*body, "days", 365);
+              std::string error;
+              auto result = certificates_->renew(*id, days, &error);
+              if (!result.is_object()) {
+                std::string code = "renew_failed";
+                int status = 400;
+                if (error == "certificate not found") {
+                  status = 404;
+                  code = "not_found";
+                } else if (error == "imported certificates cannot be renewed") {
+                  status = 409;
+                  code = "not_renewable";
+                } else if (error == "local CA is not configured" ||
+                           error == "local CA has expired") {
+                  status = 409;
+                  code = error == "local CA has expired" ? "ca_expired" : "ca_missing";
+                }
+                send_error(resp, status,
+                           error.empty() ? "could not renew the certificate" : error, code);
                 return;
               }
               send_json(resp, 200, result);
@@ -3773,6 +3888,44 @@ int Application::self_check() {
     store.close();
   } else {
     check(false, "SQLite database opens");
+  }
+
+  // Local CA lifecycle: create the root, issue a server certificate signed by
+  // it (leaf + root bundle) and renew it in place.
+  CertificateManager certificates(temp / "certs");
+  check(!certificates.ca_exists(), "fresh vault has no local CA");
+  error.clear();
+  auto ca = certificates.create_ca("self-check CA", 365, &error);
+  check(ca.is_object() && ca.value("ok", false), "local CA created");
+  check(certificates.ca_exists(), "local CA files exist");
+  GenerateCertificateInput issued_input;
+  issued_input.name = "self-check leaf";
+  issued_input.common_name = "localhost";
+  issued_input.sans = {"localhost", "127.0.0.1"};
+  issued_input.days = 30;
+  error.clear();
+  auto issued = certificates.issue(issued_input, &error);
+  check(issued.is_object(), "CA-signed certificate issued");
+  if (issued.is_object()) {
+    const auto meta = issued.value("certificate", nlohmann::json::object());
+    check(meta.value("source", std::string()) == "ca",
+          "issued certificate records the CA source");
+    const std::string issued_id = meta.value("id", std::string());
+    const auto detail = certificates.get(issued_id);
+    const auto parsed =
+        detail.value("certificate", nlohmann::json::object())
+            .value("certificate", nlohmann::json::object());
+    check(parsed.value("certificateCount", 0) >= 2,
+          "issued bundle contains the leaf and the CA");
+    error.clear();
+    auto renewed = certificates.renew(issued_id, 60, &error);
+    check(renewed.is_object() &&
+              renewed["certificate"].value("renewCount", 0) == 1,
+          "certificate renewal updates the record");
+    check(renewed.is_object() &&
+              renewed["certificate"].value("keyPath", std::string()) ==
+                  meta.value("keyPath", std::string()),
+          "renewal keeps the certificate paths");
   }
 
   uvcpp::uvcpp_web_app local;
