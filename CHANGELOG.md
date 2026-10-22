@@ -25,6 +25,15 @@ All notable changes to uvscope are documented here. The format is based on
   handshake has already been sent. Upgrade log entries record `action: "upgrade"`, `status: 101`,
   the chosen upstream and the matched rule. The smoke test routes an upgrade through a redirect
   rule, a header-gated rewrite rule and a dead upstream to prove the behavior.
+- Large downloads are resumable. A failed transfer keeps its partial file and reports
+  `resumable: true`; `POST /api/http/download/:id/resume` continues from the staged byte count
+  with `Range: bytes=N-`, validates the `206 Content-Range`, and appends the remainder. If the
+  upstream ignores Range with `200`, the file is truncated and fetched again; `416` and other
+  errors keep the partial data. Transfers that end short of the declared `Content-Length` now
+  become errors instead of false `ready` results. Snapshots add `attempts`, and the HTTP Studio
+  offers Resume and Dismiss actions for a failed download. `/download/:id` serves completed
+  files as 200 regardless of the last upstream status. The smoke test drops a 256 KiB response
+  after 64 KiB, resumes it, and compares the final bytes with the source payload.
 
 ## [0.7.0] - 2026-10-22
 

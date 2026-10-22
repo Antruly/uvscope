@@ -268,7 +268,9 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 - HTTP/2 works over TLS (ALPN `h2`, stream IDs, GOAWAY and frame summaries); the runtime matrix
   still needs Windows and macOS coverage. HTTP/3/QUIC stay closed in release builds.
 - Preview and probes still cap bodies at 4 MiB; larger responses can be streamed to a staging
-  file and downloaded (512 MiB cap, HTTP/1.1, attachment-only).
+  file and downloaded (512 MiB cap, HTTP/1.1, attachment-only). A failed transfer keeps its
+  partial file and resumes in place with `Range`; a short body against a known `Content-Length`
+  is treated as an error rather than a ready file.
 - Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
 - WebSocket upgrades use the same routing conditions/rewrites and health-filtered weighted
   upstream selection as HTTP. Redirect rules are skipped after the 101 handshake, relayed frames

@@ -191,6 +191,8 @@ export interface HttpDownload {
   bytes: number
   totalBytes: number
   statusCode?: number
+  resumable?: boolean
+  attempts?: number
 }
 
 export interface HttpResult {

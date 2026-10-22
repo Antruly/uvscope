@@ -161,13 +161,27 @@ stored as received). It returns immediately:
 }}
 ```
 
-Poll `GET /api/http/download/:id` for `state` (`running`, `ready`, `error`, `cancelled`) and the
-byte counters. When `ready`, `GET /download/:id` serves the file with
-`Content-Disposition: attachment`, `Content-Length` and byte-range support. The URL is public by
-unguessable token, but the file is always sent as `application/octet-stream` so target HTML can
-never execute on the uvscope origin. Jobs belong to their creator (admins see all), are capped
-at 512 MiB, can be cancelled with `DELETE /api/http/download/:id`, and are pruned 10 minutes
-after they finish. Staged files do not survive a daemon restart.
+Poll `GET /api/http/download/:id` for `state` (`running`, `ready`, `error`, `cancelled`), the
+byte counters, `resumable` and `attempts`. When `ready`, `GET /download/:id` serves the file as
+HTTP 200 with `Content-Disposition: attachment`, `Content-Length` and byte-range support. The URL
+is public by unguessable token, but the file is always sent as `application/octet-stream` so
+target HTML can never execute on the uvscope origin.
+
+An errored transfer keeps its partial file; `resumable` is true when `state` is `error` and
+`bytes > 0`. `POST /api/http/download/:id/resume` continues the same job (no body required) with
+`Range: bytes=<bytes>-`:
+
+- a `206` response must carry a matching `Content-Range`; the remaining bytes are appended and
+  `totalBytes` is taken from the range header;
+- a `200` response means the upstream ignored Range, so the staged file is truncated and the
+  transfer restarts from zero;
+- `416`, another 4xx/5xx, or a malformed `Content-Range` leaves the job in `error` with the
+  partial bytes intact.
+
+A transfer that ends before the declared `Content-Length` is an error, not `ready`. `attempts`
+starts at 1 and increments on each resume. Jobs belong to their creator (admins see all), are
+capped at 512 MiB, can be cancelled with `DELETE /api/http/download/:id`, and are pruned
+10 minutes after they finish. Staged files and resumable jobs do not survive a daemon restart.
 
 ### QUIC (experimental)
 

@@ -71,6 +71,29 @@ std::string safe_filename(std::string value) {
   return out;
 }
 
+// Parses "bytes START-END/TOTAL" (TOTAL may be "*"). Returns false for a
+// malformed or non-byte unit.
+bool parse_content_range(const std::string& value, std::int64_t* start,
+                         std::int64_t* end, std::int64_t* total) {
+  const std::string text = lower(trim(value));
+  if (text.rfind("bytes ", 0) != 0) return false;
+  const std::size_t dash = text.find('-', 6);
+  const std::size_t slash = text.find('/', dash == std::string::npos ? 6 : dash + 1);
+  if (dash == std::string::npos || slash == std::string::npos) return false;
+  try {
+    const std::string start_text = trim(text.substr(6, dash - 6));
+    const std::string end_text = trim(text.substr(dash + 1, slash - dash - 1));
+    const std::string total_text = trim(text.substr(slash + 1));
+    if (start_text.empty() || end_text.empty() || total_text.empty()) return false;
+    *start = std::stoll(start_text);
+    *end = std::stoll(end_text);
+    *total = total_text == "*" ? -1 : std::stoll(total_text);
+  } catch (...) {
+    return false;
+  }
+  return *start >= 0 && *end >= *start;
+}
+
 std::string disposition_filename(const std::string& value) {
   const std::string key = "filename=";
   const std::size_t at = lower(value).find(key);
@@ -105,6 +128,8 @@ struct DownloadManager::Job {
   int status_code = 0;
   std::int64_t bytes = 0;
   std::int64_t total = -1;
+  int attempts = 0;
+  HttpProbeInput input;
   std::chrono::steady_clock::time_point finished_wall;
 
   std::atomic<bool> cancel_requested{false};
@@ -123,11 +148,11 @@ struct RunState {
   std::string error;
 };
 
-FILE* open_temp_file(const std::filesystem::path& path) {
+FILE* open_temp_file(const std::filesystem::path& path, bool append) {
 #if defined(_WIN32)
-  return _wfopen(path.wstring().c_str(), L"wb");
+  return _wfopen(path.wstring().c_str(), append ? L"ab" : L"wb");
 #else
-  return std::fopen(path.c_str(), "wb");
+  return std::fopen(path.c_str(), append ? "ab" : "wb");
 #endif
 }
 
@@ -171,11 +196,18 @@ void on_timeout(uv_timer_t* timer) {
   state->client->stop();
 }
 
-void run_job(std::shared_ptr<DownloadManager::Job> job, const HttpProbeInput& input) {
+void run_job(std::shared_ptr<DownloadManager::Job> job, std::int64_t resume_from) {
+  const HttpProbeInput& input = job->input;
+  const bool resuming = resume_from > 0;
   RunState state;
   state.job = job;
   state.client.reset(new uvcpp::uvcpp_http_client());
   uvcpp::uvcpp_http_client& client = *state.client;
+  {
+    std::lock_guard<std::mutex> lock(job->mutex);
+    job->bytes = resume_from;
+    job->status_code = 0;
+  }
 
   const ParsedUrl url = parse_url(job->url);
   if (!url.valid || (url.scheme != "http" && url.scheme != "https")) {
@@ -195,6 +227,8 @@ void run_job(std::shared_ptr<DownloadManager::Job> job, const HttpProbeInput& in
     if (name == "content-length" || name == "connection" || name == "transfer-encoding") {
       continue;
     }
+    // A resume owns the Range header; stale user ranges would conflict.
+    if (resuming && (name == "range" || name == "if-range")) continue;
     if (name == "host") has_host = true;
     if (name == "user-agent") has_ua = true;
     req.set_header(header.name, header.value);
@@ -205,6 +239,9 @@ void run_job(std::shared_ptr<DownloadManager::Job> job, const HttpProbeInput& in
                                : url.host + ":" + std::to_string(url.port));
   }
   if (!has_ua) req.set_header("user-agent", default_user_agent());
+  if (resuming) {
+    req.set_header("range", "bytes=" + std::to_string(resume_from) + "-");
+  }
   req.body.clone_data(input.body.data(), input.body.size());
 
   uvcpp::uvcpp_ssl_context ssl(uvcpp::tls_mode::CLIENT, uvcpp::tls_version::TLS_1_2);
@@ -229,7 +266,7 @@ void run_job(std::shared_ptr<DownloadManager::Job> job, const HttpProbeInput& in
     }
   }
 
-  state.file = open_temp_file(job->file_path);
+  state.file = open_temp_file(job->file_path, resuming);
   if (state.file == nullptr) {
     set_terminal(job, "error", "could not create the download file");
     return;
@@ -265,7 +302,8 @@ void run_job(std::shared_ptr<DownloadManager::Job> job, const HttpProbeInput& in
   }
 
   const int connect_rc = client.connect(
-      url.host.c_str(), url.port, [&state, &client, &req](int status) {
+      url.host.c_str(), url.port,
+      [&state, &client, &req, resuming, resume_from](int status) {
         if (status != 0) {
           fail(&state, "connect failed: " + uv_error_string(status));
           client.stop();
@@ -273,25 +311,77 @@ void run_job(std::shared_ptr<DownloadManager::Job> job, const HttpProbeInput& in
         }
         const int rc = client.send_stream(
             req,
-            [&state](const uvcpp::uvcpp_http_response& head) {
-              std::lock_guard<std::mutex> lock(state.job->mutex);
-              state.job->status_code = static_cast<int>(head.status_code);
-              const std::string type =
-                  uvcpp::http_get_header(head.headers, "content-type");
-              if (!type.empty()) state.job->content_type = type;
-              const std::string disposition =
-                  uvcpp::http_get_header(head.headers, "content-disposition");
-              const std::string named = disposition_filename(disposition);
-              if (!named.empty()) state.job->filename = named;
-              const std::string length =
-                  uvcpp::http_get_header(head.headers, "content-length");
-              if (!length.empty()) {
-                try {
-                  state.job->total = std::stoll(length);
-                } catch (...) {
-                  state.job->total = -1;
+            [&state, resuming, resume_from](
+                const uvcpp::uvcpp_http_response& head) {
+              bool restart_from_zero = false;
+              std::string range_error;
+              {
+                const int status_code = static_cast<int>(head.status_code);
+                std::lock_guard<std::mutex> lock(state.job->mutex);
+                state.job->status_code = status_code;
+                const std::string type =
+                    uvcpp::http_get_header(head.headers, "content-type");
+                if (!type.empty()) state.job->content_type = type;
+                const std::string disposition =
+                    uvcpp::http_get_header(head.headers, "content-disposition");
+                const std::string named = disposition_filename(disposition);
+                if (!named.empty()) state.job->filename = named;
+                const std::string length =
+                    uvcpp::http_get_header(head.headers, "content-length");
+                std::int64_t content_length = -1;
+                if (!length.empty()) {
+                  try {
+                    content_length = std::stoll(length);
+                  } catch (...) {
+                    content_length = -1;
+                  }
+                }
+                if (!resuming) {
+                  if (content_length >= 0) state.job->total = content_length;
+                } else if (status_code == 206) {
+                  std::int64_t start = -1;
+                  std::int64_t end = -1;
+                  std::int64_t total = -1;
+                  const std::string range =
+                      uvcpp::http_get_header(head.headers, "content-range");
+                  if (!parse_content_range(range, &start, &end, &total) ||
+                      start != resume_from) {
+                    range_error =
+                        "server returned an invalid Content-Range for the resume";
+                  } else {
+                    state.job->total = total;
+                  }
+                } else if (status_code == 200) {
+                  // The server ignored Range: keep the response but restart
+                  // from byte zero so the staged file stays consistent.
+                  restart_from_zero = true;
+                  state.job->total = content_length;
+                } else if (status_code == 416) {
+                  range_error = "server cannot resume from byte " +
+                                std::to_string(resume_from);
+                } else if (status_code >= 400) {
+                  range_error = "upstream returned status " +
+                                std::to_string(status_code);
+                } else {
+                  range_error = "unexpected status for a ranged resume: " +
+                                std::to_string(status_code);
                 }
               }
+              if (restart_from_zero) {
+                if (state.file != nullptr) {
+                  std::fflush(state.file);
+                  std::fclose(state.file);
+                  state.file = nullptr;
+                }
+                state.file = open_temp_file(state.job->file_path, false);
+                if (state.file == nullptr) {
+                  fail(&state, "could not restart the download file");
+                  return;
+                }
+                std::lock_guard<std::mutex> lock(state.job->mutex);
+                state.job->bytes = 0;
+              }
+              if (!range_error.empty()) fail(&state, range_error);
             },
             [&state](const char* data, std::size_t len) -> bool {
               if (state.job->cancel_requested.load()) {
@@ -362,6 +452,7 @@ void run_job(std::shared_ptr<DownloadManager::Job> job, const HttpProbeInput& in
 
   std::string state_out = "ready";
   std::string error;
+  bool keep_partial = false;
   {
     std::lock_guard<std::mutex> lock(job->mutex);
     if (job->state != "running") {
@@ -370,13 +461,21 @@ void run_job(std::shared_ptr<DownloadManager::Job> job, const HttpProbeInput& in
     } else if (state.failed || !state.ended) {
       state_out = "error";
       error = state.error.empty() ? "download did not complete" : state.error;
+    } else if (job->total >= 0 && job->bytes != job->total) {
+      // A clean socket close can still be short when Content-Length is known.
+      state_out = "error";
+      error = "download ended early (" + std::to_string(job->bytes) + " of " +
+              std::to_string(job->total) + " bytes)";
     }
     job->state = state_out;
     job->error = error;
     job->finished_at = now_iso8601();
     job->finished_wall = std::chrono::steady_clock::now();
+    keep_partial = job->bytes > 0;
   }
-  if (state_out != "ready") {
+  // Keep partial data so an errored or cancelled job can be resumed; complete
+  // and empty results have nothing worth retaining.
+  if (state_out != "ready" && !keep_partial) {
     std::error_code ec;
     std::filesystem::remove(job->file_path, ec);
   }
@@ -460,6 +559,8 @@ std::string DownloadManager::start(const HttpProbeInput& input,
   job->owner_id = owner_id;
   job->file_path = dir_ / (job->id + ".bin");
   job->started_at = now_iso8601();
+  job->input = input;
+  job->attempts = 1;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     prune_locked();
@@ -479,8 +580,66 @@ std::string DownloadManager::start(const HttpProbeInput& input,
     }
     jobs_[job->id] = job;
   }
-  job->thread = std::thread(run_job, job, input);
+  job->thread = std::thread(run_job, job, 0);
   return job->id;
+}
+
+bool DownloadManager::resume(const std::string& id, std::int64_t owner_id,
+                             bool is_admin, std::string* error) {
+  std::shared_ptr<Job> job;
+  std::int64_t resume_from = 0;
+  bool start_thread = true;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    job = find(id);
+    if (!job || (!is_admin && job->owner_id != owner_id)) {
+      if (error) *error = "download not found";
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> item_lock(job->mutex);
+      if (job->state == "running") {
+        if (error) *error = "download is still running";
+        return false;
+      }
+      if (job->state != "error") {
+        if (error) *error = "download is not in an error state";
+        return false;
+      }
+      std::error_code ec;
+      const auto size = std::filesystem::file_size(job->file_path, ec);
+      if (ec) {
+        if (error) *error = "partial download file is missing";
+        return false;
+      }
+      resume_from = static_cast<std::int64_t>(size);
+      if (resume_from <= 0) {
+        if (error) *error = "download has no partial data to resume";
+        return false;
+      }
+      job->bytes = resume_from;
+      if (job->total >= 0 && resume_from >= job->total) {
+        // The bytes already on disk are the whole response.
+        job->state = "ready";
+        job->error.clear();
+        job->finished_at = now_iso8601();
+        job->finished_wall = std::chrono::steady_clock::now();
+        start_thread = false;
+      } else {
+        job->state = "running";
+        job->error.clear();
+        job->finished_at.clear();
+        job->finished_wall = {};
+        job->status_code = 0;
+        job->attempts += 1;
+        job->cancel_requested.store(false);
+      }
+    }
+  }
+  if (!start_thread) return true;
+  if (job->thread.joinable()) job->thread.join();
+  job->thread = std::thread(run_job, job, resume_from);
+  return true;
 }
 
 bool DownloadManager::snapshot(const std::string& id, std::int64_t owner_id,
@@ -503,6 +662,8 @@ bool DownloadManager::snapshot(const std::string& id, std::int64_t owner_id,
     out->bytes = job->bytes;
     out->totalBytes = job->total;
     out->statusCode = job->status_code;
+    out->resumable = job->state == "error" && job->bytes > 0;
+    out->attempts = job->attempts;
   }
   return true;
 }
@@ -566,6 +727,8 @@ std::optional<DownloadSnapshot> DownloadManager::file(const std::string& id) {
   out.bytes = job->bytes;
   out.totalBytes = job->total;
   out.statusCode = job->status_code;
+  out.resumable = job->state == "error" && job->bytes > 0;
+  out.attempts = job->attempts;
   return out;
 }
 
@@ -580,7 +743,9 @@ nlohmann::json download_json(const DownloadSnapshot& snapshot) {
           {"finishedAt", snapshot.finishedAt},
           {"bytes", snapshot.bytes},
           {"totalBytes", snapshot.totalBytes},
-          {"statusCode", snapshot.statusCode}};
+          {"statusCode", snapshot.statusCode},
+          {"resumable", snapshot.resumable},
+          {"attempts", snapshot.attempts}};
 }
 
 }  // namespace uvscope

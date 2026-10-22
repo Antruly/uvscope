@@ -1275,6 +1275,28 @@ void Application::register_debug_routes() {
     send_json(resp, 200, {{"ok", true}});
   });
 
+  app_.post("/api/http/download/:id/resume",
+            [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                   uvcpp::uvcpp_web_next) {
+              const auto principal = auth_.require_module(req, resp, "http", "debug");
+              if (!principal) return;
+              const std::string* id = req.param("id");
+              std::string error;
+              if (!id || !downloads_ ||
+                  !downloads_->resume(*id, principal->user.id,
+                                      principal->user.role == "admin", &error)) {
+                const bool missing = !id || !downloads_ || error == "download not found";
+                send_error(resp, missing ? 404 : 409,
+                           error.empty() ? "download not found" : error,
+                           missing ? "not_found" : "not_resumable");
+                return;
+              }
+              DownloadSnapshot snapshot;
+              downloads_->snapshot(*id, principal->user.id,
+                                   principal->user.role == "admin", &snapshot);
+              send_json(resp, 200, {{"ok", true}, {"download", download_json(snapshot)}});
+            });
+
   // Public by unguessable token, like /preview/:id. Always an attachment with
   // a generic content type: serving target HTML inline on the uvscope origin
   // would let it run with the workbench's cookies.
@@ -1288,9 +1310,9 @@ void Application::register_debug_routes() {
       resp.end();
       return;
     }
-    const int status =
-        file->statusCode >= 200 && file->statusCode <= 599 ? file->statusCode : 200;
-    resp.status(status)
+    // The staged file is complete; a resumed transfer may have last seen 206,
+    // but serving the whole file is a normal 200.
+    resp.status(200)
         .set_header("content-type", "application/octet-stream")
         .set_header("content-disposition",
                     "attachment; filename=\"" + file->filename + "\"")

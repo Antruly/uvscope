@@ -49,7 +49,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [~] Raw QUIC client probe and echo server (streams/datagrams; experimental build)
 - [x] Compression decoding: gzip / deflate / brotli with a raw-body toggle
 - [x] Large-response streaming download (512 MiB cap, progress, cancel)
-- [ ] Multipart upload and Range download
+- [x] Multipart upload and resumable Range downloads
 - [x] Live peer certificate chain inspection
 - [x] Backend WebSocket sessions (daemon-side connect, headers, ping/pong, close codes, frames)
 - [ ] WebSocket backend relay / pass-through mode

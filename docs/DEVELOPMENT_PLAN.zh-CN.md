@@ -477,6 +477,34 @@ smoke 新增 `WS_ROUTE_PORT`：同时配置 redirect、带 Header 条件的 rewr
 
 不做：升级阶段重试、逐帧日志、握手前 redirect 分流。
 
+### S9 — 大响应断点续传（已实现）
+
+边界：`src/download_manager.*`、`/api/http/download/:id/resume`、HTTP Studio 下载按钮、
+`docs/API.md`、smoke。
+
+内容：
+
+- 失败/取消时保留暂存文件，快照增加 `resumable` 与 `attempts`；
+- `POST /api/http/download/:id/resume` 按已落盘字节发 `Range: bytes=N-` 续传；
+- 仅接受起始位置匹配的 `206 Content-Range`；服务端返回 `200` 时截断重下；`416`/4xx/5xx
+  保持错误状态并保留已有字节；
+- 已知 `Content-Length` 但提前结束的传输标记为 `error`，不再误报 `ready`；
+- `/download/:id` 对完整暂存文件统一返回 200；
+- 前端对可续传的失败任务显示 Resume / Dismiss。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 内嵌 Range 服务器：首个响应 64 KiB 后断开，断言任务进入 `error`、`resumable=true`，
+续传后 `attempts=2`、字节数与源数据一致。
+
+不做：跨守护进程重启的续传、自动重试调度、分片并行下载。
+
 ---
 
 ### 风险与回退（本迭代）

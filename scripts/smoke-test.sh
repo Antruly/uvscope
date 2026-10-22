@@ -593,6 +593,7 @@ SOCKS5_UDP_TARGET_PORT="${SOCKS5_UDP_TARGET_PORT}" TCP_PORT="${TCP_PORT}" python
 import base64
 import hashlib
 import http.cookiejar
+import http.server
 import json
 import os
 import shutil
@@ -600,8 +601,10 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 base = os.environ["BASE"]
@@ -625,6 +628,60 @@ def call(method, path, body=None):
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as error:
         return error.code, json.loads(error.read())
+
+
+# In-process HTTP server for the resumable-download test. The first response
+# stops after 64 KiB; later requests honor Range so the job can continue.
+RESUME_SIZE = 256 * 1024
+RESUME_PAYLOAD = bytes((i * 7 + 11) % 256 for i in range(RESUME_SIZE))
+
+
+class ResumeHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    dropped = False
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        drop = urllib.parse.parse_qs(parsed.query).get("drop", ["0"])[0] == "1"
+        range_header = self.headers.get("Range", "")
+        if drop and not ResumeHandler.dropped:
+            ResumeHandler.dropped = True
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(RESUME_SIZE))
+            self.end_headers()
+            self.wfile.write(RESUME_PAYLOAD[:64 * 1024])
+            self.wfile.flush()
+            self.close_connection = True
+            return
+        if range_header.startswith("bytes="):
+            try:
+                start = int(range_header[6:].split("-")[0])
+            except ValueError:
+                start = 0
+            start = max(0, min(start, RESUME_SIZE - 1))
+            body = RESUME_PAYLOAD[start:]
+            self.send_response(206)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Range",
+                             f"bytes {start}-{RESUME_SIZE - 1}/{RESUME_SIZE}")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(RESUME_SIZE))
+        self.end_headers()
+        self.wfile.write(RESUME_PAYLOAD)
+
+
+resume_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ResumeHandler)
+resume_port = resume_server.server_address[1]
+threading.Thread(target=resume_server.serve_forever, daemon=True).start()
 
 
 def wait_listener(listener_id, state="listening", timeout=5):
@@ -1178,6 +1235,55 @@ if os.environ.get("COMP_READY") == "1":
         check(False, "deleted download is still reachable")
     except urllib.error.HTTPError as error:
         check(error.code == 404, f"deleted download returned {error.code}")
+
+# Resumable download: the first response stops after 64 KiB, the job keeps the
+# partial file, and resume fetches the remainder with Range (206).
+status, created = call("POST", "/api/http/download", {
+    "url": f"http://127.0.0.1:{resume_port}/file?drop=1",
+    "method": "GET", "headers": [], "body": "", "timeoutMs": 2000,
+})
+resume_download = created.get("download", {})
+resume_id = resume_download.get("id", "")
+check(status == 200 and bool(resume_id),
+      f"resumable download start failed: {created}")
+state = resume_download
+for _ in range(150):
+    status, payload = call("GET", f"/api/http/download/{resume_id}")
+    state = payload.get("download", {})
+    if state.get("state") != "running":
+        break
+    time.sleep(0.1)
+check(state.get("state") == "error",
+      f"dropped download did not end in the error state: {state}")
+check(0 < state.get("bytes", 0) < RESUME_SIZE,
+      f"dropped download retained unexpected bytes: {state}")
+check(state.get("resumable") is True,
+      f"errored download is not marked resumable: {state}")
+status, resumed = call(
+    "POST", f"/api/http/download/{resume_id}/resume")
+check(status == 200 and resumed.get("ok") is True,
+      f"download resume failed: {resumed}")
+state = resumed.get("download", {})
+for _ in range(150):
+    status, payload = call("GET", f"/api/http/download/{resume_id}")
+    state = payload.get("download", {})
+    if state.get("state") != "running":
+        break
+    time.sleep(0.1)
+check(state.get("state") == "ready",
+      f"resumed download did not finish: {state}")
+check(state.get("attempts") == 2,
+      f"resume attempt count is wrong: {state}")
+check(state.get("bytes") == RESUME_SIZE and
+      state.get("totalBytes") == RESUME_SIZE,
+      f"resumed download size is wrong: {state}")
+with opener.open(base + f"/download/{resume_id}", timeout=30) as stream:
+    resumed_body = stream.read()
+check(resumed_body == RESUME_PAYLOAD,
+      "resumed download bytes differ from the upstream payload")
+status, deleted = call("DELETE", f"/api/http/download/{resume_id}")
+check(status == 200 and deleted.get("ok") is True,
+      f"resumed download delete failed: {deleted}")
 
 if os.environ.get("WS_PORT"):
     ws_url = "ws://127.0.0.1:" + os.environ["WS_PORT"] + "/echo"

@@ -1237,6 +1237,25 @@ async function cancelDownload() {
   })
 }
 
+async function resumeDownload() {
+  const id = downloadState.value?.id
+  if (!id || downloading.value) return
+  downloading.value = true
+  try {
+    const response = await post<{ ok: boolean; error?: string; download?: HttpDownload }>(
+      `/api/http/download/${id}/resume`,
+    )
+    if (!response.ok || !response.download) {
+      throw new Error(response.error || t('http.download.resumeFailed'))
+    }
+    downloadState.value = response.download
+    pollDownload(id)
+  } catch (err) {
+    downloading.value = false
+    ui.toastError(err, t('http.download.resumeFailed'))
+  }
+}
+
 async function loadHistory() {
   historyLoading.value = true
   try {
@@ -1538,6 +1557,8 @@ onBeforeUnmount(() => {
                     : t('http.download.progress', { bytes: formatBytes(downloadState?.bytes ?? 0) }) }}
                 </span>
                 <button v-if="downloading" class="icon-button icon-button--sm" :title="t('http.download.cancel')" @click="cancelDownload"><Icon name="close" :size="14" /></button>
+                <button v-if="!downloading && downloadState?.state === 'error' && downloadState.resumable" class="icon-button icon-button--sm" :title="t('http.download.resume')" @click="resumeDownload"><Icon name="refresh" :size="14" /></button>
+                <button v-if="!downloading && downloadState && downloadState.state !== 'running'" class="icon-button icon-button--sm" :title="t('http.download.dismiss')" @click="downloadState = null"><Icon name="close" :size="14" /></button>
               </template>
             </div>
           </header>

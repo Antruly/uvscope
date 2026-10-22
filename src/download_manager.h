@@ -28,6 +28,9 @@ struct DownloadSnapshot {
   std::int64_t bytes = 0;
   std::int64_t totalBytes = -1;
   int statusCode = 0;
+  // True when an errored job kept its partial file and can be resumed.
+  bool resumable = false;
+  int attempts = 0;
 };
 
 // Streams an upstream response to a temporary file on its own thread, then
@@ -46,6 +49,10 @@ class DownloadManager {
 
   std::string start(const HttpProbeInput& input, std::int64_t owner_id,
                     std::string* error);
+  // Continue an errored job from its retained partial file with a Range
+  // request. The job id, owner and staged file stay the same.
+  bool resume(const std::string& id, std::int64_t owner_id, bool is_admin,
+              std::string* error);
   bool snapshot(const std::string& id, std::int64_t owner_id, bool is_admin,
                 DownloadSnapshot* out) const;
   bool cancel(const std::string& id, std::int64_t owner_id, bool is_admin,
