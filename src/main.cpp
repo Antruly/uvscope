@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 
@@ -8,6 +9,7 @@
 #endif
 
 #include "application.h"
+#include "ipc.h"
 #include "util.h"
 #include "version.h"
 
@@ -50,6 +52,11 @@ int main(int argc, char** argv) {
   uvscope::AppOptions options;
   options.data_dir = uvscope::default_data_dir();
   options.web_root = uvscope::default_web_root(uvscope::executable_dir(argv[0]));
+  std::error_code self_path_error;
+  options.self_path =
+      std::filesystem::absolute(argv[0], self_path_error).string();
+  if (self_path_error) options.self_path = argv[0];
+  std::string ipc_child_endpoint;
   bool show_help = false;
 
   for (int i = 1; i < argc; ++i) {
@@ -81,6 +88,8 @@ int main(int argc, char** argv) {
       options.open_browser = true;
     } else if (arg == "--self-check") {
       options.self_check = true;
+    } else if (arg == "--ipc-child") {
+      ipc_child_endpoint = require_value("--ipc-child");
     } else if (arg == "--version" || arg == "-v") {
       std::printf("uvscope %s\n", UVSCOPE_VERSION);
       return 0;
@@ -96,6 +105,9 @@ int main(int argc, char** argv) {
   if (show_help) {
     print_help();
     return 0;
+  }
+  if (!ipc_child_endpoint.empty()) {
+    return uvscope::run_ipc_child(ipc_child_endpoint);
   }
 
   uvscope::Application app(std::move(options));

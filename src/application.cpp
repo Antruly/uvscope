@@ -30,6 +30,7 @@
 #include "certificate.h"
 #include "crypto.h"
 #include "http_probe.h"
+#include "ipc.h"
 #include "net_probe.h"
 #include "tls_probe.h"
 #include "util.h"
@@ -3994,6 +3995,20 @@ int Application::self_check() {
                   meta.value("keyPath", std::string()),
           "renewal keeps the certificate paths");
   }
+
+  // Length-prefixed JSON IPC over a pipe, including spawn and clean shutdown.
+  std::string self_path = options_.self_path;
+  if (self_path.empty()) {
+    const auto dir = executable_dir(nullptr);
+#if defined(_WIN32)
+    self_path = (dir / "uvscope.exe").string();
+#else
+    self_path = (dir / "uvscope").string();
+#endif
+  }
+  std::string ipc_error;
+  check(run_ipc_self_check(self_path, &ipc_error), "IPC child ping/pong");
+  if (!ipc_error.empty()) std::printf("    %s\n", ipc_error.c_str());
 
   uvcpp::uvcpp_web_app local;
   local.set_host("127.0.0.1").set_port(0).set_access_log(false);
