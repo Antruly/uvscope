@@ -76,6 +76,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Proxy config hot reload with runtime config versioning
 - [x] Per-upstream circuit breaker with half-open recovery
 - [~] Length-prefixed JSON IPC channel and child-process self-check (foundation)
+- [~] Reverse-proxy child runtime with IPC start/stop/snapshot/logs
 - [ ] Process isolation + IPC for long-lived services
 
 ## 1.0 — stable

@@ -1267,7 +1267,9 @@ struct ProxyManager::Runtime {
   }
 };
 
-ProxyManager::ProxyManager(Store& store) : store_(store) { auto_start(); }
+ProxyManager::ProxyManager(Store& store, bool auto_start) : store_(store) {
+  if (auto_start) this->auto_start();
+}
 
 ProxyManager::~ProxyManager() { stop_all(); }
 
@@ -1302,6 +1304,11 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
     if (error) *error = "proxy not found";
     return false;
   }
+  return start_config(*config, error);
+}
+
+bool ProxyManager::start_config(const ProxyConfig& config, std::string* error) {
+  const std::string& id = config.id;
   std::shared_ptr<Runtime> runtime;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1315,7 +1322,7 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
       runtime = std::make_shared<Runtime>();
       {
         std::lock_guard<std::mutex> cfg_lock(runtime->config_mutex);
-        runtime->config = *config;
+        runtime->config = config;
       }
       runtimes_.push_back(runtime);
     } else if (runtime->running.load()) {
@@ -1324,7 +1331,7 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
     } else {
       {
         std::lock_guard<std::mutex> cfg_lock(runtime->config_mutex);
-        runtime->config = *config;
+        runtime->config = config;
       }
       runtime->last_error.clear();
     }
@@ -1338,13 +1345,13 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
   }
 
   auto app = std::unique_ptr<uvcpp::uvcpp_web_app>(new uvcpp::uvcpp_web_app());
-  app->set_host(config->listen_host)
-      .set_port(config->listen_port)
+  app->set_host(config.listen_host)
+      .set_port(config.listen_port)
       .set_access_log(false)
       .set_shutdown_grace_ms(500)
       .set_http2_enabled(false);
-  if (config->tls) {
-    if (config->cert_path.empty() || config->key_path.empty()) {
+  if (config.tls) {
+    if (config.cert_path.empty() || config.key_path.empty()) {
       const std::string detail = "TLS proxy requires a certificate and private key path";
       runtime->last_error = detail;
       runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
@@ -1352,7 +1359,7 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
       if (error) *error = detail;
       return false;
     }
-    app->enable_ssl(config->cert_path, config->key_path);
+    app->enable_ssl(config.cert_path, config.key_path);
     if (!app->ssl_error().empty()) {
       const std::string detail = "failed to load TLS certificate: " + app->ssl_error();
       runtime->last_error = detail;
@@ -1377,7 +1384,7 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
   const int rc = app->start();
   if (rc != 0) {
     const std::string detail = "bind/listen failed: " + uv_error_string(rc) + " on " +
-                               config->listen_host + ":" + std::to_string(config->listen_port);
+                               config.listen_host + ":" + std::to_string(config.listen_port);
     runtime->last_error = detail;
     if (error) *error = detail;
     runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
@@ -1392,8 +1399,8 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
   runtime->start_health();
   runtime->last_error.clear();
   runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
-                    {"message", "proxy started on " + config->listen_host + ":" +
-                                    std::to_string(config->listen_port)},
+                    {"message", "proxy started on " + config.listen_host + ":" +
+                                    std::to_string(config.listen_port)},
                     {"latencyMs", 0}});
   return true;
 }
@@ -1449,6 +1456,14 @@ bool ProxyManager::reload(const ProxyConfig& config, std::string* error) {
     if (error) *error = "target must be a valid http(s) URL";
     return false;
   }
+  return reload_config(config, error);
+}
+
+bool ProxyManager::reload_config(const ProxyConfig& config, std::string* error) {
+  if (config.id.empty()) {
+    if (error) *error = "proxy id is required";
+    return false;
+  }
   const auto runtime = find(config.id);
   if (runtime && runtime->running.load()) {
     if (runtime->can_hot_reload(config)) {
@@ -1456,7 +1471,11 @@ bool ProxyManager::reload(const ProxyConfig& config, std::string* error) {
       return true;
     }
     if (!stop(config.id, error)) return false;
-    return start(config.id, error);
+    return start_config(config, error);
+  }
+  if (runtime) {
+    std::lock_guard<std::mutex> lock(runtime->config_mutex);
+    runtime->config = config;
   }
   return true;
 }
@@ -1479,6 +1498,7 @@ nlohmann::json ProxyManager::snapshot() const {
                    {"name", cfg.name},
                    {"listenHost", cfg.listen_host},
                    {"listenPort", cfg.listen_port},
+                   {"boundPort", runtime->app ? runtime->app->bound_port() : 0},
                    {"target", cfg.target},
                    {"autoStart", cfg.auto_start},
                    {"tls", cfg.tls},

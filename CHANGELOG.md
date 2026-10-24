@@ -14,6 +14,11 @@ All notable changes to uvscope are documented here. The format is based on
   spawns that child, verifies ping/pong and clean shutdown on every platform. Proxy and listener
   services still run in the daemon process; moving them into supervised children is the next
   slice.
+- Proxy child runtime: `--proxy-child <endpoint>` runs one reverse proxy from an IPC
+  `start`/`reload` config, answers `snapshot`/`logs`, and stops on an IPC stop or parent loss.
+  `--self-check` now spawns it, starts a proxy on an ephemeral port, sends a real request through
+  it, verifies the snapshot request count and stops it on Linux, Windows and macOS. The daemon
+  still starts proxies in-process; the parent-side isolated backend is the next slice.
 
 ## [0.9.0] - 2026-10-24
 

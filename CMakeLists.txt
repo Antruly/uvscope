@@ -158,6 +158,7 @@ set(UVSCOPE_SOURCES
   src/preview_store.cpp
   src/quic_manager.cpp
   src/proxy_manager.cpp
+  src/proxy_child.cpp
   src/socks5_manager.cpp
   src/socks5_proxy.cpp
   src/supervisor.cpp

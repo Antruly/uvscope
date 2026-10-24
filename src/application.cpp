@@ -32,6 +32,7 @@
 #include "http_probe.h"
 #include "ipc.h"
 #include "net_probe.h"
+#include "proxy_child.h"
 #include "tls_probe.h"
 #include "util.h"
 #include "version.h"
@@ -4025,6 +4026,10 @@ int Application::self_check() {
     const nlohmann::json result = run_http_probe(input);
     check(result.value("ok", false) && result.value("status", 0) == 200,
           "libuvcpp HTTP self-request succeeds");
+    std::string proxy_child_error;
+    check(run_proxy_child_self_check(self_path, local.bound_port(), &proxy_child_error),
+          "IPC proxy child request");
+    if (!proxy_child_error.empty()) std::printf("    %s\n", proxy_child_error.c_str());
     local.stop();
     local.join();
   }

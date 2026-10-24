@@ -10,6 +10,7 @@
 
 #include "application.h"
 #include "ipc.h"
+#include "proxy_child.h"
 #include "util.h"
 #include "version.h"
 
@@ -57,6 +58,7 @@ int main(int argc, char** argv) {
       std::filesystem::absolute(argv[0], self_path_error).string();
   if (self_path_error) options.self_path = argv[0];
   std::string ipc_child_endpoint;
+  std::string proxy_child_endpoint;
   bool show_help = false;
 
   for (int i = 1; i < argc; ++i) {
@@ -90,6 +92,8 @@ int main(int argc, char** argv) {
       options.self_check = true;
     } else if (arg == "--ipc-child") {
       ipc_child_endpoint = require_value("--ipc-child");
+    } else if (arg == "--proxy-child") {
+      proxy_child_endpoint = require_value("--proxy-child");
     } else if (arg == "--version" || arg == "-v") {
       std::printf("uvscope %s\n", UVSCOPE_VERSION);
       return 0;
@@ -108,6 +112,9 @@ int main(int argc, char** argv) {
   }
   if (!ipc_child_endpoint.empty()) {
     return uvscope::run_ipc_child(ipc_child_endpoint);
+  }
+  if (!proxy_child_endpoint.empty()) {
+    return uvscope::run_proxy_child(proxy_child_endpoint);
   }
 
   uvscope::Application app(std::move(options));
