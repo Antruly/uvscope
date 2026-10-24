@@ -90,7 +90,7 @@ jobs:
             mingw-w64-x86_64-zlib
             curl
             openssl
-            nodejs
+            mingw-w64-ucrt-x86_64-nodejs
             python
       - name: Build libuvcpp and uvscope
         shell: msys2 {0}
@@ -251,9 +251,10 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          # Prefer the MSYS toolchain here: its curl/openssl/node understand
-          # POSIX paths, unlike the native MinGW binaries earlier on PATH.
-          export PATH="/usr/bin:$PWD/.deps/libuvcpp/bin:$MINGW_PREFIX/bin:$PATH"
+          # Prefer the MSYS tools here: curl/openssl understand POSIX paths.
+          # Node comes from the UCRT64 repo (the MINGW64 repo has no nodejs
+          # package); the script converts the paths it passes to Windows form.
+          export PATH="/usr/bin:/ucrt64/bin:$PWD/.deps/libuvcpp/bin:$MINGW_PREFIX/bin:$PATH"
           bash ./scripts/h2-smoke.sh ./build-mingw/uvscope.exe 18820 18821
 
   macos:

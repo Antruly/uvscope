@@ -107,7 +107,7 @@ jobs:
             mingw-w64-x86_64-curl
             curl
             openssl
-            nodejs
+            mingw-w64-ucrt-x86_64-nodejs
       - name: Build and stage
         shell: msys2 {0}
         run: |
@@ -125,8 +125,9 @@ jobs:
           cp -f "$MINGW_PREFIX/bin/"*.dll build-mingw/ 2>/dev/null || true
           find .deps/libuvcpp-src/build-uvscope -name 'libllhttp.dll' -type f -exec cp -f {} build-mingw/ \; 2>/dev/null || true
           timeout 90 ./build-mingw/uvscope.exe --self-check
-          # Same HTTP/2 runtime check as CI, using the MSYS tools.
-          PATH="/usr/bin:$PWD/.deps/libuvcpp/bin:$MINGW_PREFIX/bin:$PATH" \
+          # Same HTTP/2 runtime check as CI. Node comes from the UCRT64 repo;
+          # curl/openssl come from MSYS and understand POSIX paths.
+          PATH="/usr/bin:/ucrt64/bin:$PWD/.deps/libuvcpp/bin:$MINGW_PREFIX/bin:$PATH" \
             bash ./scripts/h2-smoke.sh ./build-mingw/uvscope.exe 18820 18821
           cmake --install build-mingw --prefix "$(cygpath -m "$PWD/stage")"
           mkdir -p stage/bin
