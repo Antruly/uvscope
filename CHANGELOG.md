@@ -4,6 +4,17 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- The experimental QUIC SDK build now installs `libuvcpp.so` with the custom OpenSSL 3.6+ lib
+  directory in its RUNPATH (`CMAKE_INSTALL_RPATH_USE_LINK_PATH=ON`). Previously the dynamic
+  linker resolved `libssl` from the system OpenSSL 3.0 and the daemon failed with
+  `OPENSSL_3.5.0 not found` unless `LD_LIBRARY_PATH` was set manually. Verified by rebuilding the
+  QUIC SDK, relinking uvscope and running raw QUIC echo plus an HTTP/3 request without env
+  overrides.
+
 ## [0.8.0] - 2026-10-23
 
 ### Added

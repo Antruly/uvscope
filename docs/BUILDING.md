@@ -43,12 +43,19 @@ a prefix and point both the SDK and uvscope at it:
 ```sh
 export UVCPP_ENABLE_QUIC=ON UVCPP_ENABLE_HTTP3=ON
 export OPENSSL_ROOT_DIR=/path/to/openssl-3.6
-export LD_LIBRARY_PATH=/path/to/openssl-3.6/lib:$LD_LIBRARY_PATH
 ./scripts/build-libuvcpp.sh .deps/libuvcpp-src .deps/libuvcpp-quic
 cmake -S . -B build-quic -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DUVCPP_ROOT="$PWD/.deps/libuvcpp-quic" -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR" \
   -DCMAKE_BUILD_RPATH="$OPENSSL_ROOT_DIR/lib"
 ```
+
+On Unix the build script passes `CMAKE_INSTALL_RPATH_USE_LINK_PATH=ON`, which appends the
+custom OpenSSL `lib` directory to `libuvcpp.so`'s installed RUNPATH. This is required because the
+dynamic linker resolves `libuvcpp.so`'s `libssl` dependency with `libuvcpp.so`'s own RUNPATH, not
+the uvscope executable's; without it the process loads the system OpenSSL 3.0 and fails with
+`OPENSSL_3.5.0 not found`. No `LD_LIBRARY_PATH` is needed for an SDK built by the current script.
+If you reuse an older QUIC SDK, either rebuild it or set
+`LD_LIBRARY_PATH="$OPENSSL_ROOT_DIR/lib:$LD_LIBRARY_PATH"` when running the daemon.
 
 The resulting daemon reports `http3: true` / `quic: true` from `/api/health`; packages built this
 way must ship or require that OpenSSL. Do not mix a custom OpenSSL with the system one in release

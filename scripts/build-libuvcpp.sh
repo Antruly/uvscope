@@ -86,12 +86,20 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 else
   extra_cmake+=('-DCMAKE_INSTALL_RPATH=$ORIGIN')
 fi
+openssl_cmake_dir=""
 if [[ -n "${OPENSSL_ROOT_DIR:-}" ]]; then
   if command -v cygpath >/dev/null 2>&1; then
-    extra_cmake+=("-DOPENSSL_ROOT_DIR=$(cygpath -m "${OPENSSL_ROOT_DIR}")")
+    openssl_cmake_dir="$(cygpath -m "${OPENSSL_ROOT_DIR}")"
   else
-    extra_cmake+=("-DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}")
+    openssl_cmake_dir="${OPENSSL_ROOT_DIR}"
   fi
+  extra_cmake+=("-DOPENSSL_ROOT_DIR=${openssl_cmake_dir}")
+fi
+# libuvcpp sets INSTALL_RPATH=$ORIGIN itself, so a QUIC SDK needs CMake's
+# link-path append to carry the custom OpenSSL 3.6+ lib directory in the
+# installed RUNPATH. Without it libuvcpp.so resolves the system libssl.
+if [[ "${UVCPP_ENABLE_QUIC}" == "ON" && -n "${openssl_cmake_dir}" ]]; then
+  extra_cmake+=("-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON")
 fi
 if [[ -n "${CMAKE_PREFIX_PATH:-}" ]]; then
   export CMAKE_PREFIX_PATH
