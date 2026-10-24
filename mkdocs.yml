@@ -1,0 +1,70 @@
+site_name: uvscope
+site_description: A local-first multi-protocol web debugging workbench and gateway
+site_url: https://antruly.github.io/uvscope/
+repo_url: https://github.com/Antruly/uvscope
+repo_name: Antruly/uvscope
+edit_uri: edit/main/docs/
+docs_dir: docs
+use_directory_urls: true
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Guides:
+      - Building and packaging: BUILDING.md
+      - Operations: OPERATIONS.md
+      - Performance baselines: PERFORMANCE.md
+  - Reference:
+      - HTTP API: API.md
+      - Event schema: EVENTS.md
+      - Extending uvscope: EXTENDING.md
+      - Architecture: ARCHITECTURE.md
+  - Project:
+      - Roadmap: https://github.com/Antruly/uvscope/blob/main/ROADMAP.md
+      - Changelog: https://github.com/Antruly/uvscope/blob/main/CHANGELOG.md
+      - Contributing: https://github.com/Antruly/uvscope/blob/main/CONTRIBUTING.md
+      - Security policy: https://github.com/Antruly/uvscope/blob/main/SECURITY.md
+      - Development plan (中文): DEVELOPMENT_PLAN.zh-CN.md
+      - libuvcpp upstream notes (中文): LIBUVCPP_UPSTREAM.zh-CN.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search

@@ -4,6 +4,39 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-10-25
+
+First stable release. No protocol behavior changed since 0.11.0; 1.0 adds the release
+engineering, documentation and verification work required to treat uvscope as a product.
+
+### Added
+
+- Documentation site (MkDocs Material on GitHub Pages, built in CI) with guides for building,
+  operations and performance, plus reference pages for the API, event schema, extension boundary
+  and architecture.
+- Release supply chain: `SHA256SUMS`, a Sigstore keyless signature over the checksums
+  (`SHA256SUMS.sigstore.json`) and a generated SPDX SBOM.
+- HTTP/2 runtime verification on Windows MinGW and macOS arm64 CI (`scripts/h2-smoke.sh`).
+- `scripts/bench.sh` / `scripts/bench.py` and a documented reverse-proxy baseline in
+  `docs/PERFORMANCE.md`.
+- `docs/EVENTS.md` fixes the 1.x event compatibility contract; `docs/EXTENDING.md` documents
+  variables, request scripts, the command library and the internal child-process IPC boundary.
+- `docs/OPERATIONS.md` covers the data layout, backup/restore, upgrades, isolation and hardening.
+
+### Changed
+
+- README and all project documentation reorganized for the 1.0 product surface, supported
+  platform matrix and known limitations.
+- Help-page texts updated for backend WebSocket sessions, SOCKS5 byte counters, proxy supervision
+  and the isolation note.
+
+### Compatibility
+
+- The 1.x API and event schema are additive-only: existing field names, types and meanings stay
+  stable, and consumers ignore unknown fields and event types.
+- Windows arm64, HTTP/3 stabilization and a native plugin ABI are explicitly outside the 1.x
+  matrix and tracked in the roadmap.
+
 ## [0.11.0] - 2026-10-25
 
 ### Added
@@ -461,9 +494,9 @@ The libuvcpp fixes are submitted upstream as
 
 ### Fixed
 
-- Added TLS SNI support to libuvcpp HTTP/1.1 clients via
-  [`patches/upstream/0001-tls-sni.patch`](patches/upstream/0001-tls-sni.patch). Without it, HTTPS
-  requests to modern virtual hosts fail or receive an unrelated certificate.
+- Added TLS SNI support to libuvcpp HTTP/1.1 clients via the (now retired) patch
+  `patches/upstream/0001-tls-sni.patch`. Without it, HTTPS requests to modern virtual hosts fail
+  or receive an unrelated certificate.
 
 ### Known limitations
 

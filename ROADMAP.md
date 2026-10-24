@@ -1,102 +1,82 @@
 # Roadmap
 
-uvscope is developed in small, verifiable slices. The detailed plan is in
-[`docs/DEVELOPMENT_PLAN.zh-CN.md`](docs/DEVELOPMENT_PLAN.zh-CN.md).
+uvscope 1.0.0 is the first stable release: the functional surface is complete, and the release
+matrix, documentation and supply-chain artifacts are in place. Work after 1.0 is additive.
 
-## 0.1.0 — first usable workbench
+The detailed history and per-slice acceptance notes are in
+[`docs/DEVELOPMENT_PLAN.zh-CN.md`](docs/DEVELOPMENT_PLAN.zh-CN.md); user-facing changes are in
+[`CHANGELOG.md`](CHANGELOG.md).
 
-- [x] Local daemon, SQLite, first-run admin, sessions, RBAC
-- [x] Vue 3 shell with collapsible menu and cached tabs
-- [x] HTTP/1.1 + HTTPS request debugger with history
-- [x] WebSocket console
-- [x] TCP/UDP one-shot probes
-- [x] TLS certificate decoder
-- [x] SOAP 1.1 / WSDL workbench
-- [x] Managed HTTP reverse proxies with live logs
-- [x] Module switches, reset, update check, about/help
-- [x] CI, Linux packages, Windows installer scaffold
-- [x] libuvcpp SNI, POSIX sync timeouts and install-completeness patches
-      ([PR #38](https://github.com/Antruly/libuvcpp/pull/38),
-      [#39](https://github.com/Antruly/libuvcpp/pull/39),
-      [#40](https://github.com/Antruly/libuvcpp/pull/40))
+## 1.0 — stable (released 2026-10-25)
 
-## 0.2 — debug experience
+### Product surface
 
-- [x] Response preview for HTML (sandboxed), images, audio, video and PDF
-- [x] Preview safety: no scripts, no remote resources by default, clear limits
-- [x] Chinese/English shell, navigation, login and setup; browser-language detection and manual switch
-- [x] Light / dark / system theme switching
+- [x] HTTP/1.1 and HTTPS debugging with history, body modes, cURL/HAR import/export
+- [x] HTTP/2 over TLS with ALPN, stream IDs, GOAWAY and frame summaries
+- [x] WebSocket console: daemon-side backend sessions and browser-native mode
+- [x] TCP/UDP probes, persistent TCP sessions and TCP/UDP listeners
+- [x] TLS decoding/probing, certificate vault, local CA and CA-signed certificates
+- [x] SOAP 1.1 + WSDL workbench
+- [x] Managed reverse proxy: routing rules, weighted upstreams, retries, health checks,
+      circuit breaker, metrics, hot reload and WebSocket pass-through
+- [x] SOCKS5 client and server (CONNECT / BIND / UDP ASSOCIATE)
+- [x] Virtual terminal (Unix PTY / Windows ConPTY) with an offline command library
+- [x] Workspaces, collections, environments, pre/post scripts and assertions
+- [x] Users/RBAC, server-side sessions, audit log, backup/restore and module toggles
+- [x] Chinese/English UI and light/dark/system themes
+
+### Isolation and supervision
+
+- [x] Child-process isolation for reverse proxies, TCP/UDP listeners, SOCKS5 servers and terminals
+- [x] Length-prefixed JSON IPC, per-service telemetry and pid/snapshot proxies
+- [x] One desired-state supervisor with backoff, restart counters and an event log
+- [x] Stop/delete/module-disable/reset paths unregister before teardown
+- [x] Terminal crash recovery with a fresh shell and WebSocket `reset` continuity
+
+### Release engineering
+
+- [x] Matrix: Linux x64/arm64, Windows x64 (MinGW), macOS arm64
+- [x] Linux: ctest + full smoke; Windows: self-check + ConPTY + HTTP/2 runtime smoke;
+      macOS: self-check + HTTP/2 runtime smoke
+- [x] Performance baselines: `scripts/bench.sh` and `docs/PERFORMANCE.md`
+- [x] Stable event schema and extension contract: `docs/EVENTS.md`, `docs/EXTENDING.md`
+- [x] Documentation site (MkDocs Material on GitHub Pages, built in CI)
+- [x] Supply chain: `SHA256SUMS`, Sigstore keyless signatures and an SPDX SBOM on every release
+
+## After 1.0
+
+### Distribution and platform
+
+- [ ] Windows arm64 build and smoke (MSYS2 CLANGARM64 is still preview)
+- [ ] Signed and notarized macOS `.app` bundle (the 1.x macOS asset is a Homebrew-linked tar.gz)
+- [ ] More Linux package targets beyond tar.gz/deb/rpm
+- [ ] Guided TLS setup for the control plane (currently `--tls-cert` / `--tls-key`)
+
+### Protocol depth
+
+- [ ] HTTP/3/QUIC: QPACK summaries, 0-RTT and connection-migration events; stabilize once the
+      OpenSSL 3.6+ requirement fits the default toolchain
+- [ ] Dedicated WebSocket relay / pass-through listener mode
+- [ ] Fully asynchronous proxy upstream client (replace the bounded blocking worker pool)
+- [ ] Raw QUIC stream/datagram workbench parity with TCP/UDP
+
+### Operations and scale
+
+- [ ] Versioned SQLite migrations with explicit downgrade/rollback guidance
+- [ ] Concurrent saturation benchmarks (latency at 1/10/100 connections) tracked in CI
+- [ ] Optional per-child resource limits (CPU, memory, file descriptors)
+- [ ] Restart budget / circuit breaker for permanently failing supervised services
+
+### Extensibility and UX
+
+- [ ] Native plugin ABI (the 1.x boundary is the HTTP API, scripts and the internal IPC contract)
 - [ ] Page-by-page light-theme color audit for every workbench
-- [x] Raw / preview / hex switching for binary and truncated bodies
+- [ ] Broader documentation translations based on community demand
+- [ ] Collections/environments sharing beyond a single workspace file
 
-## 0.3 — transport workbench
+## Shipped before 1.0
 
-- [x] Persistent TCP client sessions (send repeatedly, stream receives, close, reconnect)
-- [x] TCP server listeners with session list, send and close
-- [x] UDP server listeners with datagram timeline and replies
-- [x] Listener persistence and optional auto-start
-- [x] SOCKS5 client for HTTP/TCP/UDP with authentication and error classification
-- [x] SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) with authentication and session logs
-- [x] No silent direct fallback when a proxy is configured
-
-## 0.4 — protocol depth (0.4.0)
-
-0.4.0 ships HTTP/2 and the live certificate chain; the remaining items continue in 0.4.x.
-
-- [x] HTTP/2 over libuvcpp 1.8.2 (ALPN, stream IDs, GOAWAY, frame summary; Linux smoke)
-- [ ] HTTP/2 runtime validation on the Windows and macOS CI jobs
-- [ ] HTTP/3 / QUIC client with QPACK / 0-RTT / migration events (experimental; needs OpenSSL 3.2+)
-- [x] HTTP/3 results expose ALPN, stream ID and peer GOAWAY state (experimental builds)
-- [x] Linux CI builds OpenSSL 3.6 + QUIC SDK and runs a local HTTP/3 origin
-- [~] Raw QUIC client probe and echo server (streams/datagrams; experimental build)
-- [x] Compression decoding: gzip / deflate / brotli with a raw-body toggle
-- [x] Large-response streaming download (512 MiB cap, progress, cancel)
-- [x] Multipart upload and resumable Range downloads
-- [x] Live peer certificate chain inspection
-- [x] Backend WebSocket sessions (daemon-side connect, headers, ping/pong, close codes, frames)
-- [ ] WebSocket backend relay / pass-through mode
-
-## 0.5 — gateway and team workflow
-
-- [x] Exact / prefix / regex routing with redirects and path rewrites
-- [x] Header / method / host routing conditions
-- [x] Multiple weighted upstreams and retry policy
-- [x] WebSocket pass-through
-- [x] Active upstream health checks
-- [x] Certificate import / self-sign / selection
-- [x] Per-instance QPS, latency and traffic metrics
-- [x] Collections, environments and variable substitution
-- [x] Pre-request / post-response scripts (browser-side, experimental)
-- [x] cURL, HAR, OpenAPI and Postman import/export (HAR export is one entry)
-- [x] Audit log and active session management
-- [x] Backup download and staged restore (migrations still ad hoc)
-- [x] Service supervisor with desired-state restarts (proxies, listeners, SOCKS5, terminals)
-- [x] Proxy upstream I/O off the proxy loop (bounded per-instance worker pool)
-- [x] Configurable upstream connect/request timeouts and worker count
-- [x] Proxy config hot reload with runtime config versioning
-- [x] Per-upstream circuit breaker with half-open recovery
-- [~] Length-prefixed JSON IPC channel and child-process self-check (foundation)
-- [x] Reverse-proxy child runtime with IPC start/stop/snapshot/logs
-- [x] Per-proxy child isolation with supervisor restart and telemetry
-- [x] SOCKS5 server child isolation with telemetry and manual restart
-- [x] TCP/UDP listener child isolation with session send/close over IPC
-- [x] Virtual-terminal PTY child isolation with streamed output over IPC
-- [x] Process isolation + IPC + supervision for all long-lived services
-
-## 1.0 — stable
-
-- [ ] Linux x64/arm64, Windows x64/arm64 (MinGW), macOS arm64
-- [ ] Signed releases and SBOM
-- [ ] Full test matrix and performance baselines
-- [ ] Stable event schema and plugin boundary
-- [ ] Documentation site
-
-## Post-0.4 additions
-
-- [x] Build against the libuvcpp 1.8.2 release SDK and retire the local upstream patches
-- [x] Reverse proxy exact/prefix/regex redirect and rewrite rules
-- [x] Live TLS peer-chain probe and managed certificate vault (generate/import/delete)
-- [x] Unix virtual terminal with WebSocket, xterm.js, persistent sessions and admin control
-- [x] Seeded SQLite command library with quick bar, search, custom snippets and quick pins
-- [x] Windows ConPTY terminal backend
-- [x] Local CA hierarchy and certificate renewal
+The 0.1–0.11 series delivered the workbench, transport, gateway, certificate and isolation
+foundations. See the [changelog](CHANGELOG.md) for the release-by-release record and
+[`docs/DEVELOPMENT_PLAN.zh-CN.md`](docs/DEVELOPMENT_PLAN.zh-CN.md) for the slice-level design and
+verification notes (including S13–S19 for IPC, isolation and supervision).

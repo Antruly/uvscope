@@ -88,6 +88,7 @@ const shortcuts = [
           <div class="note-row"><span>{{ t('help.note.storage') }}</span><strong>{{ t('help.note.storageText') }}</strong></div>
           <div class="note-row"><span>{{ t('help.note.sessions') }}</span><strong>{{ t('help.note.sessionsText') }}</strong></div>
           <div class="note-row"><span>{{ t('help.note.network') }}</span><strong>{{ t('help.note.networkText') }}</strong></div>
+          <div class="note-row"><span>{{ t('help.note.isolation') }}</span><strong>{{ t('help.note.isolationText') }}</strong></div>
           <div class="note-row"><span>{{ t('help.note.preview') }}</span><strong>{{ t('help.note.previewText') }}</strong></div>
           <div class="note-row"><span>{{ t('help.note.language') }}</span><strong>{{ t('help.note.languageText') }}</strong></div>
           <div class="note-row"><span>{{ t('help.note.exposure') }}</span><strong>{{ t('help.note.exposureText') }}</strong></div>

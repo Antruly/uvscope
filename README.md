@@ -1,112 +1,103 @@
 # uvscope
 
-**A libuvcpp-powered, local-first multi-protocol web debugging workbench and gateway.**
+**A local-first, multi-protocol web debugging workbench and gateway.**
 
 [![CI](https://github.com/Antruly/uvscope/actions/workflows/ci.yml/badge.svg)](https://github.com/Antruly/uvscope/actions/workflows/ci.yml)
+[![Docs](https://github.com/Antruly/uvscope/actions/workflows/docs.yml/badge.svg)](https://antruly.github.io/uvscope/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 uvscope puts HTTP, WebSocket, TCP, UDP, TLS, SOAP/WSDL and managed reverse proxies behind one
-Vue 3 control plane. A single C++ daemon owns the event loop, SQLite store, authentication and
-all outbound network traffic; long-lived services can optionally move to supervised child
-processes, and the browser only renders state and sends commands.
+Vue 3 control plane. A single C++ daemon owns the event loop, SQLite store, authentication and all
+outbound network traffic; long-lived services can move to supervised child processes, and the
+browser only renders state and sends commands.
 
 ![uvscope dashboard](docs/screenshots/dashboard.png)
 
-## Why another web debugger?
+## Why uvscope
 
-Most tools stop at request/response. uvscope is designed around the whole handshake:
+Most tools stop at request/response. uvscope is built around the whole handshake:
 
-- **Protocol workbench** — HTTP methods and headers, WebSocket frames, raw TCP/UDP payloads,
-  X.509 certificate decoding and WSDL-driven SOAP calls.
-- **Gateway in the same process** — launch HTTP reverse proxies, watch request traces, and stop
-  them without editing nginx config or restarting the daemon.
-- **Local-first security** — SQLite, server-side sessions, PBKDF2 password hashing, RBAC and a
-  first-run administrator flow. No telemetry and no cloud account.
-- **One network stack** — every outbound connection is driven by
-  [libuvcpp](https://github.com/Antruly/libuvcpp) 1.8.2. One event-driven C++ stack from socket
-  to UI.
-- **A UI that keeps context** — collapsible navigation, cached multi-tab workspaces and live
-  telemetry built with Vue 3, Pinia and Vite.
+- **One workbench for every protocol** — HTTP/1.1 and HTTP/2, WebSocket, raw TCP/UDP, X.509 and
+  WSDL-driven SOAP, with the same history, telemetry and export model.
+- **A real gateway, not a mock** — run reverse proxies with routing rules, weighted upstreams,
+  retries, health checks, circuit breaking and WebSocket pass-through, then watch the traffic live.
+- **Long-lived services without a second stack** — TCP/UDP listeners, SOCKS5 servers, reverse
+  proxies and terminal PTYs can run in child processes, all under one desired-state supervisor.
+- **Local-first** — SQLite, server-side sessions, PBKDF2 password hashing, RBAC and a first-run
+  administrator flow. No telemetry, no cloud account, no external database.
+- **One network stack** — every target connection is driven by
+  [libuvcpp](https://github.com/Antruly/libuvcpp) 1.8.2, from socket to UI.
+- **A UI that keeps context** — collapsible navigation, cached multi-tab workspaces, live
+  telemetry and an offline command library built with Vue 3, Pinia and Vite.
 
-![HTTP Studio](docs/screenshots/http-studio.png)
+## Feature overview
 
-## What is in 0.11.0
+### HTTP and APIs
 
-| Area | Status |
+| Capability | Status |
 | --- | --- |
-| HTTP/1.1 request debugger with headers, body, timing and history | ✅ Stable |
-| Request body modes: raw, form-urlencoded, multipart with files | ✅ New in 0.5.1 |
-| cURL / HAR import and export | ✅ New in 0.5.2 |
-| Environments with {{variables}}, saved request collections, OpenAPI/Postman import | ✅ New in 0.6.0 |
-| Pre-request / post-response scripts with assertions | ✅ New in 0.6.1 |
-| Service supervisor with desired-state restarts | ✅ New in 0.7.0 |
-| SQLite backup download and staged restore | ✅ New in 0.5.2 |
-| gzip / deflate / brotli decoding with a raw-body toggle | ✅ New in 0.4.2 |
-| Large-response streaming download with progress, cancel and Range resume | ✅ New in 0.4.3; resume in 0.8.0 |
-| HTTP/2 over TLS with ALPN, stream IDs, GOAWAY and frame summary | ✅ New in 0.4.0 |
-| Response preview: sandboxed HTML, images, audio, video and PDF | ✅ Stable (opt-in scripts) |
-| Chinese / English UI with browser-language detection and manual switch | ✅ Stable |
-| Dark / light / follow-system theme | ✅ Stable |
-| HTTPS with system CA bundle / explicit insecure mode | ✅ Stable |
-| WebSocket console (browser-native, text + binary) | ✅ Stable |
-| Backend WebSocket sessions: headers, frames, ping/pong, close codes | ✅ New in 0.4.3 |
-| TCP and UDP one-shot probes (text / hex) | ✅ Stable |
-| Persistent TCP sessions with repeated sends and event logs | ✅ Stable |
-| TCP / UDP server listeners with sessions, datagrams and replies | ✅ Stable |
-| SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) and outbound proxy | ✅ Stable |
-| SOCKS5 per-session bytes, datagrams and duration | ✅ New in 0.4.0 |
-| TLS certificate decoder (PEM / DER) and live peer-chain probe | ✅ New in 0.4.0 |
-| TLS certificate vault: generate, import, inspect, download, delete | ✅ New in 0.4.0 |
-| Local root CA, CA-signed server certificates and in-place renewal | ✅ New in 0.8.0 |
-| Virtual terminal (Unix PTY / Windows ConPTY) with command library | ✅ New in 0.4.0, off by default |
-| SOAP 1.1 + WSDL operation discovery | ✅ Stable |
-| Managed HTTP reverse proxy with live logs and routing rules | ✅ Stable (method/host/header conditions in 0.4.4) |
-| Async proxy upstream pool (slow targets do not block other requests) | ✅ New in 0.9.0 |
-| Configurable upstream timeouts, worker count and hot reload | ✅ New in 0.9.0 |
-| Per-upstream circuit breaker with half-open recovery | ✅ New in 0.9.0 |
-| Length-prefixed JSON IPC and child-process runtime foundation | ✅ New in 0.10.0 |
-| Optional per-proxy child-process isolation with supervisor restart | ✅ New in 0.10.0 |
-| Optional SOCKS5 server child-process isolation | ✅ New in 0.11.0 |
-| Optional TCP/UDP listener child-process isolation | ✅ New in 0.11.0 |
-| Optional virtual-terminal child-process isolation | ✅ New in 0.11.0 |
-| Unified desired-state supervision for proxies, listeners, SOCKS5 and terminals | ✅ New in 0.11.0 |
-| Weighted upstreams with failover and retries | ✅ New in 0.4.4 |
-| Per-proxy QPS, p50/p95 latency and status counts | ✅ New in 0.4.5 |
-| Active upstream health checks (TCP/TLS, 10 s) | ✅ New in 0.4.5 |
-| WebSocket pass-through in the reverse proxy | ✅ New in 0.4.5 |
-| WebSocket upgrades honor routing rules and healthy weighted upstreams | ✅ New in 0.8.0 |
-| Audit log and active session revocation | ✅ New in 0.5.0 |
-| SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
-| Module toggles, factory reset, update check, about/help | ✅ Stable |
-| HTTP/3 and QUIC transports | 🧪 Experimental — needs an OpenSSL 3.6+ SDK build |
-| HTTP/3 ALPN, stream ID and peer GOAWAY metadata | ✅ New in 0.8.1 (experimental builds) |
-| QUIC/HTTP3 end-to-end CI with a local HTTP/3 origin | ✅ New in 0.8.1 |
-| QUIC client probe and echo server | 🧪 Experimental in the OpenSSL 3.6+/QUIC-enabled SDK |
+| HTTP/1.1 + HTTPS debugger with headers, body, timing and history | Stable |
+| Body modes: raw, form-urlencoded, multipart with files | Stable |
+| cURL / HAR import and export | Stable |
+| Environments with `{{variables}}`, saved collections, OpenAPI/Postman import | Stable |
+| Pre-request / post-response scripts with assertions | Stable (browser-side) |
+| HTTP/2 over TLS with ALPN, stream IDs, GOAWAY and frame summary | Stable |
+| gzip / deflate / brotli decoding with a raw-body toggle | Stable |
+| Large-response streaming download with progress, cancel and Range resume | Stable |
+| Response preview: sandboxed HTML, images, audio, video and PDF | Stable (scripts opt-in) |
+| SOAP 1.1 + WSDL operation discovery | Stable |
+| HTTP/3 and raw QUIC probes | Experimental — not in release builds |
 
-HTTP/2 is the supported alternate transport: selecting H2 negotiates ALPN `h2` and returns the
-stream ID, GOAWAY state and the first 200 received frames. HTTP/3 and raw QUIC remain closed in
-release builds until the cross-platform matrix exists. The virtual terminal module is disabled by
-default and limited to admin/operator roles because it grants shell access on the daemon host.
+### Realtime and transports
 
-SOCKS5 outbound proxying is mandatory when configured: a failed handshake fails the request rather
-than falling back to a direct connection.
-
-## Screens
-
-| Gateway | TLS Inspector |
+| Capability | Status |
 | --- | --- |
-| ![reverse proxy](docs/screenshots/reverse-proxy.png) | ![login](docs/screenshots/login.png) |
+| WebSocket console: daemon-side backend sessions and browser-native mode | Stable |
+| Backend WebSocket headers, subprotocols, frames, ping/pong, close codes | Stable |
+| One-shot TCP and UDP probes (text / hex) | Stable |
+| Persistent TCP sessions with repeated sends and event logs | Stable |
+| TCP / UDP server listeners with sessions, datagrams and replies | Stable |
+| SOCKS5 client for HTTP/TCP/UDP with authentication and error classification | Stable |
+| SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) with authentication and session logs | Stable |
+| Virtual terminal (Unix PTY / Windows ConPTY) with an offline command library | Stable — off by default |
+
+### Gateway and long-lived services
+
+| Capability | Status |
+| --- | --- |
+| Reverse proxy: exact / prefix / regex rules, redirects and rewrites | Stable |
+| Header / method / host conditions, weighted upstreams, retries | Stable |
+| Active upstream health checks, per-upstream circuit breaker, QPS/latency metrics | Stable |
+| Proxy config hot reload with runtime config versions | Stable |
+| WebSocket pass-through in the reverse proxy | Stable |
+| Child-process isolation for proxies, listeners, SOCKS5 servers and terminals | Stable |
+| Unified desired-state supervisor: restart, backoff, `restarts`/events in `/api/supervisor` | Stable |
+| Managed TLS certificates, local CA, CA-signed certs and in-place renewal | Stable |
+
+### Operations and security
+
+| Capability | Status |
+| --- | --- |
+| SQLite persistence, first-run setup, local auth, RBAC (admin / operator / viewer) | Stable |
+| Server-side sessions, active-session revocation, audit log | Stable |
+| Backup download and staged restore | Stable |
+| Module toggles, factory reset, update check, about/help | Stable |
+| Chinese / English UI with browser-language detection and manual switch | Stable |
+| Dark / light / follow-system theme | Stable |
+| Linux tar/deb/rpm, Windows zip + installer, macOS tar.gz | Stable |
 
 ## Download
 
-Prebuilt **v0.11.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.11.0):
+Prebuilt **v1.0.0** assets are on the
+[Releases page](https://github.com/Antruly/uvscope/releases/tag/v1.0.0). The release ships with
+`SHA256SUMS`, a Sigstore keyless signature covering the checksums and a generated SPDX SBOM.
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.11.0-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-1.0.0-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
-The Windows executable and installer share the uvscope icon; Linux packages install the hicolor
-icon set and a desktop entry with `Icon=uvscope`.
+Verify a download with `sha256sum -c SHA256SUMS` and
+`cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity-regexp 'https://github.com/Antruly/uvscope/.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS`.
 
 ## Quick start
 
@@ -115,7 +106,7 @@ icon set and a desktop entry with `Icon=uvscope`.
 - C++17 compiler, CMake ≥ 3.20, Ninja
 - Node.js 20+ and npm
 - libuv, zlib, SQLite and OpenSSL development headers
-- Linux, macOS, or Windows with MinGW-w64
+- Linux, macOS, or Windows with MSYS2 MinGW-w64
 
 On Debian/Ubuntu:
 
@@ -133,8 +124,9 @@ cd uvscope
 ./build/uvscope --port 8787 --open
 ```
 
-`build.sh` clones the libuvcpp v1.8.2 release into `.deps/`, applies the minimal WebSocket
-handshake-header patch from `patches/upstream/`, builds the frontend, then builds uvscope.
+`build.sh` clones the libuvcpp v1.8.2 release into `.deps/`, applies the one minimal upstream
+patch shipped in `patches/upstream/` (WebSocket handshake headers), builds the frontend, then
+builds uvscope and runs `--self-check`.
 
 If you already have a libuvcpp 1.8.2 SDK:
 
@@ -148,7 +140,7 @@ cmake --build build -j
 
 Open <http://127.0.0.1:8787>. The first visit creates the administrator account. All runtime
 state lives in the data directory printed at startup (`~/.local/share/uvscope` on Linux by
-default).
+default; override it with `--data-dir`).
 
 ### CLI
 
@@ -156,7 +148,7 @@ default).
 uvscope [options]
 
   --host <addr>       Listen address (default 127.0.0.1)
-  --port <port>       Listen port (default 8787)
+  --port <port>       Listen port (default 8787, 0 picks a free port)
   --data-dir <path>   SQLite and runtime data
   --web-root <path>   Built frontend directory
   --tls-cert <pem>    Serve the workbench UI over HTTPS
@@ -166,46 +158,108 @@ uvscope [options]
   --version           Print version and exit
 ```
 
+Hidden child modes (`--proxy-child`, `--listener-child`, `--socks5-child`, `--terminal-child`,
+`--ipc-child`) are spawned by the daemon and are not meant to be invoked by hand.
+
+## Isolation and supervision
+
+Proxies, TCP/UDP listeners, SOCKS5 servers and virtual terminals accept `isolated: true`. The
+parent process keeps the API state, scrollback and ownership metadata; the service runs in a
+child process and talks to the parent over a length-prefixed JSON IPC channel.
+
+All four service kinds are registered with one desired-state supervisor:
+
+- a crashed child is restarted with exponential backoff (2–60 s) and a new PID;
+- restart counts and events are visible in `/api/supervisor` and `/api/supervisor/events`;
+- stopping a service clears its desired state, so the watchdog leaves it down;
+- deleting a service unregisters it before teardown;
+- a normal terminal `exit` is **not** a crash — the child stays alive so scrollback and the exit
+  code remain readable. A crashed terminal is respawned with a fresh shell, and attached
+  WebSocket clients receive a `reset` frame before the new output.
+
+See [Service supervisor](docs/API.md#service-supervisor) for the API and
+[Architecture](docs/ARCHITECTURE.md#process-model) for the process model.
+
 ## Architecture
 
 ```text
 Vue 3 SPA (multi-tab, cached workspaces)
-        │  same-origin HTTP + cookies
+        │ same-origin HTTP + WebSocket + cookies
         ▼
 uvscope daemon (C++17 / libuvcpp)
-  ├─ auth + RBAC + SQLite (single writer)
+  ├─ auth + RBAC + SQLite + audit + backup
   ├─ HTTP API and static asset server
-  ├─ protocol probes (HTTP/TCP/UDP/TLS)
-  └─ reverse proxy runtimes (one libuv loop each)
-        │
-        └─ libuvcpp → libuv → sockets
+  ├─ probes, debug sessions and terminal sessions
+  ├─ desired-state supervisor
+  └─ optional child processes (isolated services)
+        ├─ reverse proxy runtime
+        ├─ TCP/UDP listener runtime
+        ├─ SOCKS5 server runtime
+        └─ terminal PTY / ConPTY
+              │
+              └─ libuvcpp → libuv → sockets
 ```
 
-The daemon is the only process that opens outbound sockets in the default Daemon mode. The
-WebSocket view also offers a browser-native mode, because origin, mixed-content and certificate
-prompts are part of what is being debugged.
+The daemon is the only process that serves the UI and owns SQLite. In the default in-process
+mode it also owns every outbound socket; with isolation enabled, a service opens its own sockets
+inside its child process. The WebSocket view additionally offers a browser-native mode because
+origin, mixed-content and certificate prompts are part of what is being debugged.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the data model and request flow.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the data model and request flows.
 
-## Security notes
+## Supported platforms
 
-- Default bind is `127.0.0.1`. Do not expose uvscope to an untrusted network.
+| Platform | Release | Notes |
+| --- | --- | --- |
+| Linux x64 | tar.gz, deb, rpm | Primary CI and smoke matrix |
+| Linux arm64 | tar.gz, deb, rpm | Release build and self-check |
+| Windows x64 (MinGW) | zip, setup.exe | CI build, self-check and ConPTY smoke |
+| macOS arm64 | tar.gz | CI build, self-check and HTTP/2 runtime check |
+| Windows arm64 | — | Post-1.0 (MSYS2 CLANGARM64 is still preview) |
+| HTTP/3 / QUIC | Experimental | Requires an OpenSSL 3.2+ SDK build; closed in release builds |
+
+## Security model
+
+- Default bind is `127.0.0.1`. Do not expose uvscope to an untrusted network without an
+  authenticating proxy.
 - Passwords are PBKDF2-HMAC-SHA256 (210,000 iterations); sessions are server-side and stored as
   SHA-256 token hashes. Cookies are `HttpOnly` + `SameSite=Lax`.
-- The reverse proxy and HTTP Studio can reach internal services. Treat access to uvscope as
-  equivalent to code execution on the host network.
-- Use the TLS Inspector and `Allow insecure TLS` only on systems you control.
-- Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
+- Anyone who can authenticate can reach the host network, start listeners/proxies, and — when the
+  terminal module is enabled — obtain a shell as the daemon user. Treat access as equivalent to
+  code execution on that host.
+- Isolated services run as the same OS user; isolation is a fault boundary, not a security
+  sandbox.
+- Use the TLS Inspector and “Allow insecure TLS” only against systems you control.
+- Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
-- [Development plan (中文)](docs/DEVELOPMENT_PLAN.zh-CN.md)
+- **Documentation site**: <https://antruly.github.io/uvscope/>
 - [Architecture](docs/ARCHITECTURE.md)
 - [HTTP API](docs/API.md)
+- [Event schema](docs/EVENTS.md)
+- [Extending uvscope](docs/EXTENDING.md)
+- [Performance baselines](docs/PERFORMANCE.md)
+- [Operations](docs/OPERATIONS.md)
 - [Building and packaging](docs/BUILDING.md)
 - [Roadmap](ROADMAP.md)
-- [Agent guide](AGENTS.md)
 - [Changelog](CHANGELOG.md)
+- [Development plan (中文)](docs/DEVELOPMENT_PLAN.zh-CN.md)
+- [Agent guide](AGENTS.md)
+
+## Development
+
+```sh
+npm --prefix web ci
+npm --prefix web run build           # typecheck + bundle
+./scripts/build.sh                   # SDK, frontend, daemon, self-check
+bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788
+./scripts/h2-smoke.sh ./build/uvscope 18820 18821
+./scripts/bench.sh ./build/uvscope
+mkdocs serve                         # documentation site (pip install mkdocs-material)
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and verification rules.
 
 ## License
 

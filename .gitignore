@@ -19,6 +19,10 @@ dist/
 web/node_modules/
 web/dist/
 web/.vite/
+
+# Documentation site
+site/
+.cache/
 npm-debug.log*
 yarn-error.log*
 

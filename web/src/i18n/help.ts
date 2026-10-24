@@ -22,16 +22,16 @@ const en: Record<string, string> = {
     'Send any method, tune headers and body, and read status, timing and raw bytes. Ctrl+Enter sends from anywhere in the request pane.',
   'help.modules.websocket.title': 'WebSocket console',
   'help.modules.websocket.text':
-    'Connects from the browser, so the URL must be reachable by this machine. Text and hex frames are captured in the tab while it is cached.',
+    'Use a daemon-side backend session to send handshake headers, subprotocols and ping/pong frames, or switch to browser-native mode when origin, mixed-content or certificate prompts are part of the test.',
   'help.modules.listeners.title': 'TCP / UDP servers',
   'help.modules.listeners.text':
     'Bind a local TCP or UDP port, inspect accepted sessions or datagrams, and send replies from the workbench. Listener configs persist and can auto-start with the daemon.',
   'help.modules.terminal.title': 'Virtual terminal',
   'help.modules.terminal.text':
-    'A real server-side PTY per user. Sessions keep running when you refresh or switch menus; use Ctrl+Shift+C/V for copy and paste. The quick bar and command library provide searchable Linux/Windows snippets that can be pinned, edited or extended. Admins can list and close every user terminal. The module is off by default because it grants shell access.',
+    'A real server-side PTY per user. Sessions keep running when you refresh or switch menus; use Ctrl+Shift+C/V for copy and paste. “Run the shell in a child process” isolates the PTY; a crashed child is restarted with a fresh shell and the output stream resets. The quick bar and command library provide searchable Linux/Windows snippets that can be pinned, edited or extended. Admins can list and close every user terminal. The module is off by default because it grants shell access.',
   'help.modules.socks5.title': 'SOCKS5 server',
   'help.modules.socks5.text':
-    'Run a local SOCKS5 proxy with optional username/password authentication. Each server has its own loop; sessions show the command, target, peer and rejection reason. Byte counters are not available from the runtime, so none are shown.',
+    'Run a local SOCKS5 proxy with optional username/password authentication. Each server has its own loop; sessions show the command, target, peer, byte counters, datagrams and rejection reason. Servers can run in a supervised child process.',
   'help.modules.tcpudp.title': 'TCP / UDP bench',
   'help.modules.tcpudp.text':
     'One-shot probes through libuvcpp, plus persistent TCP sessions with repeated sends and a per-session event log. Hex mode accepts spaced, colon-separated or plain hex payloads.',
@@ -46,7 +46,7 @@ const en: Record<string, string> = {
     'Decodes a PEM bundle certificate by certificate, or one DER certificate. You can also fetch an https:// URL directly to capture the live peer chain, ALPN and verification result, and manage server certificates: generate self-signed or local-CA-signed RSA/ECDSA certificates with SANs, import a certificate/key pair for the reverse proxy, and renew generated certificates in place. Install the local root certificate on clients that should trust your proxies.',
   'help.modules.proxy.title': 'Reverse proxy',
   'help.modules.proxy.text':
-    'Each listener owns a host:port and forwards HTTP/1.1 requests to one upstream. Ordered exact/prefix/regex rules can redirect or rewrite paths before forwarding; logs stream into the gateway panel every few seconds.',
+    'Each proxy owns a host:port and forwards HTTP requests to a target or a weighted upstream pool, with retries, health checks, a circuit breaker and WebSocket pass-through. Ordered exact/prefix/regex rules can redirect or rewrite paths first. Proxies can run in a supervised child process; logs and metrics stream into the gateway panel.',
 
   'help.keyboard': 'Keyboard',
   'help.shortcuts': 'Shortcuts',
@@ -62,7 +62,11 @@ const en: Record<string, string> = {
   'help.note.sessions': 'Sessions',
   'help.note.sessionsText': 'HttpOnly cookie, seven-day expiry, server-side lookup.',
   'help.note.network': 'Network',
-  'help.note.networkText': 'All requests originate from the uvscope daemon, not the browser.',
+  'help.note.networkText':
+    'Probes and backend sessions originate from the uvscope daemon; the WebSocket view also offers a browser-native mode.',
+  'help.note.isolation': 'Isolation',
+  'help.note.isolationText':
+    'Proxies, listeners, SOCKS5 servers and terminals can run in supervised child processes. A crashed child restarts with a new PID; stopping a service clears its desired state.',
   'help.note.preview': 'Preview',
   'help.note.previewText':
     'Sandboxed HTML never runs scripts. Remote images and media load only after you tick the option.',
@@ -121,16 +125,16 @@ const zh: Record<string, string> = {
     '发送任意方法，调整 Header 与请求体，查看状态、耗时与原始字节。在请求面板任意位置按 Ctrl+Enter 即可发送。',
   'help.modules.websocket.title': 'WebSocket 控制台',
   'help.modules.websocket.text':
-    '由浏览器发起连接，因此 URL 必须能从本机访问。标签页缓存期间会捕获文本与十六进制帧。',
+    '使用守护进程侧后端会话可自定义握手 Header、子协议并发送 ping/pong；也可切换到浏览器原生模式，用于验证 Origin、混合内容或证书提示。',
   'help.modules.listeners.title': 'TCP / UDP 服务端',
   'help.modules.listeners.text':
     '绑定本地 TCP 或 UDP 端口，检查接入会话或数据报，并在工作台内直接回复。监听配置会持久化，并随守护进程自动启动。',
   'help.modules.terminal.title': '虚拟终端',
   'help.modules.terminal.text':
-    '每个用户一个真实的服务端 PTY。刷新或切换菜单不会终止会话；复制粘贴使用 Ctrl+Shift+C/V。快捷栏与命令库提供可搜索的 Linux/Windows 命令，可固定、编辑或扩展。管理员可列出并关闭所有用户的终端。该模块默认关闭，因为开启等于授予 Shell 权限。',
+    '每个用户一个真实的服务端 PTY。刷新或切换菜单不会终止会话；复制粘贴使用 Ctrl+Shift+C/V。勾选“在子进程中运行 Shell”可隔离 PTY；子进程崩溃后会自动拉起新的 Shell，输出流随之重置。快捷栏与命令库提供可搜索的 Linux/Windows 命令，可固定、编辑或扩展。管理员可列出并关闭所有用户的终端。该模块默认关闭，因为开启等于授予 Shell 权限。',
   'help.modules.socks5.title': 'SOCKS5 服务端',
   'help.modules.socks5.text':
-    '运行本地 SOCKS5 代理，可选用户名密码认证。每个服务端独占一条事件循环；会话显示命令、目标、来源与拒绝原因。运行时没有字节计数，因此界面不显示。',
+    '运行本地 SOCKS5 代理，可选用户名密码认证。每个服务端独占一条事件循环；会话显示命令、目标、来源、字节计数、数据报与拒绝原因。服务端可在受监督的子进程中运行。',
   'help.modules.tcpudp.title': 'TCP / UDP 调试台',
   'help.modules.tcpudp.text':
     '通过 libuvcpp 执行一次性探测，并支持可连续发送、带逐会话事件日志的持久 TCP 会话。十六进制模式支持带空格、冒号分隔或纯十六进制负载。',
@@ -145,7 +149,7 @@ const zh: Record<string, string> = {
     '逐张解析 PEM 证书包，或解析单张 DER 证书。也可以直接抓取 https:// 地址，获取实时证书链、ALPN 与校验结果，并管理服务端证书：生成带 SAN 的自签名或本地 CA 签发的 RSA/ECDSA 证书、导入证书/私钥供反向代理使用，以及原地续期已生成证书。需要信任本地代理的客户端应安装本地根证书。',
   'help.modules.proxy.title': '反向代理',
   'help.modules.proxy.text':
-    '每个监听器占用一个 host:port，并将 HTTP/1.1 请求转发到一个上游。按顺序执行的精确/前缀/正则规则可以在转发前跳转或改写路径；日志每隔几秒流入网关面板。',
+    '每个代理占用一个 host:port，将 HTTP 请求转发到目标或加权上游池，并支持重试、健康检查、熔断与 WebSocket 透传。按顺序执行的精确/前缀/正则规则可以在转发前跳转或改写路径。代理可在受监督的子进程中运行；日志与指标持续流入网关面板。',
 
   'help.keyboard': '键盘',
   'help.shortcuts': '快捷键',
@@ -161,7 +165,11 @@ const zh: Record<string, string> = {
   'help.note.sessions': '会话',
   'help.note.sessionsText': 'HttpOnly Cookie，七天过期，服务端查询。',
   'help.note.network': '网络',
-  'help.note.networkText': '所有请求均由 uvscope 守护进程发起，而非浏览器。',
+  'help.note.networkText':
+    '探测与后端会话由 uvscope 守护进程发起；WebSocket 视图另提供浏览器原生模式。',
+  'help.note.isolation': '隔离',
+  'help.note.isolationText':
+    '反向代理、监听器、SOCKS5 服务端与终端可在受监督的子进程中运行。子进程崩溃后会以新 PID 重启；停止服务会清除期望状态。',
   'help.note.preview': '预览',
   'help.note.previewText': '沙箱 HTML 从不执行脚本。远程图片与媒体仅在勾选选项后加载。',
   'help.note.language': '语言与主题',
