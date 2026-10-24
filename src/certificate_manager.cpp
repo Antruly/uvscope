@@ -337,7 +337,9 @@ bool build_ca(const std::string& common_name, int days, CertificateMaterial* out
 
 std::string certificate_common_name(X509* cert) {
   if (cert == nullptr) return {};
-  X509_NAME* name = X509_get_subject_name(cert);
+  // <wincred.h> (pulled in by uv.h) defines X509_NAME as a credential type,
+  // so the typedef is unusable after that include. Use the struct tag directly.
+  struct X509_name_st* name = X509_get_subject_name(cert);
   const int index = X509_NAME_get_index_by_NID(name, NID_commonName, -1);
   if (index < 0) return {};
   ASN1_STRING* data = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(name, index));
