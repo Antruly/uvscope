@@ -242,7 +242,8 @@ void upstream_timeout(uv_timer_t* timer) {
 }
 
 void run_ws_upstream(std::shared_ptr<WsRelay> relay, std::string url,
-                     bool tls, std::vector<std::pair<std::string, std::string>> headers) {
+                     bool tls, std::vector<std::pair<std::string, std::string>> headers,
+                     int connect_timeout_ms) {
   uvcpp::uvcpp_ssl_context ssl(uvcpp::tls_mode::CLIENT, uvcpp::tls_version::TLS_1_2);
   uvcpp::uvcpp_ws_client client;
   if (tls) {
@@ -273,7 +274,8 @@ void run_ws_upstream(std::shared_ptr<WsRelay> relay, std::string url,
   wake->data = new WsUpstreamContext(context);
   timer->data = new WsUpstreamContext(context);
   relay->wake.store(wake);
-  uv_timer_start(timer, upstream_timeout, 15000, 0);
+  uv_timer_start(timer, upstream_timeout,
+                 static_cast<std::uint64_t>(std::max(100, connect_timeout_ms)), 0);
 
   client.on_text([relay](const std::string& message) {
     relay_to_downstream(relay, 1, message);
@@ -334,6 +336,8 @@ struct ProxyHttpJob {
   std::vector<std::pair<std::string, std::string>> headers;
   bool idempotent = false;
   int max_attempts = 1;
+  int connect_timeout_ms = 15000;
+  int request_timeout_ms = 30000;
   std::string path;
   std::string query;
   bool rewritten = false;
@@ -409,7 +413,8 @@ ProxyHttpResult run_proxy_job(const ProxyHttpJob& job) {
     uvcpp::uvcpp_http_client client;
     if (ssl) client.set_ssl_context(ssl.get());
     ++attempts;
-    const int connect_rc = client.connect_wait(target.host.c_str(), target.port, 15000);
+    const int connect_rc = client.connect_wait(target.host.c_str(), target.port,
+                                               job.connect_timeout_ms);
     if (connect_rc != 0) {
       rc = connect_rc;
       last_error = uv_error_string(connect_rc);
@@ -417,8 +422,9 @@ ProxyHttpResult run_proxy_job(const ProxyHttpJob& job) {
       continue;
     }
     uvcpp::uvcpp_http_response attempt_response;
-    const int send_rc = ssl ? client.send_wait_ssl(upstream, attempt_response, 30000)
-                            : client.send_wait_plain(upstream, attempt_response, 30000);
+    const int send_rc =
+        ssl ? client.send_wait_ssl(upstream, attempt_response, job.request_timeout_ms)
+            : client.send_wait_plain(upstream, attempt_response, job.request_timeout_ms);
     if (send_rc != 0) {
       rc = send_rc;
       last_error = uv_error_string(send_rc);
@@ -608,7 +614,6 @@ struct ProxyManager::Runtime {
   // Upstream requests run on this proxy's own worker pool, so a slow target
   // cannot block the proxy loop that accepts downstream connections.
   static constexpr std::size_t kMaxHttpJobs = 32;
-  static constexpr int kHttpWorkers = 4;
   std::mutex http_mutex;
   std::condition_variable http_cv;
   std::deque<std::shared_ptr<ProxyHttpJob>> http_queue;
@@ -618,7 +623,8 @@ struct ProxyManager::Runtime {
   void start_http_workers() {
     http_stopping.store(false);
     if (!http_workers.empty()) return;
-    for (int i = 0; i < kHttpWorkers; ++i) {
+    const int workers = std::max(1, std::min(config.workers, 16));
+    for (int i = 0; i < workers; ++i) {
       http_workers.emplace_back([this] { http_worker_loop(); });
     }
   }
@@ -930,6 +936,8 @@ struct ProxyManager::Runtime {
     job->idempotent = request_method == "get" || request_method == "head" ||
                       request_method == "options" || request_method == "trace";
     job->max_attempts = 1 + std::min(3, std::max(0, config.retries));
+    job->connect_timeout_ms = config.connect_timeout_ms;
+    job->request_timeout_ms = config.request_timeout_ms;
     job->path = path;
     job->query = query;
     job->rewritten = rewritten;
@@ -1087,7 +1095,9 @@ struct ProxyManager::Runtime {
       }
       headers.emplace_back(header.name, header.value);
     }
-    std::thread(run_ws_upstream, relay, url, tls, std::move(headers)).detach();
+    std::thread(run_ws_upstream, relay, url, tls, std::move(headers),
+                config.connect_timeout_ms)
+        .detach();
   }
 
   ~Runtime() {

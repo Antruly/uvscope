@@ -72,6 +72,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Backup download and staged restore (migrations still ad hoc)
 - [~] In-process service supervisor with desired-state restarts
 - [x] Proxy upstream I/O off the proxy loop (bounded per-instance worker pool)
+- [x] Configurable upstream connect/request timeouts and worker count
 - [ ] Process isolation + IPC for long-lived services
 
 ## 1.0 — stable

@@ -20,6 +20,7 @@ WS_PROXY_PORT="${15:-18800}"
 WS_ROUTE_PORT="${16:-18801}"
 ASYNC_PROXY_PORT="${17:-18802}"
 ERROR_PROXY_PORT="${18:-18803}"
+TIMEOUT_PROXY_PORT="${19:-18804}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -588,7 +589,7 @@ PY
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
 PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" WS_PORT="${WS_PORT}" WS_PROXY_PORT="${WS_PROXY_PORT}" \
 WS_ROUTE_PORT="${WS_ROUTE_PORT}" ASYNC_PROXY_PORT="${ASYNC_PROXY_PORT}" \
-ERROR_PROXY_PORT="${ERROR_PROXY_PORT}" \
+ERROR_PROXY_PORT="${ERROR_PROXY_PORT}" TIMEOUT_PROXY_PORT="${TIMEOUT_PROXY_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -701,11 +702,15 @@ class SlowProxyHandler(http.server.BaseHTTPRequestHandler):
             body = b"slow-ok"
         else:
             body = b"fast-ok"
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # The proxy may have hit its request timeout and closed first.
+            pass
 
 
 slow_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), SlowProxyHandler)
@@ -1428,6 +1433,9 @@ status, created = call("POST", "/api/proxies", {
     "listenHost": "127.0.0.1",
     "listenPort": int(os.environ["ASYNC_PROXY_PORT"]),
     "target": f"http://127.0.0.1:{slow_proxy_port}",
+    "connectTimeoutMs": 5000,
+    "requestTimeoutMs": 5000,
+    "workers": 2,
     "start": True,
     "rules": [],
 })
@@ -1435,6 +1443,10 @@ async_proxy = next((item for item in created.get("proxies", [])
                     if item.get("name") == "smoke-async-proxy"), {})
 check(status == 200 and created.get("ok") is True and bool(async_proxy.get("id")),
       f"async proxy creation failed: {created}")
+check(async_proxy.get("workers") == 2 and
+      async_proxy.get("connectTimeoutMs") == 5000 and
+      async_proxy.get("requestTimeoutMs") == 5000,
+      f"proxy upstream tuning was not persisted: {async_proxy}")
 if async_proxy.get("id"):
     base_async = f"http://127.0.0.1:{os.environ['ASYNC_PROXY_PORT']}"
     ready = False
@@ -1506,6 +1518,49 @@ if error_proxy.get("id"):
     status, deleted = call("DELETE", f"/api/proxies/{error_proxy['id']}")
     check(status == 200 and deleted.get("ok") is True,
           f"error proxy delete failed: {deleted}")
+
+# Configurable request timeout: 500 ms against the 2 s slow origin.
+status, created = call("POST", "/api/proxies", {
+    "name": "smoke-timeout-proxy",
+    "listenHost": "127.0.0.1",
+    "listenPort": int(os.environ["TIMEOUT_PROXY_PORT"]),
+    "target": f"http://127.0.0.1:{slow_proxy_port}",
+    "connectTimeoutMs": 1000,
+    "requestTimeoutMs": 500,
+    "workers": 1,
+    "start": True,
+    "rules": [],
+})
+timeout_proxy = next((item for item in created.get("proxies", [])
+                      if item.get("name") == "smoke-timeout-proxy"), {})
+check(status == 200 and created.get("ok") is True and bool(timeout_proxy.get("id")),
+      f"timeout proxy creation failed: {created}")
+check(timeout_proxy.get("requestTimeoutMs") == 500 and
+      timeout_proxy.get("connectTimeoutMs") == 1000 and
+      timeout_proxy.get("workers") == 1,
+      f"timeout proxy tuning was not persisted: {timeout_proxy}")
+if timeout_proxy.get("id"):
+    timeout_payload = {}
+    started = time.time()
+    for _ in range(50):
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{os.environ['TIMEOUT_PROXY_PORT']}/slow", timeout=5)
+        except urllib.error.HTTPError as error:
+            if error.code == 502:
+                timeout_payload = json.loads(error.read())
+                break
+        except Exception:
+            pass
+        time.sleep(0.1)
+    timeout_elapsed = time.time() - started
+    check(bool(timeout_payload.get("detail")),
+          f"request timeout did not return a structured 502: {timeout_payload}")
+    check(timeout_elapsed < 3.0,
+          f"configured request timeout was not applied ({timeout_elapsed:.2f}s)")
+    status, deleted = call("DELETE", f"/api/proxies/{timeout_proxy['id']}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"timeout proxy delete failed: {deleted}")
 
 if os.environ.get("WS_PROXY_PORT") and os.environ.get("WS_PORT"):
     status, created = call("POST", "/api/proxies", {

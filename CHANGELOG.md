@@ -6,6 +6,14 @@ All notable changes to uvscope are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Reverse proxies accept per-instance `connectTimeoutMs` (100–120000, default 15000),
+  `requestTimeoutMs` (100–300000, default 30000) and `workers` (1–16, default 4). The values
+  persist in SQLite with an automatic migration for existing databases, apply to HTTP upstreams
+  and WebSocket upgrades, and are editable in the proxy editor. The smoke test covers
+  persistence and a 500 ms request timeout returning a structured 502.
+
 ### Changed
 
 - Reverse-proxy upstream requests now run on a per-proxy worker pool (4 threads, 32 queued

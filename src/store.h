@@ -136,6 +136,10 @@ struct ProxyConfig {
   std::string target;  // primary upstream; used when upstreams is empty
   std::vector<ProxyUpstream> upstreams;
   int retries = 0;
+  // Upstream I/O tuning. Clamped when loaded from SQLite and when saved.
+  int connect_timeout_ms = 15000;
+  int request_timeout_ms = 30000;
+  int workers = 4;
   bool auto_start = false;
   bool tls = false;
   std::string cert_path;

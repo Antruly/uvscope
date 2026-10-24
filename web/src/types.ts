@@ -121,6 +121,9 @@ export interface ProxyInfo {
   target: string
   upstreams?: ProxyUpstream[]
   retries?: number
+  connectTimeoutMs?: number
+  requestTimeoutMs?: number
+  workers?: number
   autoStart: boolean
   tls: boolean
   certConfigured?: boolean

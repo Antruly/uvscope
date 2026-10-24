@@ -88,7 +88,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 | POST | `/api/preview` | `{html, baseUrl, mode: safe\|scripts}` → `{id, url}` preview token (8 MiB, 120 s) |
 | DELETE | `/api/preview/:id` | Drop a preview token |
 | GET | `/preview/:id` | Token-based HTML with `CSP: sandbox allow-scripts` (no auth) |
-| POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, upstreams[], retries, autoStart, tls, certPath, keyPath, rules[], start}` |
+| POST | `/api/proxies` | `{id?, name, listenHost, listenPort, target, upstreams[], retries, connectTimeoutMs, requestTimeoutMs, workers, autoStart, tls, certPath, keyPath, rules[], start}` |
 | POST | `/api/proxies/:id/start` | Start a proxy |
 | POST | `/api/proxies/:id/stop` | Stop a proxy |
 | DELETE | `/api/proxies/:id` | Stop and delete a proxy |
@@ -370,10 +370,20 @@ Deleting a certificate still referenced by a proxy returns `409 certificate_in_u
 
 ## Reverse proxy routing rules
 
-Upstream requests run on a per-instance worker pool (4 threads, 32 queued jobs). The listener loop
-only resolves rules and writes the result back, so a slow upstream does not block other requests
-on the same proxy. A full queue returns `503` with `proxy is stopping or overloaded`. Stopping a
-proxy waits for in-flight upstream requests before closing the listener.
+Upstream requests run on a per-instance worker pool (default 4 threads, 32 queued jobs). The
+listener loop only resolves rules and writes the result back, so a slow upstream does not block
+other requests on the same proxy. A full queue returns `503` with
+`proxy is stopping or overloaded`. Stopping a proxy waits for in-flight upstream requests before
+closing the listener.
+
+Per-proxy tuning fields are stored in SQLite and applied when the proxy starts:
+
+- `connectTimeoutMs`: 100–120000, default 15000.
+- `requestTimeoutMs`: 100–300000, default 30000 (per upstream attempt).
+- `workers`: 1–16, default 4.
+
+The same connect timeout applies to WebSocket upgrade attempts. Omitted fields keep the existing
+value on update, or the default for a new proxy.
 
 `POST /api/proxies` accepts an ordered `rules` array (max 64). The first enabled matching rule
 wins. A rule is:

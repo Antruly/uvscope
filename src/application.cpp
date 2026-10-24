@@ -3097,6 +3097,9 @@ nlohmann::json Application::proxy_view() const {
                            {"target", config.target},
                            {"upstreams", proxy_upstreams_json(config.upstreams)},
                            {"retries", config.retries},
+                           {"connectTimeoutMs", config.connect_timeout_ms},
+                           {"requestTimeoutMs", config.request_timeout_ms},
+                           {"workers", config.workers},
                            {"autoStart", config.auto_start},
                            {"tls", config.tls},
                            {"certConfigured", !config.cert_path.empty()},
@@ -3184,6 +3187,28 @@ void Application::register_proxy_routes() {
                                                : (existing ? existing->retries : 0);
     if (config.retries < 0 || config.retries > 3) {
       send_error(resp, 400, "retries must be between 0 and 3", "bad_request");
+      return;
+    }
+    config.connect_timeout_ms =
+        body->contains("connectTimeoutMs")
+            ? int_field(*body, "connectTimeoutMs", 15000)
+            : (existing ? existing->connect_timeout_ms : 15000);
+    if (config.connect_timeout_ms < 100 || config.connect_timeout_ms > 120000) {
+      send_error(resp, 400, "connectTimeoutMs must be between 100 and 120000", "bad_request");
+      return;
+    }
+    config.request_timeout_ms =
+        body->contains("requestTimeoutMs")
+            ? int_field(*body, "requestTimeoutMs", 30000)
+            : (existing ? existing->request_timeout_ms : 30000);
+    if (config.request_timeout_ms < 100 || config.request_timeout_ms > 300000) {
+      send_error(resp, 400, "requestTimeoutMs must be between 100 and 300000", "bad_request");
+      return;
+    }
+    config.workers = body->contains("workers") ? int_field(*body, "workers", 4)
+                                               : (existing ? existing->workers : 4);
+    if (config.workers < 1 || config.workers > 16) {
+      send_error(resp, 400, "workers must be between 1 and 16", "bad_request");
       return;
     }
     if (config.target.empty() && !config.upstreams.empty()) {
