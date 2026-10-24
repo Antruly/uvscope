@@ -51,6 +51,9 @@ const en: Record<string, string> = {
   'proxy.editor.listenPort': 'Listen port',
   'proxy.editor.target': 'Primary upstream',
   'proxy.editor.retries': 'Retry attempts',
+  'proxy.editor.connectTimeout': 'Connect timeout (ms)',
+  'proxy.editor.requestTimeout': 'Request timeout (ms)',
+  'proxy.editor.workers': 'Upstream workers',
   'proxy.upstreams.title': 'Additional upstreams',
   'proxy.upstreams.hint':
     'Requests are distributed across all upstreams by weight. Retries fail over to another upstream; non-idempotent requests are only retried when the connection could not be established.',
@@ -168,6 +171,9 @@ const zh: Record<string, string> = {
   'proxy.editor.listenPort': '监听端口',
   'proxy.editor.target': '主上游',
   'proxy.editor.retries': '重试次数',
+  'proxy.editor.connectTimeout': '连接超时（ms）',
+  'proxy.editor.requestTimeout': '请求超时（ms）',
+  'proxy.editor.workers': '上游 worker 数',
   'proxy.upstreams.title': '附加上游',
   'proxy.upstreams.hint':
     '请求按权重分配到所有上游。失败时会重试并切换到其他上游；非幂等请求只会在连接未建立时重试。',

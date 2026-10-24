@@ -267,6 +267,9 @@ bool Store::migrate(std::string* error) {
            rules_json TEXT NOT NULL DEFAULT '[]',
            upstreams_json TEXT NOT NULL DEFAULT '[]',
            retries INTEGER NOT NULL DEFAULT 0,
+           connect_timeout_ms INTEGER NOT NULL DEFAULT 15000,
+           request_timeout_ms INTEGER NOT NULL DEFAULT 30000,
+           workers INTEGER NOT NULL DEFAULT 4,
            created_at TEXT NOT NULL,
            updated_at TEXT NOT NULL
          ))",
@@ -312,10 +315,16 @@ bool Store::migrate(std::string* error) {
   }
   bool has_upstreams_column = false;
   bool has_retries_column = false;
+  bool has_connect_timeout_column = false;
+  bool has_request_timeout_column = false;
+  bool has_workers_column = false;
   if (const auto columns = query("PRAGMA table_info(proxies)")) {
     for (const auto& row : columns->rows()) {
       if (row["name"].to_text() == "upstreams_json") has_upstreams_column = true;
       if (row["name"].to_text() == "retries") has_retries_column = true;
+      if (row["name"].to_text() == "connect_timeout_ms") has_connect_timeout_column = true;
+      if (row["name"].to_text() == "request_timeout_ms") has_request_timeout_column = true;
+      if (row["name"].to_text() == "workers") has_workers_column = true;
     }
   }
   if (!has_upstreams_column) {
@@ -325,6 +334,23 @@ bool Store::migrate(std::string* error) {
   }
   if (!has_retries_column) {
     if (!exec("ALTER TABLE proxies ADD COLUMN retries INTEGER NOT NULL DEFAULT 0", error)) {
+      return false;
+    }
+  }
+  if (!has_connect_timeout_column) {
+    if (!exec("ALTER TABLE proxies ADD COLUMN connect_timeout_ms INTEGER NOT NULL DEFAULT 15000",
+              error)) {
+      return false;
+    }
+  }
+  if (!has_request_timeout_column) {
+    if (!exec("ALTER TABLE proxies ADD COLUMN request_timeout_ms INTEGER NOT NULL DEFAULT 30000",
+              error)) {
+      return false;
+    }
+  }
+  if (!has_workers_column) {
+    if (!exec("ALTER TABLE proxies ADD COLUMN workers INTEGER NOT NULL DEFAULT 4", error)) {
       return false;
     }
   }
@@ -895,6 +921,7 @@ std::vector<ProxyConfig> Store::proxies() const {
   std::vector<ProxyConfig> out;
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"
                            "cert_path,key_path,rules_json,upstreams_json,retries,"
+                           "connect_timeout_ms,request_timeout_ms,workers,"
                            "created_at,updated_at FROM proxies ORDER BY name");
   if (!table) return out;
   for (const auto& row : table->rows()) out.push_back(row_to_proxy(row));
@@ -904,6 +931,7 @@ std::vector<ProxyConfig> Store::proxies() const {
 std::optional<ProxyConfig> Store::proxy(const std::string& id) const {
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"
                            "cert_path,key_path,rules_json,upstreams_json,retries,"
+                           "connect_timeout_ms,request_timeout_ms,workers,"
                            "created_at,updated_at FROM proxies WHERE id = ?",
                            {id});
   if (!table || table->empty()) return std::nullopt;
@@ -914,18 +942,24 @@ bool Store::save_proxy(const ProxyConfig& proxy, std::string* error) {
   const std::string now = now_iso8601();
   return exec(
       "INSERT INTO proxies(id,name,listen_host,listen_port,target,auto_start,tls,cert_path,key_path,"
-      "rules_json,upstreams_json,retries,created_at,updated_at) "
-      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+      "rules_json,upstreams_json,retries,connect_timeout_ms,request_timeout_ms,workers,"
+      "created_at,updated_at) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
       "ON CONFLICT(id) DO UPDATE SET name=excluded.name, listen_host=excluded.listen_host, "
       "listen_port=excluded.listen_port, target=excluded.target, auto_start=excluded.auto_start, "
       "tls=excluded.tls, cert_path=excluded.cert_path, key_path=excluded.key_path, "
       "rules_json=excluded.rules_json, upstreams_json=excluded.upstreams_json, "
-      "retries=excluded.retries, updated_at=excluded.updated_at",
+      "retries=excluded.retries, connect_timeout_ms=excluded.connect_timeout_ms, "
+      "request_timeout_ms=excluded.request_timeout_ms, workers=excluded.workers, "
+      "updated_at=excluded.updated_at",
       {proxy.id, proxy.name, proxy.listen_host, proxy.listen_port, proxy.target,
        proxy.auto_start ? 1 : 0, proxy.tls ? 1 : 0, proxy.cert_path, proxy.key_path,
        proxy_rules_to_json(proxy.rules).dump(),
        proxy_upstreams_to_json(proxy.upstreams).dump(),
        std::max(0, std::min(proxy.retries, 3)),
+       std::max(100, std::min(proxy.connect_timeout_ms, 120000)),
+       std::max(100, std::min(proxy.request_timeout_ms, 300000)),
+       std::max(1, std::min(proxy.workers, 16)),
        proxy.created_at.empty() ? now : proxy.created_at, now},
       error);
 }
@@ -1231,6 +1265,19 @@ ProxyConfig Store::row_to_proxy(const uvcpp::uvcpp_db_row& row) {
   p.upstreams = proxy_upstreams_from_json(
       row.has("upstreams_json") ? row["upstreams_json"].to_text() : std::string("[]"));
   p.retries = row.has("retries") ? static_cast<int>(row["retries"].to_int64()) : 0;
+  p.connect_timeout_ms =
+      row.has("connect_timeout_ms")
+          ? std::max(100, std::min(120000,
+                                   static_cast<int>(row["connect_timeout_ms"].to_int64())))
+          : 15000;
+  p.request_timeout_ms =
+      row.has("request_timeout_ms")
+          ? std::max(100, std::min(300000,
+                                   static_cast<int>(row["request_timeout_ms"].to_int64())))
+          : 30000;
+  p.workers = row.has("workers")
+                  ? std::max(1, std::min(16, static_cast<int>(row["workers"].to_int64())))
+                  : 4;
   p.created_at = row["created_at"].to_text();
   p.updated_at = row["updated_at"].to_text();
   return p;

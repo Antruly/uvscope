@@ -43,12 +43,16 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 - **Short-lived work**: HTTP/TCP/UDP/TLS probes run on the libuv thread pool through `uvcpp_work`; the
   response is written back on the event-loop thread.
 - **Reverse proxy runtimes**: each running proxy is a `uvcpp_web_app` with its own event loop and
-  thread. Each runtime also owns four upstream worker threads and a bounded queue (32). The proxy
-  loop resolves rules, snapshots the request and enqueues it; workers run the blocking libuvcpp
-  client and post the result back with `app->post`, so a slow upstream cannot block other
-  connections on the same proxy. A full queue returns `503`. Upstream timeouts remain 15 s for
-  connect and 30 s for send. Stopping a proxy joins its workers and drains posted completions
-  before stopping the app.
+  thread. Each runtime also owns a configurable upstream worker pool (default 4 threads) and a
+  bounded queue (32). The proxy loop resolves rules, snapshots the request and enqueues it;
+  workers run the blocking libuvcpp client and post the result back with `app->post`, so a slow
+  upstream cannot block other connections on the same proxy. A full queue returns `503`.
+  Connect and request timeouts are per-proxy (defaults 15 s / 30 s). Config changes that only
+  touch the name, target/upstreams, retries, timeouts or rules are hot-swapped under a versioned
+  snapshot; the listener and worker pool stay up. Listener, TLS certificate and worker-count
+  changes stop and restart the runtime. In-flight requests keep their snapshot, and existing
+  WebSocket sessions keep the upstream chosen at handshake. Stopping a proxy joins its workers
+  and drains posted completions before stopping the app.
 - **Persistent transport sessions**: `TransportManager` owns one dedicated libuv loop on its own
   thread. Web handlers enqueue commands and read mutex-protected snapshots; sessions never run on
   the control-plane loop. A 500 ms sweep enforces connect timeouts and retires closed clients.
@@ -102,7 +106,8 @@ sessions(token_hash PK, user_id, created_at, expires_at)
 settings(key PK, value, updated_at)
 history(id, user_id, kind, summary, status, http_status, latency_ms, size_bytes, detail, created_at)
 proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_path, key_path,
-        rules_json, created_at, updated_at)
+        rules_json, upstreams_json, retries, connect_timeout_ms, request_timeout_ms, workers,
+        created_at, updated_at)
 ```
 
 - WAL mode, `busy_timeout=5000`.
@@ -278,9 +283,10 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   file and downloaded (512 MiB cap, HTTP/1.1, attachment-only). A failed transfer keeps its
   partial file and resumes in place with `Range`; a short body against a known `Content-Length`
   is treated as an error rather than a ready file.
-- Proxy upstreams use a blocking client on a bounded per-proxy worker pool (4 threads, 32 queued
-  jobs). The proxy loop stays responsive, but this is not a fully asynchronous client: worker
-  count and upstream timeouts are fixed, and stopping a proxy waits for in-flight requests.
+- Proxy upstreams use a blocking client on a bounded per-proxy worker pool (1–16 workers,
+  default 4; 32 queued jobs). The proxy loop stays responsive, but this is not a fully
+  asynchronous client: tuning applies when the proxy starts, and stopping a proxy waits for
+  in-flight requests.
 - WebSocket upgrades use the same routing conditions/rewrites and health-filtered weighted
   upstream selection as HTTP. Redirect rules are skipped after the 101 handshake, relayed frames
   are not logged individually, and retries do not apply to upgrades.

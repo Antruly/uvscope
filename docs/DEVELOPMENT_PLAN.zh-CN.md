@@ -521,10 +521,13 @@ smoke 内嵌 Range 服务器：首个响应 64 KiB 后断开，断言任务进�
 
 内容：
 
-- 每个代理实例拥有 4 个上游 worker 线程和 32 个排队上限；代理循环只做路由、请求快照与
-  响应写回；
+- 每个代理实例拥有可配置的上游 worker 线程（默认 4）和 32 个排队上限；代理循环只做路由、
+  请求快照与响应写回；
 - 阻塞的 libuvcpp HTTP 客户端在 worker 上执行，完成后通过 `app->post` 回到代理循环；
 - 慢上游不再阻塞同一代理上的其他请求；队列满返回 `503 proxy is stopping or overloaded`；
+- 新增 `connectTimeoutMs`（100–120000，默认 15000）、`requestTimeoutMs`（100–300000，默认
+  30000）和 `workers`（1–16，默认 4），持久化到 SQLite 并自动迁移旧库；WebSocket 升级复用
+  连接超时；
 - 停止代理时先 join worker，再通过 app 循环屏障排空已提交的完成回调，最后停止 app；
 - 保留原有的重试、健康过滤、加权上游、日志与指标语义。
 
@@ -537,9 +540,38 @@ bash ./scripts/smoke-test.sh ./build/uvscope
 ```
 
 smoke 对同一代理同时发起 2 秒慢请求和一个快请求，断言快请求在 1 秒内完成，随后两者都返回
-200；原有代理规则、指标、健康检查与 WebSocket 透传断言继续通过。
+200；另用 500 ms 请求超时断言慢上游返回结构化 502；原有代理规则、指标、健康检查与
+WebSocket 透传断言继续通过。
 
-不做：完全异步的 HTTP 客户端、worker 数与上游超时的配置化、跨进程隔离。
+不做：完全异步的 HTTP 客户端、跨进程隔离。
+
+### S11 — 代理配置热重载（已实现）
+
+边界：`src/proxy_manager.cpp`、`src/application.cpp`、smoke、`docs/API.md`、
+`docs/ARCHITECTURE.md`。
+
+内容：
+
+- `Runtime::config` 改为受 `config_mutex` 保护的快照；请求、健康检查和 WebSocket 在入口处
+  获取一致快照；
+- 仅名称、target/upstreams、重试、上游超时和规则变更时原地热切换：监听器与 worker 池保持
+  运行，`configVersion` 递增，已有请求继续使用自己的快照；
+- 已有 WebSocket 会话保留握手时选择的上游；
+- 监听地址/端口、TLS 证书和 worker 数变更仍走停止/启动；
+- 每次热重载记录 `configuration hot-reloaded (version N)` 日志。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 断言规则更新后 `startedAt` 不变、`configVersion` 递增、新规则生效、旧规则移除，并出现
+`hot-reloaded` 日志；worker 数变更则出现 `proxy stopped` / `proxy started` 且服务恢复。
+
+不做：跨进程配置分发、WebSocket 会话迁移到新上游、监听器零停机换端口。
 
 ---
 

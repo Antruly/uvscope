@@ -52,6 +52,9 @@ const blank = () => ({
   upstreams: [] as ProxyUpstream[],
   primaryWeight: 1,
   retries: 0,
+  connectTimeoutMs: 15000,
+  requestTimeoutMs: 30000,
+  workers: 4,
   autoStart: false,
   tls: false,
   certPath: '',
@@ -118,6 +121,9 @@ function openEdit(proxy: ProxyInfo) {
     upstreams,
     primaryWeight: primary ? primary.weight : 1,
     retries: proxy.retries || 0,
+    connectTimeoutMs: proxy.connectTimeoutMs ?? 15000,
+    requestTimeoutMs: proxy.requestTimeoutMs ?? 30000,
+    workers: proxy.workers ?? 4,
     autoStart: proxy.autoStart,
     tls: proxy.tls,
     certPath: proxy.certPath || '',
@@ -432,6 +438,11 @@ onBeforeUnmount(stopLogPolling)
                   <button type="button" class="icon-button icon-button--sm icon-button--danger" :title="t('proxy.upstreams.remove')" @click="removeUpstream(index)"><Icon name="trash" :size="14" /></button>
                 </div>
                 <label class="field"><span>{{ t('proxy.editor.retries') }}</span><input v-model.number="form.retries" type="number" min="0" max="3" class="mono" /></label>
+              </div>
+              <div class="form-grid">
+                <label class="field"><span>{{ t('proxy.editor.connectTimeout') }}</span><input v-model.number="form.connectTimeoutMs" type="number" min="100" max="120000" class="mono" /></label>
+                <label class="field"><span>{{ t('proxy.editor.requestTimeout') }}</span><input v-model.number="form.requestTimeoutMs" type="number" min="100" max="300000" class="mono" /></label>
+                <label class="field"><span>{{ t('proxy.editor.workers') }}</span><input v-model.number="form.workers" type="number" min="1" max="16" class="mono" /></label>
               </div>
               <div class="switch-row">
                 <label class="switch-field"><span>{{ t('proxy.editor.autoStart') }}</span><button type="button" class="switch" :class="{ on: form.autoStart }" @click="form.autoStart = !form.autoStart"><i /></button></label>
