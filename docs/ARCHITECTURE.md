@@ -37,7 +37,7 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
                      HTTP(S) / TCP / UDP / TLS targets
 ```
 
-## Process model in 0.11.0
+## Process model
 
 - **Main daemon**: owns the UI server, SQLite, auth and all protocol clients. Long-lived services
   (proxies, listeners, SOCKS5 servers, isolated terminals) can move to child processes.
@@ -307,14 +307,27 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 - **Vue 3 / Vite / Pinia / Vue Router** — SPA.
 - **Inno Setup** — Windows installer.
 
-## Known architectural gaps (0.11.0)
+## Release verification matrix
 
-- HTTP/2 works over TLS (ALPN `h2`, stream IDs, GOAWAY and frame summaries); the runtime matrix
-  still needs Windows and macOS coverage. HTTP/3/QUIC remain experimental and closed in release
-  builds. The QUIC SDK build reports H3 ALPN, stream IDs and peer GOAWAY; it does not expose an
-  H3 error code, QPACK summaries, 0-RTT or migration events. On Unix the SDK install carries the
-  custom OpenSSL lib directory in `libuvcpp.so`'s RUNPATH so the experimental daemon starts
-  without `LD_LIBRARY_PATH`.
+| Platform | Build | Runtime verification |
+| --- | --- | --- |
+| Linux x64 | Release + ctest | `--self-check` and the full smoke suite (HTTP/2, listeners, SOCKS5, outbound proxy, preview, downloads, WebSocket, TLS/CA, audit, backup, workspace, supervisor) |
+| Linux arm64 | Release package | `--self-check` |
+| Windows x64 (MinGW) | Release package | `--self-check`, ConPTY terminal smoke, HTTP/2 runtime smoke |
+| macOS arm64 | Release package | `--self-check`, HTTP/2 runtime smoke |
+
+Every release asset is published with `SHA256SUMS`, a Sigstore keyless signature over the
+checksums (`SHA256SUMS.sigstore.json`) and a generated SPDX SBOM. Windows arm64 and the
+experimental HTTP/3 build are outside the 1.x release matrix.
+
+## Known architectural gaps
+
+- HTTP/2 works over TLS (ALPN `h2`, stream IDs, GOAWAY and frame summaries) and is validated at
+  runtime on Linux, Windows MinGW and macOS arm64. HTTP/3/QUIC remain experimental and closed in
+  release builds. The QUIC SDK build reports H3 ALPN, stream IDs and peer GOAWAY; it does not
+  expose an H3 error code, QPACK summaries, 0-RTT or migration events. On Unix the SDK install
+  carries the custom OpenSSL lib directory in `libuvcpp.so`'s RUNPATH so the experimental daemon
+  starts without `LD_LIBRARY_PATH`.
 - Preview and probes still cap bodies at 4 MiB; larger responses can be streamed to a staging
   file and downloaded (512 MiB cap, HTTP/1.1, attachment-only). A failed transfer keeps its
   partial file and resumes in place with `Range`; a short body against a known `Content-Length`
@@ -340,3 +353,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 - The supervisor retries a desired service indefinitely with a 60 s backoff cap; there is no
   restart budget or circuit breaker for a permanently broken child. Terminal sessions do not
   survive a daemon restart.
+- Windows arm64 is not built in 1.x, and there is no native plugin ABI: the stable extension
+  boundary is the HTTP API plus request scripts.
+- The light theme has not had a page-by-page visual audit; both themes are functional, but a
+  dedicated polish pass is planned after 1.0.

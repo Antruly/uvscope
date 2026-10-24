@@ -1,6 +1,6 @@
 # uvscope 开发计划
 
-> 版本：0.11.0 发布
+> 版本：1.0.0 发布
 > 技术底座：libuvcpp 1.8.2 + Vue 3 + SQLite + libuvcpp WSDL/SOAP  
 > 目标：做一款覆盖 Web 调试、协议探测与可编程反向代理的本地瑞士军刀，并保持单机、可审计、可离线部署。
 
@@ -39,8 +39,9 @@
 - 开源运营能力：关于页、GitHub 链接、star 数、版本检查、更新说明、帮助页。
 - 跨平台构建基础：CMake、MinGW-w64、CPack、GitHub Actions 工作流、Windows Inno Setup 安装脚本。
 - libuvcpp 上游修复：TLS SNI、同步 I/O 超时、install 完整性与 SOCKS5 失败阶段；这些改动
-  已在 libuvcpp v1.8.1 / v1.8.2 发布，uvscope 现直接使用 1.8.2 发布版 SDK，不再携带本地补丁。
-  历史复现记录见 [`LIBUVCPP_UPSTREAM.zh-CN.md`](LIBUVCPP_UPSTREAM.zh-CN.md)。
+  已在 libuvcpp v1.8.1 / v1.8.2 发布。当前只保留 `0005-ws-client-handshake-headers.patch`
+  （WebSocket 后备会话的握手 Header），其余补丁已随发布版 SDK 退役；历史复现记录见
+  [`LIBUVCPP_UPSTREAM.zh-CN.md`](LIBUVCPP_UPSTREAM.zh-CN.md)。
 
 ### 1.2 0.1.0 明确不承诺的能力
 
@@ -804,6 +805,40 @@ smoke kill 隔离 SOCKS5、listener、终端的子进程后，等待 supervisor 
 
 不做：重启次数上限/熔断、跨进程鉴权、资源限制、终端会话跨守护进程重启保留。
 
+### S20 — 1.0 稳定化与发布（已实现）
+
+边界：README/文档站、发布工作流、CI 矩阵、性能基线、版本号。
+
+内容：
+
+- 文档重整：README 面向产品；新增 MkDocs Material 文档站（GitHub Pages，CI 构建）、
+  `docs/EVENTS.md`（事件契约与 1.x 兼容策略）、`docs/EXTENDING.md`（变量/脚本/命令/IPC
+  边界）、`docs/PERFORMANCE.md`、`docs/OPERATIONS.md`；API/ARCHITECTURE/BUILDING/SECURITY/
+  CONTRIBUTING/AGENTS 与帮助页同步到 1.0；
+- CI 矩阵：Linux 全量 smoke；Windows 自检 + ConPTY + HTTP/2 运行期冒烟；macOS 自检 +
+  HTTP/2 运行期冒烟；新增 `scripts/h2-smoke.sh`；
+- 性能基线：`scripts/bench.sh` / `scripts/bench.py`，记录直连、进程内代理与隔离子进程代理的
+  顺序 keep-alive 延迟/吞吐；
+- 供应链：Release 的 publish job 生成 SPDX SBOM、`SHA256SUMS` 与 Sigstore keyless 签名
+  （`SHA256SUMS.sigstore.json`）；
+- 版本与矩阵：1.0.0；Windows arm64、HTTP/3 与原生插件 ABI 明确排除在 1.x 之外。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788
+bash ./scripts/h2-smoke.sh ./build/uvscope 18820 18821
+./scripts/bench.sh ./build/uvscope
+mkdocs build
+```
+
+CI 三端绿；`v1.0.0` release 包含 Linux x64/arm64、Windows x64、macOS arm64 资产、校验和、
+签名与 SBOM；下载 Linux 产物复验 `--version` 与 `--self-check`。
+
+不做：Windows arm64、HTTP/3 稳定化、原生插件 ABI、逐页浅色主题审计（列入 1.x 后续）。
+
 ---
 
 ### 风险与回退（本迭代）
@@ -825,8 +860,8 @@ smoke kill 隔离 SOCKS5、listener、终端的子进程后，等待 supervisor 
 
 - Linux x64 / arm64（deb、rpm、tar.gz）
 - Windows x64（MinGW-w64，zip + Inno Setup 安装 exe）
-- Windows arm64（MinGW-w64 clang + libc++，实验）
-- macOS arm64（源码构建 + zip，后续补签名）
+- macOS arm64（源码构建 + tar.gz，后续补签名/公证）
+- Windows arm64：1.x 不发布（MSYS2 CLANGARM64 仍为预览，列入 1.x 后续）
 
 ### 构建事实
 
@@ -841,15 +876,18 @@ smoke kill 隔离 SOCKS5、listener、终端的子进程后，等待 supervisor 
 ### 发布产物
 
 ```text
-uvscope-0.11.0-linux-x64.tar.gz
-uvscope-0.11.0-linux-arm64.tar.gz
-uvscope_0.11.0_amd64.deb
-uvscope_0.11.0_arm64.deb
-uvscope-0.11.0-1.x86_64.rpm
-uvscope-0.11.0-1.aarch64.rpm
-uvscope-0.11.0-mingw-x64.zip
-uvscope-0.11.0-setup.exe
-uvscope-0.11.0-macos-arm64.tar.gz
+uvscope-1.0.0-linux-x64.tar.gz
+uvscope-1.0.0-linux-arm64.tar.gz
+uvscope_1.0.0_amd64.deb
+uvscope_1.0.0_arm64.deb
+uvscope-1.0.0-1.x86_64.rpm
+uvscope-1.0.0-1.aarch64.rpm
+uvscope-1.0.0-mingw-x64.zip
+uvscope-1.0.0-setup.exe
+uvscope-1.0.0-macos-arm64.tar.gz
+SHA256SUMS
+SHA256SUMS.sigstore.json
+uvscope-v1.0.0-sbom.spdx.json
 ```
 
 ---

@@ -188,17 +188,49 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-macOS builds are source-oriented in 0.11.0. The install tree carries `share/uvscope/uvscope.icns`,
-but a Finder-visible icon needs a signed/notarized `.app`, which is later work.
+macOS builds are source-oriented in 1.0.x. The install tree carries `share/uvscope/uvscope.icns`,
+but a Finder-visible icon needs a signed/notarized `.app`, which is later work. Windows arm64 is
+not part of the 1.x matrix; MSYS2 CLANGARM64 is still preview.
+
+## Verification scripts
+
+```sh
+./build/uvscope --self-check                 # offline crypto/IPC/CA/server checks
+bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788
+bash ./scripts/h2-smoke.sh ./build/uvscope 18820 18821
+./scripts/bench.sh ./build/uvscope --requests 500
+npm --prefix web run check:i18n
+```
+
+`h2-smoke.sh` starts a throwaway daemon and a local Node.js HTTP/2 server, then verifies a real
+ALPN `h2` probe (version, stream id, frame summary). It requires `curl`, `openssl`, `node` and
+`python3` (or `python`); set `OPENSSL_BIN` when Homebrew's keg-only OpenSSL is needed.
 
 ## CI
 
-- `.github/workflows/ci.yml` builds the frontend and the C++ daemon on Linux, Windows (MinGW) and
-  macOS, runs `--self-check` and a real HTTP smoke test.
+- `.github/workflows/ci.yml` builds the frontend and the daemon on Linux x64, Windows x64
+  (MinGW) and macOS arm64. Linux runs ctest and the full smoke suite; Windows runs `--self-check`,
+  a ConPTY terminal smoke and the HTTP/2 runtime smoke; macOS runs `--self-check` and the HTTP/2
+  runtime smoke.
+- `.github/workflows/docs.yml` builds the MkDocs site and deploys it to GitHub Pages from `main`.
 - `.github/workflows/release.yml` runs on tags `v*` and publishes:
   - Linux x64 / arm64 tar.gz and deb/rpm where supported;
   - Windows x64 zip and Inno Setup installer;
-  - macOS arm64 zip.
+  - macOS arm64 tar.gz;
+  - `SHA256SUMS`, a Sigstore keyless signature over the checksums and a generated SPDX SBOM.
+
+## Documentation site
+
+The site is MkDocs Material with `docs/` as the source directory:
+
+```sh
+python3 -m pip install mkdocs-material
+mkdocs serve      # http://127.0.0.1:8000
+mkdocs build      # static site in site/
+```
+
+Navigation is in `mkdocs.yml`; project-level files (roadmap, changelog, contributing, security)
+are linked to GitHub because they live outside `docs/`.
 
 ## Troubleshooting
 

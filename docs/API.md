@@ -1,5 +1,9 @@
 # HTTP API
 
+This document describes the uvscope **1.x** HTTP API. Event payloads and their compatibility
+policy are in [Event schema](EVENTS.md); extension points are in
+[Extending uvscope](EXTENDING.md); deployment and recovery are in [Operations](OPERATIONS.md).
+
 All endpoints are same-origin JSON. Authenticated endpoints use the `uvscope_session` HttpOnly
 cookie. Errors are `{ "ok": false, "error": "...", "code": "..." }`.
 

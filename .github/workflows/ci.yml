@@ -88,6 +88,9 @@ jobs:
             mingw-w64-x86_64-libuv
             mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-zlib
+            curl
+            openssl
+            nodejs
             python
       - name: Build libuvcpp and uvscope
         shell: msys2 {0}
@@ -244,6 +247,15 @@ jobs:
           print("Windows ConPTY terminal smoke OK")
           PY
 
+      - name: HTTP/2 runtime smoke
+        shell: msys2 {0}
+        run: |
+          set -e
+          # Prefer the MSYS toolchain here: its curl/openssl/node understand
+          # POSIX paths, unlike the native MinGW binaries earlier on PATH.
+          export PATH="/usr/bin:$PWD/.deps/libuvcpp/bin:$MINGW_PREFIX/bin:$PATH"
+          bash ./scripts/h2-smoke.sh ./build-mingw/uvscope.exe 18820 18821
+
   macos:
     name: macOS arm64
     runs-on: macos-14
@@ -272,3 +284,7 @@ jobs:
           cmake --build build -j"$(sysctl -n hw.ncpu)"
           ./build/uvscope --version
           ./build/uvscope --self-check
+      - name: HTTP/2 runtime smoke
+        run: |
+          OPENSSL_BIN="$(brew --prefix openssl@3)/bin/openssl" \
+            bash ./scripts/h2-smoke.sh ./build/uvscope 18820 18821

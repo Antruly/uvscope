@@ -105,6 +105,9 @@ jobs:
             mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-zlib
             mingw-w64-x86_64-curl
+            curl
+            openssl
+            nodejs
       - name: Build and stage
         shell: msys2 {0}
         run: |
@@ -122,6 +125,9 @@ jobs:
           cp -f "$MINGW_PREFIX/bin/"*.dll build-mingw/ 2>/dev/null || true
           find .deps/libuvcpp-src/build-uvscope -name 'libllhttp.dll' -type f -exec cp -f {} build-mingw/ \; 2>/dev/null || true
           timeout 90 ./build-mingw/uvscope.exe --self-check
+          # Same HTTP/2 runtime check as CI, using the MSYS tools.
+          PATH="/usr/bin:$PWD/.deps/libuvcpp/bin:$MINGW_PREFIX/bin:$PATH" \
+            bash ./scripts/h2-smoke.sh ./build-mingw/uvscope.exe 18820 18821
           cmake --install build-mingw --prefix "$(cygpath -m "$PWD/stage")"
           mkdir -p stage/bin
           cp -f build-mingw/libllhttp.dll stage/bin/ 2>/dev/null || true
@@ -180,11 +186,13 @@ jobs:
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
           cmake --build build -j"$(sysctl -n hw.ncpu)"
           ./build/uvscope --self-check
+          OPENSSL_BIN="$(brew --prefix openssl@3)/bin/openssl" \
+            bash ./scripts/h2-smoke.sh ./build/uvscope 18820 18821
       - name: Bundle and package
         run: |
           mkdir -p packages stage
           cmake --install build --prefix "$PWD/stage"
-          # macOS 0.11.0 is a source-oriented build: libuvcpp and llhttp are
+          # macOS 1.0.0 is a source-oriented build: libuvcpp and llhttp are
           # bundled; Homebrew supplies libuv and OpenSSL. Record the linkage for
           # diagnostics and ad-hoc sign the executable.
           otool -L stage/bin/uvscope || true
@@ -203,10 +211,16 @@ jobs:
     name: Publish release
     runs-on: ubuntu-latest
     needs: [linux, windows, macos]
+    permissions:
+      contents: write
+      id-token: write
     # Publish only when every platform job succeeded. `always()` used to publish
-    # a partial release even when one platform failed.
-    if: startsWith(github.ref, 'refs/tags/')
+    # a partial release even when one platform failed. A manual dispatch runs
+    # the SBOM/signature steps without creating a release, which lets us test
+    # the supply-chain pipeline before tagging.
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
+      - uses: actions/checkout@v4
       # Download only the platform packages. `web-dist` is a build input for the
       # platform jobs, not a release asset; downloading every artifact used to
       # leak its JS/CSS into the release.
@@ -226,9 +240,34 @@ jobs:
         with:
           name: macos-arm64
           path: artifacts/macos-arm64
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: artifacts/uvscope-${{ github.ref_name }}-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: sigstore/cosign-installer@v3
+      - name: Checksums and signature
+        run: |
+          cd artifacts
+          # Flat basenames: GitHub releases download all assets into one
+          # directory, so `sha256sum -c SHA256SUMS` must work without the
+          # per-platform staging folders used while building.
+          find . -type f \( ! -name SHA256SUMS ! -name '*.sigstore.json' \) -print0 \
+            | sort -z | while IFS= read -r -d '' file; do
+                (cd "$(dirname "$file")" && sha256sum "$(basename "$file")")
+              done > SHA256SUMS
+          cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
+          echo "--- signature bundle ---"
+          ls -l SHA256SUMS.sigstore.json
       - name: Show assets
         run: find artifacts -type f -maxdepth 3 -printf '%p %k KB\n'
       - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: artifacts/**/*
           generate_release_notes: true
