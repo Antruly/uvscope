@@ -1,5 +1,7 @@
 #include "socks5_manager.h"
 
+#include "socks5_child.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -78,6 +80,9 @@ struct Socks5Manager::Impl {
     // peer endpoint -> session id, used to attach the end callback's stats.
     std::map<std::string, std::string> session_by_peer;
 
+    // Set instead of `thread` when this server runs in a child process.
+    std::shared_ptr<Socks5ChildService> child;
+
     std::thread thread;
     std::atomic<bool> stop_requested{false};
     std::atomic<uvcpp::uvcpp_async*> wake{nullptr};
@@ -89,6 +94,7 @@ struct Socks5Manager::Impl {
     bool ready = false;
   };
 
+  std::string executable_path;
   mutable std::mutex map_mutex;
   std::map<std::string, std::shared_ptr<Server>> servers;
 
@@ -118,6 +124,8 @@ struct Socks5Manager::Impl {
             {"autoStart", server.config.auto_start},
             {"authRequired", server.config.auth_required},
             {"username", server.config.username},
+            {"isolated", server.config.isolated},
+            {"pid", 0},
             {"state", server.state},
             {"error", server.error},
             {"startedAt", server.started_at},
@@ -381,6 +389,10 @@ struct Socks5Manager::Impl {
 
   void shutdown_server(const std::shared_ptr<Server>& server) {
     if (!server) return;
+    if (server->child) {
+      server->child->stop();
+      server->child.reset();
+    }
     if (server->thread.joinable()) {
       server->stop_requested.store(true);
       if (auto* wake = server->wake.load()) wake->send();
@@ -389,7 +401,9 @@ struct Socks5Manager::Impl {
   }
 };
 
-Socks5Manager::Socks5Manager() : impl_(new Impl()) {}
+Socks5Manager::Socks5Manager(std::string executable_path) : impl_(new Impl()) {
+  impl_->executable_path = std::move(executable_path);
+}
 
 Socks5Manager::~Socks5Manager() {
   std::vector<std::shared_ptr<Impl::Server>> all;
@@ -429,6 +443,26 @@ bool Socks5Manager::start_server(const std::string& id, std::string* error) {
   if (!server) {
     if (error) *error = "SOCKS5 server not found";
     return false;
+  }
+  if (server->config.isolated) {
+    if (server->child && server->child->running()) return true;
+    server->child.reset(new Socks5ChildService(impl_->executable_path, server->config));
+    std::string child_error;
+    if (!server->child->start(&child_error)) {
+      std::lock_guard<std::mutex> lock(server->mutex);
+      server->state = "error";
+      server->error = child_error.empty() ? "SOCKS5 child failed to start" : child_error;
+      server->child.reset();
+      if (error) *error = server->error;
+      return false;
+    }
+    const auto snapshot = server->child->snapshot();
+    std::lock_guard<std::mutex> lock(server->mutex);
+    server->state = snapshot.value("state", std::string("listening"));
+    server->bound_port = snapshot.value("boundPort", 0);
+    server->error.clear();
+    server->started_at = now_iso8601();
+    return true;
   }
   {
     std::lock_guard<std::mutex> lock(server->mutex);
@@ -482,6 +516,16 @@ bool Socks5Manager::stop_server(const std::string& id, std::string* error) {
     if (error) *error = "SOCKS5 server not found";
     return false;
   }
+  if (server->config.isolated) {
+    if (server->child) {
+      server->child->stop();
+      server->child.reset();
+    }
+    std::lock_guard<std::mutex> lock(server->mutex);
+    server->state = "stopped";
+    server->stopped_at = now_iso8601();
+    return true;
+  }
   if (!server->thread.joinable()) {
     std::lock_guard<std::mutex> lock(server->mutex);
     if (server->state != "error") server->state = "stopped";
@@ -516,6 +560,10 @@ nlohmann::json Socks5Manager::servers() const {
   }
   nlohmann::json out = nlohmann::json::array();
   for (const auto& server : all) {
+    if (server->child) {
+      out.push_back(server->child->snapshot());
+      continue;
+    }
     std::lock_guard<std::mutex> lock(server->mutex);
     out.push_back(Impl::snapshot_locked(*server));
   }
@@ -528,6 +576,9 @@ nlohmann::json Socks5Manager::servers() const {
 nlohmann::json Socks5Manager::server(const std::string& id) const {
   auto server = impl_->find(id);
   if (!server) return {{"ok", false}, {"error", "SOCKS5 server not found"}};
+  if (server->child) {
+    return {{"ok", true}, {"server", server->child->snapshot()}};
+  }
   std::lock_guard<std::mutex> lock(server->mutex);
   return {{"ok", true}, {"server", Impl::snapshot_locked(*server)}};
 }
@@ -537,8 +588,19 @@ nlohmann::json Socks5Manager::server_events(const std::string& id,
                                             int limit) const {
   auto server = impl_->find(id);
   if (!server) return {{"ok", false}, {"error", "SOCKS5 server not found"}};
-  std::lock_guard<std::mutex> lock(server->mutex);
   const int safe_limit = std::max(1, std::min(limit, 500));
+  if (server->child) {
+    const auto events = server->child->events(after, safe_limit);
+    const std::uint64_t next =
+        events.is_array() && !events.empty()
+            ? events.back().value("seq", after)
+            : after;
+    return {{"ok", true},
+            {"server", server->child->snapshot()},
+            {"events", events},
+            {"nextSeq", next}};
+  }
+  std::lock_guard<std::mutex> lock(server->mutex);
   nlohmann::json events = nlohmann::json::array();
   for (const auto& event : server->events) {
     if (event.json.value("seq", std::uint64_t{0}) <= after) continue;
@@ -554,6 +616,9 @@ nlohmann::json Socks5Manager::server_events(const std::string& id,
 nlohmann::json Socks5Manager::server_sessions(const std::string& id) const {
   auto server = impl_->find(id);
   if (!server) return {{"ok", false}, {"error", "SOCKS5 server not found"}};
+  if (server->child) {
+    return {{"ok", true}, {"sessions", server->child->sessions()}};
+  }
   std::lock_guard<std::mutex> lock(server->mutex);
   nlohmann::json sessions = nlohmann::json::array();
   for (const auto& session : server->sessions) sessions.push_back(session);

@@ -634,7 +634,7 @@ bool Application::initialize() {
   for (const auto& config : store_.proxies()) {
     supervise_proxy(config, config.auto_start);
   }
-  socks5_.reset(new Socks5Manager());
+  socks5_.reset(new Socks5Manager(options_.self_path));
   for (const auto& server : store_.socks5_servers()) {
     if (!socks5_->add_server(server, nullptr)) continue;
     if (server.auto_start) socks5_->start_server(server.id, nullptr);
@@ -1908,6 +1908,7 @@ void Application::register_socks5_routes() {
     config.port = int_field(*body, "port", 0);
     config.auto_start = bool_field(*body, "autoStart", false);
     config.username = string_field(*body, "username");
+    config.isolated = bool_field(*body, "isolated", false);
     const std::string password = string_field(*body, "password");
     config.auth_required = !config.username.empty() || !password.empty();
     if (config.host.empty() || config.port <= 0 || config.port > 65535) {

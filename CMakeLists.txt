@@ -160,6 +160,7 @@ set(UVSCOPE_SOURCES
   src/proxy_manager.cpp
   src/proxy_child.cpp
   src/socks5_manager.cpp
+  src/socks5_child.cpp
   src/socks5_proxy.cpp
   src/supervisor.cpp
   src/store.cpp

@@ -76,6 +76,10 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
   manager.
 - **SOCKS5 servers**: each running server is a `uvcpp_socks5_server` with its own loop and thread.
   Commands are marshaled through `uvcpp_async`; snapshots and bounded logs are mutex-protected.
+  A server marked `isolated: true` instead runs in a `--socks5-child` process; the parent
+  `Socks5ChildService` caches the snapshot, events and sessions from a 500 ms push, exposes the
+  PID, and stops/reaps the child on stop or delete. A crashed child is reported as `error` and
+  can be started again (there is no SOCKS5 supervisor yet).
 - **Static assets**: served by the same `uvcpp_web_app`; SPA fallback is enabled so deep links work.
 
 The roadmap moves persistent proxy/transport services into explicit child processes with a
@@ -308,7 +312,8 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   weighted upstreams with bounded retries, active health checks and a per-upstream circuit
   breaker.
 - The `history` table stores summaries, not full bodies.
-- Reverse proxies can run in supervised child processes (`isolated: true`). TCP/UDP listeners,
-  SOCKS5 servers and the virtual terminal still run in the daemon process; moving those services
-  into children is the remaining process-isolation work. Isolated proxy telemetry is cached from
-  a 500 ms push, so the API can lag the child slightly.
+- Reverse proxies can run in supervised child processes (`isolated: true`), and SOCKS5 servers
+  can run in child processes without a supervisor. TCP/UDP listeners and the virtual terminal
+  still run in the daemon process; moving those services into children is the remaining
+  process-isolation work. Isolated telemetry is cached from a 500 ms push, so the API can lag the
+  child slightly.

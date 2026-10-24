@@ -25,6 +25,8 @@ interface Socks5ServerInfo {
   totalSessions?: number
   rejectedSessions?: number
   bytesAvailable?: boolean
+  isolated?: boolean
+  pid?: number
 }
 
 interface Socks5Event {
@@ -71,6 +73,7 @@ const username = ref('')
 const password = ref('')
 const autoStart = ref(false)
 const startNow = ref(true)
+const isolated = ref(false)
 const creating = ref(false)
 
 const servers = ref<Socks5ServerInfo[]>([])
@@ -184,6 +187,7 @@ async function createServer() {
         password: password.value,
         autoStart: autoStart.value,
         start: startNow.value,
+        isolated: isolated.value,
       },
     )
     if (!response.ok || !response.server) {
@@ -378,6 +382,7 @@ onBeforeUnmount(stopPolling)
       <div class="form-actions listener-create__actions">
         <label class="listener-check"><input v-model="autoStart" type="checkbox" />{{ t('socks5.create.autoStart') }}</label>
         <label class="listener-check"><input v-model="startNow" type="checkbox" />{{ t('socks5.create.startNow') }}</label>
+        <label class="listener-check"><input v-model="isolated" type="checkbox" />{{ t('socks5.create.isolated') }}</label>
         <span class="muted">{{ t('socks5.create.authHint') }}</span>
         <button class="button button--primary" :disabled="creating" @click="createServer">
           <span v-if="creating" class="spinner" />
@@ -412,6 +417,7 @@ onBeforeUnmount(stopPolling)
                 <template v-if="server.name"> · {{ server.name }}</template>
               </small>
             </span>
+            <span v-if="server.isolated" class="chip mono">child</span>
             <span class="chip mono">{{ server.authRequired ? 'auth' : 'open' }}</span>
           </button>
         </div>
