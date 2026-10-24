@@ -1,0 +1,102 @@
+name: QUIC experimental
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/quic.yml'
+      - 'scripts/build-libuvcpp.sh'
+      - 'scripts/h3-test-server.cpp'
+      - 'scripts/quic-smoke-test.sh'
+      - 'src/http_probe.cpp'
+      - 'src/quic_manager.cpp'
+      - 'web/src/views/TransportView.vue'
+  pull_request:
+    paths:
+      - '.github/workflows/quic.yml'
+      - 'scripts/build-libuvcpp.sh'
+      - 'scripts/h3-test-server.cpp'
+      - 'scripts/quic-smoke-test.sh'
+      - 'src/http_probe.cpp'
+      - 'src/quic_manager.cpp'
+      - 'web/src/views/TransportView.vue'
+
+concurrency:
+  group: quic-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux-quic:
+    name: Linux x64 QUIC/HTTP3
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git curl pkg-config \
+            libuv1-dev zlib1g-dev libsqlite3-dev
+
+      - name: Cache OpenSSL 3.6
+        uses: actions/cache@v4
+        with:
+          path: .deps/openssl-3.6
+          key: openssl-3.6.5-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Build OpenSSL 3.6
+        run: |
+          set -euo pipefail
+          if [[ -f .deps/openssl-3.6/bin/openssl ]]; then
+            echo "Using cached OpenSSL 3.6"
+            exit 0
+          fi
+          mkdir -p .deps
+          curl -fsSL -o openssl-3.6.5.tar.gz \
+            https://www.openssl.org/source/openssl-3.6.5.tar.gz
+          curl -fsSL -o openssl-3.6.5.tar.gz.sha256 \
+            https://www.openssl.org/source/openssl-3.6.5.tar.gz.sha256
+          sha256sum -c openssl-3.6.5.tar.gz.sha256
+          tar -xzf openssl-3.6.5.tar.gz
+          cd openssl-3.6.5
+          ./Configure --prefix="$GITHUB_WORKSPACE/.deps/openssl-3.6" \
+            --libdir=lib no-tests
+          make -j"$(nproc)"
+          make install_sw
+
+      - name: Build QUIC SDK and uvscope
+        run: |
+          set -euo pipefail
+          export UVCPP_ENABLE_QUIC=ON
+          export UVCPP_ENABLE_HTTP3=ON
+          export OPENSSL_ROOT_DIR="$PWD/.deps/openssl-3.6"
+          bash ./scripts/build-libuvcpp.sh .deps/libuvcpp-src .deps/libuvcpp-quic
+          cmake -S . -B build-quic -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DUVCPP_ROOT="$PWD/.deps/libuvcpp-quic" \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR" \
+            -DCMAKE_BUILD_RPATH="$OPENSSL_ROOT_DIR/lib"
+          cmake --build build-quic -j"$(nproc)"
+
+      - name: Build local HTTP/3 test origin
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O2 -pthread scripts/h3-test-server.cpp \
+            -o build-quic/h3-test-server \
+            -I.deps/libuvcpp-quic/include -I.deps/openssl-3.6/include \
+            -L.deps/libuvcpp-quic/lib -L.deps/openssl-3.6/lib \
+            -luvcpp -lssl -lcrypto -luv -lz \
+            -Wl,-rpath,"$PWD/.deps/libuvcpp-quic/lib:$PWD/.deps/openssl-3.6/lib"
+
+      - name: QUIC and HTTP/3 end-to-end
+        run: |
+          ./build-quic/uvscope --self-check
+          bash ./scripts/quic-smoke-test.sh \
+            ./build-quic/uvscope ./build-quic/h3-test-server

@@ -13,6 +13,11 @@ All notable changes to uvscope are documented here. The format is based on
   not expose an H3 GOAWAY error code, so `errorCode` is omitted rather than fabricated. The
   HTTP Studio timing panel accepts the missing error code. QPACK summaries, 0-RTT and migration
   events remain unavailable.
+- Experimental QUIC/HTTP3 CI: the `QUIC experimental` workflow builds OpenSSL 3.6.5 and a
+  QUIC-enabled libuvcpp SDK on Linux, compiles the local `scripts/h3-test-server.cpp` origin,
+  and runs `scripts/quic-smoke-test.sh`. The test asserts the `/api/health` capabilities, a raw
+  QUIC echo probe and an HTTP/3 request (`200`, `HTTP/3`, ALPN `h3`, body `hello-h3`) against the
+  local origin. It runs weekly, on demand, and when QUIC-related files change.
 
 ### Fixed
 

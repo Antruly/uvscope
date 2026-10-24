@@ -47,6 +47,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [ ] HTTP/2 runtime validation on the Windows and macOS CI jobs
 - [ ] HTTP/3 / QUIC client with QPACK / 0-RTT / migration events (experimental; needs OpenSSL 3.2+)
 - [x] HTTP/3 results expose ALPN, stream ID and peer GOAWAY state (experimental builds)
+- [x] Linux CI builds OpenSSL 3.6 + QUIC SDK and runs a local HTTP/3 origin
 - [~] Raw QUIC client probe and echo server (streams/datagrams; experimental build)
 - [x] Compression decoding: gzip / deflate / brotli with a raw-body toggle
 - [x] Large-response streaming download (512 MiB cap, progress, cancel)

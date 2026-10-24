@@ -61,6 +61,23 @@ The resulting daemon reports `http3: true` / `quic: true` from `/api/health`; pa
 way must ship or require that OpenSSL. Do not mix a custom OpenSSL with the system one in release
 artifacts.
 
+The experimental end-to-end check uses a local HTTP/3 origin, so it does not depend on a public
+endpoint:
+
+```sh
+g++ -std=c++17 -O2 -pthread scripts/h3-test-server.cpp \
+  -o build-quic/h3-test-server \
+  -I.deps/libuvcpp-quic/include -I.deps/openssl-3.6/include \
+  -L.deps/libuvcpp-quic/lib -L.deps/openssl-3.6/lib \
+  -luvcpp -lssl -lcrypto -luv -lz \
+  -Wl,-rpath,"$PWD/.deps/libuvcpp-quic/lib:$PWD/.deps/openssl-3.6/lib"
+bash ./scripts/quic-smoke-test.sh ./build-quic/uvscope ./build-quic/h3-test-server
+```
+
+The `QUIC experimental` workflow (`.github/workflows/quic.yml`) runs the same check on Linux,
+weekly, on demand, and when QUIC-related files change. It builds OpenSSL 3.6.5 from source and
+caches the prefix between runs.
+
 To use an existing SDK:
 
 ```sh

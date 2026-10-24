@@ -433,6 +433,11 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 原始 QUIC 回显和公网 HTTP/3 请求均通过。QPACK/0-RTT/连接迁移事件仍未暴露，跨平台 CI 与
 发布构建开关仍未完成。
 
+新增 `QUIC experimental` workflow（`.github/workflows/quic.yml`）：在 Linux 上构建
+OpenSSL 3.6.5 与 QUIC SDK，启动本地 `scripts/h3-test-server.cpp`，再执行
+`scripts/quic-smoke-test.sh`，断言 health 能力、原始 QUIC 回显和 HTTP/3 响应。该工作流在
+每周定时、手动触发以及 QUIC 相关文件变更时运行。
+
 ### S7 — 本地 CA 与证书续期（已实现）
 
 边界：`src/certificate_manager.*`、`/api/tls/ca*` 与证书续期路由、TLS 检查器证书库区、
