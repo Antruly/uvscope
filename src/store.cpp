@@ -861,6 +861,7 @@ std::vector<Socks5ServerConfig> Store::socks5_servers() const {
     server.auth_required = item.value("authRequired", false);
     server.username = item.value("username", std::string());
     server.password_hash = item.value("passwordHash", std::string());
+    server.isolated = item.value("isolated", false);
     server.created_at = item.value("createdAt", std::string());
     server.updated_at = item.value("updatedAt", std::string());
     if (server.id.empty() || server.host.empty() || server.port <= 0 ||
@@ -911,6 +912,7 @@ bool Store::save_socks5_server(const Socks5ServerConfig& entry, std::string* err
                    {"authRequired", item.auth_required},
                    {"username", item.username},
                    {"passwordHash", item.password_hash},
+                   {"isolated", item.isolated},
                    {"createdAt", item.created_at},
                    {"updatedAt", item.updated_at}});
   }
@@ -937,6 +939,7 @@ bool Store::delete_socks5_server(const std::string& id, std::string* error) {
                    {"authRequired", item.auth_required},
                    {"username", item.username},
                    {"passwordHash", item.password_hash},
+                   {"isolated", item.isolated},
                    {"createdAt", item.created_at},
                    {"updatedAt", item.updated_at}});
   }

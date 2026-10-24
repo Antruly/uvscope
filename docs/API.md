@@ -70,7 +70,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 | POST | `/api/transport/listeners/:id/send` | TCP: `{sessionId, payload, encoding}`; UDP: `{peerHost, peerPort, payload, encoding}` |
 | DELETE | `/api/transport/listeners/:id/sessions/:sid` | Close one accepted TCP session |
 | GET | `/api/socks5/servers` | List configured SOCKS5 servers and runtime state |
-| POST | `/api/socks5/servers` | `{name, host, port, username, password, autoStart, start}` |
+| POST | `/api/socks5/servers` | `{name, host, port, username, password, autoStart, start, isolated}` |
 | GET | `/api/socks5/servers/:id` | One SOCKS5 server snapshot |
 | POST | `/api/socks5/servers/:id/start` | Start a SOCKS5 server |
 | POST | `/api/socks5/servers/:id/stop` | Stop a SOCKS5 server |
@@ -321,6 +321,11 @@ stored as a PBKDF2 hash and is never returned. SOCKS5 servers default to `127.0.
 moved to a LAN address explicitly. Sessions report the requested command, target, peer, status and
 error. The libuvcpp 1.8.2 session-end callback adds `bytesClientToTarget`,
 `bytesTargetToClient`, `udpDatagrams`, `udpBytes`, `durationMs`, `endedAt` and `endStatus`.
+
+With `isolated: true` the server runs in a `--socks5-child` process. Its snapshot includes
+`isolated: true` and `pid`, and the event/session endpoints serve the cached child logs. If the
+child exits, the snapshot state becomes `error`; `POST .../start` spawns a new child. Deleting the
+server stops the child and waits for it to be reaped.
 
 `POST /api/transport/listeners` binds a local port; `transport` is `tcp` or `udp`. TCP listeners
 produce accepted-session records with `peer`, `state`, byte counters and a per-session event log.

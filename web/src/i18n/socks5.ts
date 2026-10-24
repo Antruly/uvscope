@@ -29,6 +29,7 @@ const en: Record<string, string> = {
   'socks5.create.authHint':
     'Leave both fields empty for no-auth. Supplying a username requires a password.',
   'socks5.create.autoStart': 'Start with the daemon',
+  'socks5.create.isolated': 'Run in a child process',
   'socks5.create.startNow': 'Start now',
   'socks5.create.action': 'Create SOCKS5 server',
   'socks5.create.creating': 'Creating…',
@@ -118,6 +119,7 @@ const zh: Record<string, string> = {
   'socks5.create.passwordPlaceholder': '以 PBKDF2 哈希保存',
   'socks5.create.authHint': '两个字段都留空即免认证；填写用户名时必须同时填写密码。',
   'socks5.create.autoStart': '随守护进程启动',
+  'socks5.create.isolated': '在子进程中运行',
   'socks5.create.startNow': '立即启动',
   'socks5.create.action': '创建 SOCKS5 服务端',
   'socks5.create.creating': '创建中…',

@@ -99,6 +99,7 @@ struct Socks5ServerConfig {
   // PBKDF2 hash produced by password_hash(); the plaintext password is never
   // persisted or returned by the API.
   std::string password_hash;
+  bool isolated = false;
   std::string created_at;
   std::string updated_at;
 };

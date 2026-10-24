@@ -16,7 +16,7 @@ namespace uvscope {
 // start/stop commands and read snapshots.
 class Socks5Manager {
  public:
-  Socks5Manager();
+  explicit Socks5Manager(std::string executable_path = "");
   ~Socks5Manager();
 
   Socks5Manager(const Socks5Manager&) = delete;

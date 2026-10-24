@@ -687,6 +687,34 @@ smoke 创建 `isolated: true` 代理，验证请求、`isolated`/`pid`、遥测 
 不做：TCP/UDP 监听、SOCKS5、终端子进程化；跨进程鉴权；子进程资源限制（CPU/内存/句柄）；
 遥测改为事件推送；Windows 服务/Job Object 级别的进程树回收。
 
+### S16 — SOCKS5 服务端子进程隔离（已实现）
+
+边界：`src/socks5_child.*`、`src/socks5_manager.*`、`src/main.cpp`、API/编辑器、smoke。
+
+内容：
+
+- SOCKS5 配置新增 `isolated`（存于 settings JSON），创建表单增加“在子进程中运行”；
+- 隐藏 `--socks5-child`：子进程复用 `Socks5Manager` 跑单个服务，通过 IPC 接收 start/stop，
+  返回 server / events / sessions 快照；
+- 父侧 `Socks5ChildService`：独立 IPC 循环线程、spawn、500 ms 遥测、事件/会话缓存、PID、
+  停止与 reap；
+- `Socks5Manager` 在 start/stop/remove/servers/server/events/sessions 上按 `isolated` 分支；
+- 子进程异常退出后状态为 `error`，再次 start 会 spawn 新 PID（暂无 supervisor 自动重启）；
+- 删除时停止并等待子进程回收。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 创建隔离 SOCKS5，经其 CONNECT 到本地 TCP echo；kill 子进程后状态为 error，start 后
+新 PID 且再次 CONNECT 成功；删除后确认子进程消失。
+
+不做：SOCKS5 supervisor 自动重启、TCP/UDP 监听与终端子进程化、跨进程鉴权、资源限制。
+
 ---
 
 ### 风险与回退（本迭代）

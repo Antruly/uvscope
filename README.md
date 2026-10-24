@@ -65,6 +65,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Per-upstream circuit breaker with half-open recovery | ✅ New in 0.9.0 |
 | Length-prefixed JSON IPC and child-process runtime foundation | ✅ New in 0.10.0 |
 | Optional per-proxy child-process isolation with supervisor restart | ✅ New in 0.10.0 |
+| Optional SOCKS5 server child-process isolation | ✅ New |
 | Weighted upstreams with failover and retries | ✅ New in 0.4.4 |
 | Per-proxy QPS, p50/p95 latency and status counts | ✅ New in 0.4.5 |
 | Active upstream health checks (TCP/TLS, 10 s) | ✅ New in 0.4.5 |

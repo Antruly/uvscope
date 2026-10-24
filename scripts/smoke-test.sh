@@ -24,6 +24,7 @@ TIMEOUT_PROXY_PORT="${19:-18804}"
 HOT_PROXY_PORT="${20:-18805}"
 BREAKER_PROXY_PORT="${21:-18806}"
 ISOLATED_PROXY_PORT="${22:-18807}"
+ISOLATED_SOCKS5_PORT="${23:-18808}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -594,7 +595,7 @@ PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" WS_PORT="${WS_PORT}" WS_PROXY_PORT="${WS
 WS_ROUTE_PORT="${WS_ROUTE_PORT}" ASYNC_PROXY_PORT="${ASYNC_PROXY_PORT}" \
 ERROR_PROXY_PORT="${ERROR_PROXY_PORT}" TIMEOUT_PROXY_PORT="${TIMEOUT_PROXY_PORT}" \
 HOT_PROXY_PORT="${HOT_PROXY_PORT}" BREAKER_PROXY_PORT="${BREAKER_PROXY_PORT}" \
-ISOLATED_PROXY_PORT="${ISOLATED_PROXY_PORT}" \
+ISOLATED_PROXY_PORT="${ISOLATED_PROXY_PORT}" ISOLATED_SOCKS5_PORT="${ISOLATED_SOCKS5_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -1068,6 +1069,88 @@ if auth_server:
         check(False, f"authenticated SOCKS5 tunnel failed: {error}")
     status, deleted = call("DELETE", f"/api/socks5/servers/{auth_server}")
     check(status == 200 and deleted.get("ok") is True, f"SOCKS5 auth delete failed: {deleted}")
+
+# Isolated SOCKS5 server: the child serves CONNECT; kill/restart and delete
+# reaping are checked on POSIX hosts.
+status, created = call("POST", "/api/socks5/servers", {
+    "name": "smoke-isolated-socks5", "host": "127.0.0.1",
+    "port": int(os.environ["ISOLATED_SOCKS5_PORT"]),
+    "isolated": True, "start": True,
+})
+isolated_socks = created.get("server", "")
+check(status == 200 and bool(isolated_socks),
+      f"isolated SOCKS5 create failed: {created}")
+if isolated_socks:
+    child_pid = 0
+    state = {}
+    for _ in range(100):
+        status, payload = call("GET", f"/api/socks5/servers/{isolated_socks}")
+        state = payload.get("server", {})
+        child_pid = state.get("pid", 0)
+        if state.get("state") == "listening" and child_pid:
+            break
+        time.sleep(0.1)
+    check(state.get("state") == "listening" and child_pid > 0 and
+          state.get("isolated") is True,
+          f"isolated SOCKS5 did not listen: {state}")
+    try:
+        tunnel = socks5_connect(int(os.environ["ISOLATED_SOCKS5_PORT"]), "127.0.0.1",
+                                int(os.environ["TCP_PORT"]))
+        tunnel.sendall(b"isolated-socks")
+        reply = recv_exact(tunnel, len(b"echo:isolated-socks"))
+        check(reply == b"echo:isolated-socks",
+              f"isolated SOCKS5 tunnel mismatch: {reply}")
+        tunnel.close()
+    except (OSError, RuntimeError, EOFError) as error:
+        check(False, f"isolated SOCKS5 tunnel failed: {error}")
+    if os.name == "posix" and child_pid:
+        os.kill(child_pid, signal.SIGKILL)
+        for _ in range(80):
+            time.sleep(0.1)
+            status, payload = call("GET", f"/api/socks5/servers/{isolated_socks}")
+            state = payload.get("server", {})
+            if state.get("state") != "listening":
+                break
+        check(state.get("state") in ("error", "stopped"),
+              f"killed SOCKS5 child still reports {state.get('state')}")
+        status, started = call("POST", f"/api/socks5/servers/{isolated_socks}/start")
+        check(status == 200 and started.get("ok") is True,
+              f"isolated SOCKS5 restart failed: {started}")
+        new_pid = 0
+        for _ in range(100):
+            status, payload = call("GET", f"/api/socks5/servers/{isolated_socks}")
+            state = payload.get("server", {})
+            new_pid = state.get("pid", 0)
+            if state.get("state") == "listening" and new_pid and new_pid != child_pid:
+                break
+            time.sleep(0.1)
+        check(new_pid and new_pid != child_pid,
+              f"isolated SOCKS5 did not restart: old={child_pid} new={new_pid}")
+        tunnel = socks5_connect(int(os.environ["ISOLATED_SOCKS5_PORT"]), "127.0.0.1",
+                                int(os.environ["TCP_PORT"]))
+        tunnel.sendall(b"isolated-again")
+        reply = recv_exact(tunnel, len(b"echo:isolated-again"))
+        check(reply == b"echo:isolated-again",
+              f"restarted SOCKS5 tunnel mismatch: {reply}")
+        tunnel.close()
+        status, deleted = call("DELETE", f"/api/socks5/servers/{isolated_socks}")
+        check(status == 200 and deleted.get("ok") is True,
+              f"isolated SOCKS5 delete failed: {deleted}")
+        reaped = False
+        for _ in range(80):
+            try:
+                os.kill(new_pid, 0)
+            except ProcessLookupError:
+                reaped = True
+                break
+            except PermissionError:
+                pass
+            time.sleep(0.1)
+        check(reaped, f"isolated SOCKS5 child was not reaped: {new_pid}")
+    else:
+        status, deleted = call("DELETE", f"/api/socks5/servers/{isolated_socks}")
+        check(status == 200 and deleted.get("ok") is True,
+              f"isolated SOCKS5 delete failed: {deleted}")
 
 # Managed certificates: generate, inspect, import the same pair, delete.
 status, generated = call("POST", "/api/tls/certificates/generate", {

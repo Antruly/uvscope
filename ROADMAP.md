@@ -78,6 +78,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [~] Length-prefixed JSON IPC channel and child-process self-check (foundation)
 - [x] Reverse-proxy child runtime with IPC start/stop/snapshot/logs
 - [x] Per-proxy child isolation with supervisor restart and telemetry
+- [x] SOCKS5 server child isolation with telemetry and manual restart
 - [ ] Process isolation + IPC for long-lived services
 
 ## 1.0 — stable

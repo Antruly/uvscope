@@ -4,6 +4,17 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- SOCKS5 servers can run in a child process with `isolated: true`. The parent caches the server
+  snapshot, event log and session list, exposes the child `pid` in `/api/socks5/servers`, and
+  stops/reaps the child on stop or delete. A crashed child is reported as `error` and can be
+  started again, which spawns a new PID. The SOCKS5 editor has a “Run in a child process” toggle.
+  The smoke test opens a CONNECT tunnel through the isolated server, kills it, restarts it and
+  opens another tunnel, then verifies the child is reaped on delete.
+
 ## [0.10.0] - 2026-10-24
 
 ### Added
