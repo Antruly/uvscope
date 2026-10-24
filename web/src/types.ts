@@ -221,7 +221,7 @@ export interface HttpResult {
   timing?: { connectMs?: number; totalMs?: number }
   streamId?: number
   retryable?: boolean
-  goaway?: { received: boolean; errorCode: number; lastStreamId: number }
+  goaway?: { received: boolean; errorCode?: number; lastStreamId: number }
   h2?: {
     frameCount: number
     framesTruncated: boolean

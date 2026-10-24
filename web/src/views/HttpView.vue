@@ -1722,7 +1722,7 @@ onBeforeUnmount(() => {
                 <div v-if="result.goaway">
                   <span>{{ t('http.timing.goaway') }}</span>
                   <strong class="mono">
-                    {{ result.goaway.received ? `${result.goaway.errorCode} / ${result.goaway.lastStreamId}` : t('http.timing.no') }}
+                    {{ result.goaway.received ? `${result.goaway.errorCode ?? '—'} / ${result.goaway.lastStreamId}` : t('http.timing.no') }}
                   </strong>
                 </div>
                 <div><span>{{ t('http.timing.sentAt') }}</span><strong class="mono">{{ result.startedAt }}</strong></div>

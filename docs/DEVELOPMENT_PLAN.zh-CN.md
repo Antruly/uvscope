@@ -428,6 +428,11 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 - 再开放客户端、stream/datagram 调试；
 - 未通过前发布构建继续关闭。
 
+状态（2026-10-24）：实验构建已打通并验证。SDK 安装 RUNPATH 现在包含 OpenSSL 3.6 的 lib 目录，
+无需 `LD_LIBRARY_PATH` 即可启动；H3 结果新增 peer GOAWAY（`received` / `lastStreamId`），
+原始 QUIC 回显和公网 HTTP/3 请求均通过。QPACK/0-RTT/连接迁移事件仍未暴露，跨平台 CI 与
+发布构建开关仍未完成。
+
 ### S7 — 本地 CA 与证书续期（已实现）
 
 边界：`src/certificate_manager.*`、`/api/tls/ca*` 与证书续期路由、TLS 检查器证书库区、

@@ -96,6 +96,9 @@ Each module must be enabled in Settings and the role must have `debug`.
 `encoding` is `text` or `hex`. Probe results always include `ok`; protocol failures are reported in
 the result rather than as an API error.
 
+`GET /api/health` reports the build's `capabilities` (`http2`, `http3`, `quic`, `brotli`). Release
+builds keep `http3` and `quic` false; the experimental QUIC SDK build sets both true.
+
 `/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). A request
 without an explicit `user-agent` is sent with a current browser UA plus a `uvscope/<version>`
 token, so sites that serve bot or JS-redirect shims to unknown clients still return their normal
@@ -147,6 +150,13 @@ order; `frameCount` is the total seen and `framesTruncated` marks the cap. `type
 9113 names, `flags` is the raw bit mask, and `errorCode` / `lastStreamId` are meaningful only on
 `RST_STREAM` / `GOAWAY`. An SDK built without nghttp2 makes the daemon reject `protocol: "http2"`
 with `this libuvcpp build has no HTTP/2 support`.
+
+With `protocol: "http3"` on an SDK built with `UVCPP_ENABLE_HTTP3=ON`, the result carries
+`httpVersion: "HTTP/3"`, `alpn: "h3"`, `streamId`, `retryable` and
+`goaway: {received, lastStreamId}`. libuvcpp does not expose an H3 GOAWAY error code, so
+`errorCode` is omitted rather than guessed; QPACK summaries, 0-RTT and connection-migration
+events are not returned. HTTP/3 cannot be combined with a SOCKS5 proxy. A build without HTTP/3
+rejects the request with `this libuvcpp build has no HTTP/3 support`.
 
 ### Large response downloads
 

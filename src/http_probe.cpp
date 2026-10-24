@@ -206,19 +206,32 @@ void attach_h2_frames(nlohmann::json& result, const AsyncState& state) {
 void add_protocol_metadata(nlohmann::json& result,
                            const uvcpp::uvcpp_http_response& response,
                            const uvcpp::uvcpp_http_client& client,
-                           bool include_goaway) {
+                           bool include_h2_goaway, bool include_h3_goaway) {
   // HTTP/1.1 leaves these at 0 / false; HTTP/2 and HTTP/3 populate them.
   result["streamId"] = response.stream_id;
   result["retryable"] = response.retryable;
 #if UVCPP_NGHTTP2_ENABLE
-  if (include_goaway) {
+  if (include_h2_goaway) {
     result["goaway"] = {{"received", client.peer_goaway_received()},
                         {"errorCode", client.peer_goaway_error_code()},
                         {"lastStreamId", client.peer_goaway_last_stream_id()}};
   }
 #else
+  (void)include_h2_goaway;
+#endif
+#if UVCPP_HTTP3_ENABLE
+  if (include_h3_goaway) {
+    // libuvcpp exposes the H3 GOAWAY flag and last stream id but no H3 error
+    // code through this client API, so the error code is omitted rather than
+    // fabricated.
+    result["goaway"] = {{"received", client.peer_h3_goaway_received()},
+                        {"lastStreamId", client.peer_h3_goaway_last_stream_id()}};
+  }
+#else
+  (void)include_h3_goaway;
+#endif
+#if !UVCPP_NGHTTP2_ENABLE && !UVCPP_HTTP3_ENABLE
   (void)client;
-  (void)include_goaway;
 #endif
 }
 
@@ -391,7 +404,8 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
       result["timing"] = {{"totalMs", connect_ms}, {"connectMs", connect_ms}};
       return result;
     }
-    add_protocol_metadata(result, response, client, protocol != "http3");
+    add_protocol_metadata(result, response, client, protocol != "http3",
+                         protocol == "http3");
     result["timing"] = {{"connectMs", connect_ms},
                         {"totalMs", std::chrono::duration_cast<std::chrono::milliseconds>(
                                         std::chrono::steady_clock::now() - started)
@@ -486,7 +500,8 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
     }
     response = state.response;
     alpn = state.alpn;
-    add_protocol_metadata(result, response, client, protocol != "http3");
+    add_protocol_metadata(result, response, client, protocol != "http3",
+                         protocol == "http3");
     attach_h2_frames(result, state);
     const auto connect_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - connect_started)

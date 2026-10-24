@@ -6,6 +6,14 @@ All notable changes to uvscope are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- HTTP/3 probe results now include the peer GOAWAY state on QUIC-enabled builds:
+  `goaway: {received, lastStreamId}` alongside `alpn`, `streamId` and `retryable`. libuvcpp does
+  not expose an H3 GOAWAY error code, so `errorCode` is omitted rather than fabricated. The
+  HTTP Studio timing panel accepts the missing error code. QPACK summaries, 0-RTT and migration
+  events remain unavailable.
+
 ### Fixed
 
 - The experimental QUIC SDK build now installs `libuvcpp.so` with the custom OpenSSL 3.6+ lib

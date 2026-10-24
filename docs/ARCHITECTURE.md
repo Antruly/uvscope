@@ -266,7 +266,11 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 ## Known architectural gaps (0.8.0)
 
 - HTTP/2 works over TLS (ALPN `h2`, stream IDs, GOAWAY and frame summaries); the runtime matrix
-  still needs Windows and macOS coverage. HTTP/3/QUIC stay closed in release builds.
+  still needs Windows and macOS coverage. HTTP/3/QUIC remain experimental and closed in release
+  builds. The QUIC SDK build reports H3 ALPN, stream IDs and peer GOAWAY; it does not expose an
+  H3 error code, QPACK summaries, 0-RTT or migration events. On Unix the SDK install carries the
+  custom OpenSSL lib directory in `libuvcpp.so`'s RUNPATH so the experimental daemon starts
+  without `LD_LIBRARY_PATH`.
 - Preview and probes still cap bodies at 4 MiB; larger responses can be streamed to a staging
   file and downloaded (512 MiB cap, HTTP/1.1, attachment-only). A failed transfer keeps its
   partial file and resumes in place with `Range`; a short body against a known `Content-Length`
@@ -276,8 +280,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   upstream selection as HTTP. Redirect rules are skipped after the 101 handshake, relayed frames
   are not logged individually, and retries do not apply to upgrades.
 - Routing supports ordered exact / prefix / regex rules plus method/host/header conditions, and
-  weighted upstreams with bounded retries. There is no active health checking or circuit
-  breaking.
+  weighted upstreams with bounded retries and active health checks. There is no circuit breaker.
 - The `history` table stores summaries, not full bodies.
 - Long-lived proxies are supervised in-process (desired state, restart on runtime stop); process
   isolation and IPC for the service runtimes are still missing.
