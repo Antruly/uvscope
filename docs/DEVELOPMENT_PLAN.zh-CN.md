@@ -655,6 +655,38 @@ self-check 新增 `IPC proxy child request` 断言；现有 smoke 继续覆盖�
 不做（下一片）：父进程 `ChildProxyService`、每代理 `isolated` 开关、按需选择进程内/子进程、
 子进程崩溃后的 supervisor 重启、快照/日志的增量推送与跨进程鉴权。
 
+### S15 — 每代理子进程隔离（已实现）
+
+边界：`src/proxy_child.*`、`src/proxy_manager.*`、`src/store.*`、`src/application.cpp`、
+代理编辑器、smoke。
+
+内容：
+
+- `ProxyConfig.isolated` 持久化（旧库自动补列），API 快照返回 `isolated` / `pid`，编辑器增加
+  “在子进程中运行”开关；
+- 父侧 `ProxyChildService`：独立 IPC 循环线程、spawn `--proxy-child`、start/reload、500 ms
+  遥测快照与增量日志缓存、停止与 reap；
+- ProxyManager 按 `isolated` 选择子进程或进程内后端；`snapshot`/`logs`/指标/supervisor 的
+  `is_running`/`start` 都覆盖两种后端；
+- 子进程异常退出后由 supervisor 自动重启，API 看到新 PID；
+- 删除代理时先反注册 supervisor，再停止并等待子进程退出，避免 watchdog 重启和僵尸进程；
+- 运行中修改 `isolated` 返回 `409 proxy_running`，需先停止。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 创建 `isolated: true` 代理，验证请求、`isolated`/`pid`、遥测 `requests`；`SIGKILL` 子
+进程后等待新 PID 并再次请求；删除后确认子进程已消失。旧库删除 `isolated` 列后重启也能自动
+补列。
+
+不做：TCP/UDP 监听、SOCKS5、终端子进程化；跨进程鉴权；子进程资源限制（CPU/内存/句柄）；
+遥测改为事件推送；Windows 服务/Job Object 级别的进程树回收。
+
 ---
 
 ### 风险与回退（本迭代）

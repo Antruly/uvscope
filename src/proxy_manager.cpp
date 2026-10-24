@@ -24,6 +24,7 @@
 #include <webapp/uvcpp_web_app.h>
 #include <webapp/uvcpp_web_ws.h>
 
+#include "proxy_child.h"
 #include "util.h"
 
 namespace uvscope {
@@ -1267,7 +1268,8 @@ struct ProxyManager::Runtime {
   }
 };
 
-ProxyManager::ProxyManager(Store& store, bool auto_start) : store_(store) {
+ProxyManager::ProxyManager(Store& store, std::string executable_path, bool auto_start)
+    : store_(store), executable_path_(std::move(executable_path)) {
   if (auto_start) this->auto_start();
 }
 
@@ -1298,13 +1300,45 @@ std::shared_ptr<ProxyManager::Runtime> ProxyManager::find(const std::string& id)
   return nullptr;
 }
 
+std::shared_ptr<ProxyChildService> ProxyManager::find_child(
+    const std::string& id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto it = children_.find(id);
+  return it == children_.end() ? nullptr : it->second;
+}
+
 bool ProxyManager::start(const std::string& id, std::string* error) {
   const auto config = store_.proxy(id);
   if (!config) {
     if (error) *error = "proxy not found";
     return false;
   }
-  return start_config(*config, error);
+  if (!config->isolated) return start_config(*config, error);
+
+  std::shared_ptr<ProxyChildService> child;
+  std::shared_ptr<ProxyChildService> old;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = children_.find(id);
+    if (it != children_.end()) {
+      if (it->second->running()) {
+        if (error) *error = "proxy is already running";
+        return false;
+      }
+      old = it->second;
+      children_.erase(it);
+    }
+    child = std::make_shared<ProxyChildService>(executable_path_, *config);
+    children_[id] = child;
+  }
+  old.reset();
+  if (!child->start(error)) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = children_.find(id);
+    if (it != children_.end() && it->second == child) children_.erase(it);
+    return false;
+  }
+  return true;
 }
 
 bool ProxyManager::start_config(const ProxyConfig& config, std::string* error) {
@@ -1406,6 +1440,19 @@ bool ProxyManager::start_config(const ProxyConfig& config, std::string* error) {
 }
 
 bool ProxyManager::stop(const std::string& id, std::string* error) {
+  std::shared_ptr<ProxyChildService> child;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = children_.find(id);
+    if (it != children_.end()) {
+      child = it->second;
+      children_.erase(it);
+    }
+  }
+  if (child) {
+    child->stop();
+    return true;
+  }
   const auto runtime = find(id);
   if (!runtime) {
     if (error) *error = "proxy not found";
@@ -1426,10 +1473,14 @@ bool ProxyManager::stop(const std::string& id, std::string* error) {
 
 void ProxyManager::stop_all() {
   std::vector<std::shared_ptr<Runtime>> runtimes;
+  std::vector<std::shared_ptr<ProxyChildService>> children;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     runtimes = runtimes_;
+    for (const auto& item : children_) children.push_back(item.second);
+    children_.clear();
   }
+  for (const auto& child : children) child->stop();
   for (const auto& runtime : runtimes) {
     runtime->stop_http_workers();
     runtime->stop_health_checks();
@@ -1456,6 +1507,27 @@ bool ProxyManager::reload(const ProxyConfig& config, std::string* error) {
     if (error) *error = "target must be a valid http(s) URL";
     return false;
   }
+  if (config.isolated) {
+    const auto child = find_child(config.id);
+    if (child) return child->reload(config, error);
+    return true;
+  }
+  std::shared_ptr<ProxyChildService> child;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = children_.find(config.id);
+    if (it != children_.end()) {
+      child = it->second;
+      children_.erase(it);
+    }
+  }
+  if (child) {
+    if (child->running()) {
+      if (error) *error = "stop the proxy before changing isolated mode";
+      return false;
+    }
+    child.reset();
+  }
   return reload_config(config, error);
 }
 
@@ -1481,6 +1553,8 @@ bool ProxyManager::reload_config(const ProxyConfig& config, std::string* error) 
 }
 
 bool ProxyManager::is_running(const std::string& id) const {
+  const auto child = find_child(id);
+  if (child) return child->running();
   const auto runtime = find(id);
   return runtime && runtime->running.load();
 }
@@ -1488,10 +1562,13 @@ bool ProxyManager::is_running(const std::string& id) const {
 nlohmann::json ProxyManager::snapshot() const {
   nlohmann::json out = nlohmann::json::array();
   std::vector<std::shared_ptr<Runtime>> runtimes;
+  std::vector<std::shared_ptr<ProxyChildService>> children;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     runtimes = runtimes_;
+    for (const auto& item : children_) children.push_back(item.second);
   }
+  for (const auto& child : children) out.push_back(child->snapshot());
   for (const auto& runtime : runtimes) {
     const ProxyConfig cfg = runtime->config_snapshot();
     out.push_back({{"id", cfg.id},
@@ -1516,6 +1593,8 @@ nlohmann::json ProxyManager::snapshot() const {
 }
 
 nlohmann::json ProxyManager::logs(const std::string& id, std::uint64_t after, int limit) const {
+  const auto child = find_child(id);
+  if (child) return child->logs(after, limit);
   const auto runtime = find(id);
   nlohmann::json out = nlohmann::json::array();
   if (!runtime) return out;
@@ -1534,23 +1613,44 @@ nlohmann::json ProxyManager::logs(const std::string& id, std::uint64_t after, in
 
 std::uint64_t ProxyManager::total_requests() const {
   std::uint64_t total = 0;
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (const auto& runtime : runtimes_) total += runtime->requests.load();
+  std::vector<std::shared_ptr<ProxyChildService>> children;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& runtime : runtimes_) total += runtime->requests.load();
+    for (const auto& item : children_) children.push_back(item.second);
+  }
+  for (const auto& child : children) {
+    total += child->snapshot().value("requests", std::uint64_t(0));
+  }
   return total;
 }
 
 std::uint64_t ProxyManager::total_errors() const {
   std::uint64_t total = 0;
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (const auto& runtime : runtimes_) total += runtime->errors.load();
+  std::vector<std::shared_ptr<ProxyChildService>> children;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& runtime : runtimes_) total += runtime->errors.load();
+    for (const auto& item : children_) children.push_back(item.second);
+  }
+  for (const auto& child : children) {
+    total += child->snapshot().value("errors", std::uint64_t(0));
+  }
   return total;
 }
 
 std::size_t ProxyManager::active_count() const {
   std::size_t count = 0;
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (const auto& runtime : runtimes_) {
-    if (runtime->running.load()) ++count;
+  std::vector<std::shared_ptr<ProxyChildService>> children;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& runtime : runtimes_) {
+      if (runtime->running.load()) ++count;
+    }
+    for (const auto& item : children_) children.push_back(item.second);
+  }
+  for (const auto& child : children) {
+    if (child->running()) ++count;
   }
   return count;
 }

@@ -126,6 +126,8 @@ export interface ProxyInfo {
   workers?: number
   breakerThreshold?: number
   breakerCooldownMs?: number
+  isolated?: boolean
+  pid?: number
   configVersion?: number
   autoStart: boolean
   tls: boolean

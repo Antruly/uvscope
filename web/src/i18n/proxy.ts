@@ -67,6 +67,7 @@ const en: Record<string, string> = {
   'proxy.upstreams.invalid': 'Upstream {index} must be an http:// or https:// URL.',
   
   'proxy.editor.autoStart': 'Start automatically',
+  'proxy.editor.isolated': 'Run in a child process',
   'proxy.editor.tls': 'HTTPS listener',
   'proxy.editor.managedCert': 'Managed certificate',
   'proxy.editor.customCert': 'Custom paths',
@@ -189,6 +190,7 @@ const zh: Record<string, string> = {
   'proxy.upstreams.invalid': '第 {index} 个上游必须是 http:// 或 https:// URL。',
   
   'proxy.editor.autoStart': '自动启动',
+  'proxy.editor.isolated': '在子进程中运行',
   'proxy.editor.tls': 'HTTPS 监听',
   'proxy.editor.managedCert': '受管证书',
   'proxy.editor.customCert': '自定义路径',

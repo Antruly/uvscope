@@ -144,6 +144,7 @@ struct ProxyConfig {
   // is skipped for breaker_cooldown_ms, then a half-open probe is allowed.
   int breaker_threshold = 5;
   int breaker_cooldown_ms = 30000;
+  bool isolated = false;
   bool auto_start = false;
   bool tls = false;
   std::string cert_path;

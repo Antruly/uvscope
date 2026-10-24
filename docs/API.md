@@ -385,6 +385,13 @@ Per-proxy tuning fields are stored in SQLite and applied when the proxy starts:
   needed to open an upstream circuit. `0` disables the breaker.
 - `breakerCooldownMs`: 1000–300000, default 30000; how long an open circuit skips the upstream
   before allowing one half-open probe.
+- `isolated`: run this proxy in a child process. The snapshot then includes `pid` and telemetry
+  is cached from the child. Stop the proxy before changing the value; a running proxy returns
+  `409 proxy_running`.
+
+An isolated proxy is supervised: if the child exits unexpectedly the supervisor restarts it, and
+the `/api/proxies` snapshot reports the new PID. Deleting the proxy stops the child and waits for
+it to be reaped.
 
 The same connect timeout applies to WebSocket upgrade attempts. Omitted fields keep the existing
 value on update, or the default for a new proxy.

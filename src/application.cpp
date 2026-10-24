@@ -618,7 +618,7 @@ bool Application::initialize() {
     std::fprintf(stderr, "uvscope: cannot open database: %s\n", error.c_str());
     return false;
   }
-  proxies_.reset(new ProxyManager(store_));
+  proxies_.reset(new ProxyManager(store_, options_.self_path));
   supervisor_.reset(new Supervisor(
       [this](std::function<void()> fn) { app_.post(std::move(fn)); }));
   transport_.reset(new TransportManager());
@@ -3104,6 +3104,7 @@ nlohmann::json Application::proxy_view() const {
                            {"workers", config.workers},
                            {"breakerThreshold", config.breaker_threshold},
                            {"breakerCooldownMs", config.breaker_cooldown_ms},
+                           {"isolated", config.isolated},
                            {"configVersion", 0},
                            {"autoStart", config.auto_start},
                            {"tls", config.tls},
@@ -3233,6 +3234,14 @@ void Application::register_proxy_routes() {
                  "bad_request");
       return;
     }
+    config.isolated = body->contains("isolated")
+                          ? bool_field(*body, "isolated", false)
+                          : (existing ? existing->isolated : false);
+    if (existing && existing->isolated != config.isolated && proxies_->is_running(config.id)) {
+      send_error(resp, 409,
+                 "stop the proxy before changing isolated mode", "proxy_running");
+      return;
+    }
     if (config.target.empty() && !config.upstreams.empty()) {
       config.target = config.upstreams.front().url;
     }
@@ -3297,12 +3306,14 @@ void Application::register_proxy_routes() {
     }
     const auto existing = store_.proxy(*id);
     std::string error;
+    // Remove the desired-state entry first: otherwise the supervisor watchdog
+    // can restart the runtime between stop() and unregister_service().
+    if (supervisor_) supervisor_->unregister_service(*id);
     proxies_->stop(*id, nullptr);
     if (!store_.delete_proxy(*id, &error)) {
       send_error(resp, 500, error);
       return;
     }
-    if (supervisor_) supervisor_->unregister_service(*id);
     audit_event(store_, req, principal->user, "proxy.delete",
                 existing ? existing->name : *id, "");
     send_json(resp, 200, {{"ok", true}, {"proxies", proxy_view()}});
@@ -3687,7 +3698,7 @@ void Application::register_admin_routes() {
         send_error(resp, 500, "database reset failed: " + error, "reset_failed");
         return;
       }
-      proxies_.reset(new ProxyManager(store_));
+      proxies_.reset(new ProxyManager(store_, options_.self_path));
       Auth::clear_cookie(resp);
       send_json(resp, 200, {{"ok", true}, {"setupRequired", true}});
       return;

@@ -1,12 +1,17 @@
 #include "proxy_child.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #include <uv.h>
 #include <nlohmann/json.hpp>
@@ -36,6 +41,7 @@ nlohmann::json proxy_config_to_json(const ProxyConfig& config) {
           {"workers", config.workers},
           {"breakerThreshold", config.breaker_threshold},
           {"breakerCooldownMs", config.breaker_cooldown_ms},
+          {"isolated", config.isolated},
           {"autoStart", config.auto_start},
           {"tls", config.tls},
           {"certPath", config.cert_path},
@@ -74,6 +80,7 @@ bool proxy_config_from_json(const nlohmann::json& value, ProxyConfig* config,
       std::max(0, std::min(value.value("breakerThreshold", 5), 100));
   parsed.breaker_cooldown_ms =
       std::max(1000, std::min(value.value("breakerCooldownMs", 30000), 300000));
+  parsed.isolated = false;  // a child never spawns another child
 
   if (value.contains("upstreams")) {
     if (!value["upstreams"].is_array()) {
@@ -151,50 +158,65 @@ int run_proxy_child(const std::string& endpoint) {
   uv_loop_t loop;
   if (uv_loop_init(&loop) != 0) return 1;
   Store store;
-  ProxyManager manager(store, false);
+  ProxyManager manager(store, "", false);
   IpcChannel channel(&loop);
   std::string proxy_id;
+  struct Telemetry {
+    ProxyManager* manager = nullptr;
+    IpcChannel* channel = nullptr;
+    std::string id;
+    bool started = false;
+    std::uint64_t last_seq = 0;
+  } telemetry;
+  telemetry.manager = &manager;
+  telemetry.channel = &channel;
 
   channel.set_on_ready([&channel] {
     std::string error;
     channel.send({{"type", "ready"}}, &error);
   });
-  channel.set_on_message([&channel, &manager, &proxy_id](const nlohmann::json& message) {
-    if (!message.is_object()) return;
-    const std::string type = message.value("type", std::string());
-    auto reply = [&channel](const nlohmann::json& value) {
-      std::string error;
-      channel.send(value, &error);
-    };
-    if (type == "start" || type == "reload") {
-      ProxyConfig config;
-      std::string error;
-      if (!proxy_config_from_json(message.value("config", nlohmann::json::object()),
-                                  &config, &error)) {
-        reply({{"type", "error"}, {"error", error}});
-        return;
-      }
-      proxy_id = config.id;
-      const bool ok = type == "start" ? manager.start_config(config, &error)
-                                      : manager.reload_config(config, &error);
-      if (!ok) {
-        reply({{"type", "error"}, {"error", error}});
-        return;
-      }
-      reply({{"type", "started"}, {"snapshot", manager.snapshot()}});
-    } else if (type == "snapshot") {
-      reply({{"type", "snapshot"}, {"snapshot", manager.snapshot()}});
-    } else if (type == "logs") {
-      const std::uint64_t after = message.value("after", 0);
-      const int limit = std::max(1, std::min(message.value("limit", 200), 500));
-      reply({{"type", "logs"}, {"logs", manager.logs(proxy_id, after, limit)}});
-    } else if (type == "stop") {
-      if (!proxy_id.empty()) manager.stop(proxy_id, nullptr);
-      reply({{"type", "stopped"}});
-      channel.close();
-    }
-  });
-  channel.set_on_close([&loop, &manager](const std::string&) {
+  channel.set_on_message(
+      [&channel, &manager, &proxy_id, &telemetry](const nlohmann::json& message) {
+        if (!message.is_object()) return;
+        const std::string type = message.value("type", std::string());
+        auto reply = [&channel](const nlohmann::json& value) {
+          std::string error;
+          channel.send(value, &error);
+        };
+        if (type == "start" || type == "reload") {
+          ProxyConfig config;
+          std::string error;
+          if (!proxy_config_from_json(message.value("config", nlohmann::json::object()),
+                                      &config, &error)) {
+            reply({{"type", "error"}, {"error", error}});
+            return;
+          }
+          proxy_id = config.id;
+          const bool ok = type == "start" ? manager.start_config(config, &error)
+                                          : manager.reload_config(config, &error);
+          if (!ok) {
+            reply({{"type", "error"}, {"error", error}});
+            return;
+          }
+          telemetry.id = proxy_id;
+          telemetry.started = true;
+          telemetry.last_seq = 0;
+          reply({{"type", "started"}, {"snapshot", manager.snapshot()}});
+        } else if (type == "snapshot") {
+          reply({{"type", "snapshot"}, {"snapshot", manager.snapshot()}});
+        } else if (type == "logs") {
+          const std::uint64_t after = message.value("after", 0);
+          const int limit = std::max(1, std::min(message.value("limit", 200), 500));
+          reply({{"type", "logs"}, {"logs", manager.logs(proxy_id, after, limit)}});
+        } else if (type == "stop") {
+          telemetry.started = false;
+          if (!proxy_id.empty()) manager.stop(proxy_id, nullptr);
+          reply({{"type", "stopped"}});
+          channel.close();
+        }
+      });
+  channel.set_on_close([&loop, &manager, &telemetry](const std::string&) {
+    telemetry.started = false;
     manager.stop_all();
     uv_stop(&loop);
   });
@@ -203,9 +225,30 @@ int run_proxy_child(const std::string& endpoint) {
     uv_loop_close(&loop);
     return 1;
   }
+  uv_timer_t telemetry_timer;
+  uv_timer_init(&loop, &telemetry_timer);
+  telemetry_timer.data = &telemetry;
+  uv_timer_start(
+      &telemetry_timer,
+      [](uv_timer_t* timer) {
+        auto* state = static_cast<Telemetry*>(timer->data);
+        if (state == nullptr || !state->started || state->id.empty()) return;
+        const auto snapshots = state->manager->snapshot();
+        const auto logs = state->manager->logs(state->id, state->last_seq, 200);
+        if (logs.is_array() && !logs.empty()) {
+          state->last_seq = logs.back().value("seq", state->last_seq);
+        }
+        std::string send_error;
+        state->channel->send(
+            {{"type", "telemetry"}, {"snapshot", snapshots}, {"logs", logs}},
+            &send_error);
+      },
+      500, 500);
   uv_run(&loop, UV_RUN_DEFAULT);
   manager.stop_all();
   channel.close();
+  uv_timer_stop(&telemetry_timer);
+  uv_close(reinterpret_cast<uv_handle_t*>(&telemetry_timer), nullptr);
   for (int i = 0; i < 8 && uv_loop_alive(&loop); ++i) uv_run(&loop, UV_RUN_NOWAIT);
   uv_loop_close(&loop);
   return 0;
@@ -395,6 +438,459 @@ bool run_proxy_child_self_check(const std::string& executable, int target_port,
     return false;
   }
   return true;
+}
+
+struct ProxyChildService::Impl {
+  Impl(std::string path, ProxyConfig proxy_config)
+      : executable(std::move(path)), config(std::move(proxy_config)) {}
+
+  std::string executable;
+  mutable std::mutex mutex;
+  std::condition_variable cv;
+  ProxyConfig config;
+  ProxyConfig pending_config;
+  std::uint64_t version = 1;
+  uv_loop_t loop{};
+  IpcChannel* server = nullptr;
+  uv_process_t process{};
+  bool process_spawned = false;
+  bool process_closed = false;
+  uv_async_t wake{};
+  bool wake_initialized = false;
+  std::deque<nlohmann::json> commands;
+  std::thread thread;
+  std::atomic<bool> is_running{false};
+  std::atomic<bool> stopping{false};
+  bool loop_ready = false;
+  bool start_result_ready = false;
+  bool start_ok = false;
+  bool reload_pending = false;
+  bool reload_ok = false;
+  std::string error;
+  std::string reload_error;
+  nlohmann::json snapshot = nlohmann::json::object();
+  nlohmann::json log_cache = nlohmann::json::array();
+  std::uint64_t last_log_seq = 0;
+  int child_pid = 0;
+  std::string endpoint;
+
+  ProxyConfig config_copy() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return config;
+  }
+
+  void update_logs(const nlohmann::json& logs) {
+    if (!logs.is_array()) return;
+    std::lock_guard<std::mutex> lock(mutex);
+    for (const auto& entry : logs) {
+      if (!entry.is_object()) continue;
+      const std::uint64_t seq = entry.value("seq", 0);
+      if (seq == 0 || seq <= last_log_seq) continue;
+      log_cache.push_back(entry);
+      last_log_seq = seq;
+    }
+    while (log_cache.size() > 500) log_cache.erase(log_cache.begin());
+  }
+
+  void on_message(const nlohmann::json& message) {
+    if (!message.is_object()) return;
+    const std::string type = message.value("type", std::string());
+    if (type == "started") {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto snapshots = message.value("snapshot", nlohmann::json::array());
+        if (snapshots.is_array() && !snapshots.empty()) snapshot = snapshots[0];
+        is_running.store(true);
+        if (reload_pending) {
+          reload_pending = false;
+          reload_ok = true;
+          config = pending_config;
+          ++version;
+        } else {
+          start_ok = true;
+          start_result_ready = true;
+        }
+      }
+      cv.notify_all();
+      return;
+    }
+    if (type == "error") {
+      const std::string reason =
+          message.value("error", std::string("proxy child error"));
+      bool fatal = false;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (reload_pending) {
+          reload_pending = false;
+          reload_ok = false;
+          reload_error = reason;
+        } else {
+          start_ok = false;
+          start_result_ready = true;
+          error = reason;
+          is_running.store(false);
+          fatal = true;
+        }
+      }
+      cv.notify_all();
+      if (fatal) uv_stop(&loop);
+      return;
+    }
+    if (type == "telemetry") {
+      const auto snapshots = message.value("snapshot", nlohmann::json::array());
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (snapshots.is_array() && !snapshots.empty()) {
+          snapshot = snapshots[0];
+          is_running.store(true);
+        }
+      }
+      update_logs(message.value("logs", nlohmann::json::array()));
+      return;
+    }
+    if (type == "stopped") {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        is_running.store(false);
+        stopping.store(true);
+      }
+      cv.notify_all();
+      // Do not stop the loop here: the child process is about to exit and its
+      // exit callback must reap it before the loop closes.
+    }
+  }
+
+  void on_wake() {
+    std::deque<nlohmann::json> pending;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      pending.swap(commands);
+    }
+    for (const auto& command : pending) {
+      if (command.value("type", std::string()) == "shutdown") {
+        uv_stop(&loop);
+        continue;
+      }
+      if (server != nullptr) {
+        std::string send_error;
+        server->send(command, &send_error);
+      }
+    }
+  }
+
+  static void on_wake_cb(uv_async_t* handle) {
+    auto* self = static_cast<Impl*>(handle->data);
+    if (self != nullptr) self->on_wake();
+  }
+
+  static void on_exit_cb(uv_process_t* child, int64_t, int) {
+    auto* self = static_cast<Impl*>(child->data);
+    if (self == nullptr) return;
+    {
+      std::lock_guard<std::mutex> lock(self->mutex);
+      self->process_closed = true;
+      self->is_running.store(false);
+      if (!self->stopping.load() && self->error.empty()) {
+        self->error = "proxy child exited";
+      }
+    }
+    uv_close(reinterpret_cast<uv_handle_t*>(child), nullptr);
+    uv_stop(&self->loop);
+    self->cv.notify_all();
+  }
+
+  void set_start_error(const std::string& reason) {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      if (start_result_ready) return;
+      start_ok = false;
+      start_result_ready = true;
+      error = reason;
+      is_running.store(false);
+    }
+    cv.notify_all();
+    uv_stop(&loop);
+  }
+
+  void post(nlohmann::json message) {
+    bool signal = false;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      commands.push_back(std::move(message));
+      signal = wake_initialized;
+    }
+    if (signal) uv_async_send(&wake);
+  }
+
+  void loop_main() {
+    if (uv_loop_init(&loop) != 0) {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        start_ok = false;
+        start_result_ready = true;
+        error = "could not initialize the proxy child IPC loop";
+      }
+      cv.notify_all();
+      return;
+    }
+    endpoint = ipc_endpoint_path("proxy-svc-" + random_hex(6));
+    std::error_code ec;
+    std::filesystem::remove(endpoint, ec);
+    server = new IpcChannel(&loop);
+    server->set_on_ready([this] {
+      std::string send_error;
+      if (!server->send(
+              {{"type", "start"},
+               {"config", proxy_config_to_json(config_copy())}},
+              &send_error)) {
+        set_start_error(send_error);
+      }
+    });
+    server->set_on_message(
+        [this](const nlohmann::json& message) { on_message(message); });
+    server->set_on_close([this](const std::string& reason) {
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (!stopping.load() && error.empty()) error = reason;
+        is_running.store(false);
+      }
+      cv.notify_all();
+      // The process exit callback stops the loop after reaping the child.
+    });
+    std::string listen_error;
+    if (!server->listen(endpoint, &listen_error)) {
+      set_start_error(listen_error);
+      server->close();
+      for (int i = 0; i < 8 && uv_loop_alive(&loop); ++i) uv_run(&loop, UV_RUN_NOWAIT);
+      uv_loop_close(&loop);
+      delete server;
+      server = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        loop_ready = false;
+      }
+      cv.notify_all();
+      return;
+    }
+    if (uv_async_init(&loop, &wake, on_wake_cb) != 0) {
+      set_start_error("could not initialize the proxy child command channel");
+      server->close();
+      for (int i = 0; i < 8 && uv_loop_alive(&loop); ++i) uv_run(&loop, UV_RUN_NOWAIT);
+      uv_loop_close(&loop);
+      delete server;
+      server = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        loop_ready = false;
+      }
+      cv.notify_all();
+      return;
+    }
+    wake.data = this;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      wake_initialized = true;
+    }
+
+    std::string exe = executable;
+    if (exe.empty()) {
+#if defined(_WIN32)
+      exe = (executable_dir(nullptr) / "uvscope.exe").string();
+#else
+      exe = (executable_dir(nullptr) / "uvscope").string();
+#endif
+    }
+    std::string exe_copy = exe;
+    const char* args[] = {exe_copy.c_str(), "--proxy-child", endpoint.c_str(), nullptr};
+    uv_process_options_t options{};
+    options.file = exe_copy.c_str();
+    options.args = const_cast<char**>(args);
+    options.exit_cb = on_exit_cb;
+    const int spawn_rc = uv_spawn(&loop, &process, &options);
+    if (spawn_rc != 0) {
+      set_start_error(std::string("could not spawn the proxy child: ") +
+                      uv_strerror(spawn_rc));
+      server->close();
+      uv_close(reinterpret_cast<uv_handle_t*>(&wake), nullptr);
+      for (int i = 0; i < 8 && uv_loop_alive(&loop); ++i) uv_run(&loop, UV_RUN_NOWAIT);
+      uv_loop_close(&loop);
+      delete server;
+      server = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(mutex);
+        wake_initialized = false;
+        loop_ready = false;
+      }
+      cv.notify_all();
+      return;
+    }
+    process.data = this;
+    process_spawned = true;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      child_pid = process.pid;
+      loop_ready = true;
+    }
+    cv.notify_all();
+
+    uv_run(&loop, UV_RUN_DEFAULT);
+    if (server != nullptr) server->close();
+    if (wake_initialized) {
+      uv_close(reinterpret_cast<uv_handle_t*>(&wake), nullptr);
+      wake_initialized = false;
+    }
+    if (process_spawned && !process_closed) {
+      uv_process_kill(&process, SIGTERM);
+      // Give the exit callback a chance to reap the child before the loop and
+      // its process handle are closed.
+      for (int i = 0; i < 50 && !process_closed; ++i) {
+        uv_run(&loop, UV_RUN_NOWAIT);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      if (!process_closed) {
+        process_closed = true;
+        uv_close(reinterpret_cast<uv_handle_t*>(&process), nullptr);
+      }
+    }
+    for (int i = 0; i < 8 && uv_loop_alive(&loop); ++i) uv_run(&loop, UV_RUN_NOWAIT);
+    uv_loop_close(&loop);
+    delete server;
+    server = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      is_running.store(false);
+      loop_ready = false;
+    }
+    cv.notify_all();
+    std::filesystem::remove(endpoint, ec);
+  }
+};
+
+ProxyChildService::ProxyChildService(std::string executable, ProxyConfig config)
+    : impl_(new Impl(std::move(executable), std::move(config))) {}
+
+ProxyChildService::~ProxyChildService() { stop(); }
+
+bool ProxyChildService::start(std::string* error) {
+  {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->thread.joinable()) {
+      if (error) *error = "proxy child is already started";
+      return false;
+    }
+    impl_->start_result_ready = false;
+    impl_->start_ok = false;
+    impl_->error.clear();
+    impl_->stopping.store(false);
+  }
+  impl_->thread = std::thread([this] { impl_->loop_main(); });
+  std::unique_lock<std::mutex> lock(impl_->mutex);
+  if (!impl_->cv.wait_for(lock, std::chrono::seconds(10), [this] {
+        return impl_->start_result_ready;
+      })) {
+    if (error) *error = "proxy child start timed out";
+    lock.unlock();
+    stop();
+    return false;
+  }
+  if (!impl_->start_ok) {
+    if (error) *error = impl_->error.empty() ? "proxy child failed to start" : impl_->error;
+    return false;
+  }
+  return true;
+}
+
+void ProxyChildService::stop() {
+  if (impl_ == nullptr || !impl_->thread.joinable()) return;
+  impl_->stopping.store(true);
+  if (impl_->is_running.load()) impl_->post({{"type", "stop"}});
+  {
+    std::unique_lock<std::mutex> lock(impl_->mutex);
+    impl_->cv.wait_for(lock, std::chrono::seconds(5), [this] {
+      return !impl_->is_running.load();
+    });
+  }
+  bool loop_ready = false;
+  {
+    std::unique_lock<std::mutex> lock(impl_->mutex);
+    impl_->cv.wait_for(lock, std::chrono::seconds(5), [this] {
+      return !impl_->loop_ready;
+    });
+    loop_ready = impl_->loop_ready;
+  }
+  if (loop_ready) impl_->post({{"type", "shutdown"}});
+  impl_->thread.join();
+  impl_->is_running.store(false);
+}
+
+bool ProxyChildService::reload(const ProxyConfig& config, std::string* error) {
+  if (!impl_->is_running.load()) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->config = config;
+    ++impl_->version;
+    return true;
+  }
+  {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->reload_pending = true;
+    impl_->reload_ok = false;
+    impl_->reload_error.clear();
+    impl_->pending_config = config;
+  }
+  impl_->post({{"type", "reload"}, {"config", proxy_config_to_json(config)}});
+  std::unique_lock<std::mutex> lock(impl_->mutex);
+  if (!impl_->cv.wait_for(lock, std::chrono::seconds(10), [this] {
+        return !impl_->reload_pending;
+      })) {
+    if (error) *error = "proxy child reload timed out";
+    return false;
+  }
+  if (!impl_->reload_ok) {
+    if (error) *error = impl_->reload_error.empty() ? "proxy child reload failed"
+                                                    : impl_->reload_error;
+    return false;
+  }
+  return true;
+}
+
+bool ProxyChildService::running() const { return impl_->is_running.load(); }
+
+nlohmann::json ProxyChildService::snapshot() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  nlohmann::json out = impl_->snapshot.is_object() ? impl_->snapshot
+                                                   : nlohmann::json::object();
+  out["id"] = impl_->config.id;
+  out["name"] = impl_->config.name;
+  out["isolated"] = true;
+  out["pid"] = impl_->child_pid;
+  out["running"] = impl_->is_running.load();
+  if (!impl_->error.empty()) out["lastError"] = impl_->error;
+  return out;
+}
+
+nlohmann::json ProxyChildService::logs(std::uint64_t after, int limit) const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  nlohmann::json out = nlohmann::json::array();
+  for (const auto& entry : impl_->log_cache) {
+    if (!entry.is_object() || entry.value("seq", 0) <= after) continue;
+    out.push_back(entry);
+    if (static_cast<int>(out.size()) >= std::max(1, limit)) break;
+  }
+  return out;
+}
+
+ProxyConfig ProxyChildService::config_snapshot() const {
+  return impl_->config_copy();
+}
+
+std::uint64_t ProxyChildService::config_version() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->version;
+}
+
+int ProxyChildService::pid() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->child_pid;
 }
 
 }  // namespace uvscope

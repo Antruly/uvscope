@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -20,9 +21,12 @@ class uvcpp_web_response;
 
 namespace uvscope {
 
+class ProxyChildService;
+
 class ProxyManager {
  public:
-  explicit ProxyManager(Store& store, bool auto_start = true);
+  explicit ProxyManager(Store& store, std::string executable_path = "",
+                        bool auto_start = true);
   ~ProxyManager();
 
   bool start(const std::string& id, std::string* error);
@@ -44,11 +48,14 @@ class ProxyManager {
  private:
   struct Runtime;
   std::shared_ptr<Runtime> find(const std::string& id) const;
+  std::shared_ptr<ProxyChildService> find_child(const std::string& id) const;
   void auto_start();
 
   Store& store_;
+  std::string executable_path_;
   mutable std::mutex mutex_;
   std::vector<std::shared_ptr<Runtime>> runtimes_;
+  std::map<std::string, std::shared_ptr<ProxyChildService>> children_;
   std::atomic<std::uint64_t> total_requests_{0};
   std::atomic<std::uint64_t> total_errors_{0};
 };

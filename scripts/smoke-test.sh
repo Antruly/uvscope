@@ -23,6 +23,7 @@ ERROR_PROXY_PORT="${18:-18803}"
 TIMEOUT_PROXY_PORT="${19:-18804}"
 HOT_PROXY_PORT="${20:-18805}"
 BREAKER_PROXY_PORT="${21:-18806}"
+ISOLATED_PROXY_PORT="${22:-18807}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -593,6 +594,7 @@ PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" WS_PORT="${WS_PORT}" WS_PROXY_PORT="${WS
 WS_ROUTE_PORT="${WS_ROUTE_PORT}" ASYNC_PROXY_PORT="${ASYNC_PROXY_PORT}" \
 ERROR_PROXY_PORT="${ERROR_PROXY_PORT}" TIMEOUT_PROXY_PORT="${TIMEOUT_PROXY_PORT}" \
 HOT_PROXY_PORT="${HOT_PROXY_PORT}" BREAKER_PROXY_PORT="${BREAKER_PROXY_PORT}" \
+ISOLATED_PROXY_PORT="${ISOLATED_PROXY_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -604,6 +606,7 @@ import http.server
 import json
 import os
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -1746,6 +1749,85 @@ if breaker_proxy.get("id"):
     status, deleted = call("DELETE", f"/api/proxies/{breaker_proxy['id']}")
     check(status == 200 and deleted.get("ok") is True,
           f"breaker proxy delete failed: {deleted}")
+
+# Isolated proxy: the child process serves the proxy, the parent caches its
+# telemetry, killing the child makes the supervisor restart it, and delete
+# reaps the child.
+status, created = call("POST", "/api/proxies", {
+    "name": "smoke-isolated",
+    "listenHost": "127.0.0.1",
+    "listenPort": int(os.environ["ISOLATED_PROXY_PORT"]),
+    "target": f"http://127.0.0.1:{slow_proxy_port}",
+    "isolated": True,
+    "workers": 1,
+    "start": True,
+    "rules": [],
+})
+isolated_proxy = next((item for item in created.get("proxies", [])
+                       if item.get("name") == "smoke-isolated"), {})
+check(status == 200 and created.get("ok") is True and bool(isolated_proxy.get("id")),
+      f"isolated proxy creation failed: {created}")
+check(isolated_proxy.get("isolated") is True,
+      f"isolated flag missing: {isolated_proxy}")
+if isolated_proxy.get("id"):
+    base_isolated = f"http://127.0.0.1:{os.environ['ISOLATED_PROXY_PORT']}"
+    ready = False
+    for _ in range(100):
+        try:
+            with urllib.request.urlopen(base_isolated + "/fast", timeout=1) as response:
+                ready = response.read() == b"fast-ok"
+            if ready:
+                break
+        except Exception:
+            time.sleep(0.1)
+    check(ready, "isolated proxy did not become reachable")
+    child_pid = 0
+    requests_seen = 0
+    for _ in range(50):
+        status, payload = call("GET", "/api/proxies")
+        entry = next((item for item in payload.get("proxies", [])
+                      if item.get("id") == isolated_proxy["id"]), {})
+        child_pid = entry.get("pid", 0)
+        requests_seen = entry.get("requests", 0)
+        if child_pid and entry.get("running") and requests_seen >= 1:
+            break
+        time.sleep(0.1)
+    check(child_pid > 0 and requests_seen >= 1,
+          f"isolated proxy telemetry missing: pid={child_pid} requests={requests_seen}")
+    if os.name == "posix" and child_pid > 0:
+        os.kill(child_pid, signal.SIGKILL)
+        new_pid = 0
+        for _ in range(100):
+            time.sleep(0.2)
+            status, payload = call("GET", "/api/proxies")
+            entry = next((item for item in payload.get("proxies", [])
+                          if item.get("id") == isolated_proxy["id"]), {})
+            new_pid = entry.get("pid", 0)
+            if entry.get("running") and new_pid and new_pid != child_pid:
+                break
+        check(new_pid and new_pid != child_pid,
+              f"supervisor did not restart the isolated proxy: old={child_pid} new={new_pid}")
+        with urllib.request.urlopen(base_isolated + "/fast", timeout=5) as response:
+            check(response.read() == b"fast-ok",
+                  "restarted isolated proxy did not serve")
+        status, deleted = call("DELETE", f"/api/proxies/{isolated_proxy['id']}")
+        check(status == 200 and deleted.get("ok") is True,
+              f"isolated proxy delete failed: {deleted}")
+        reaped = False
+        for _ in range(100):
+            try:
+                os.kill(new_pid, 0)
+            except ProcessLookupError:
+                reaped = True
+                break
+            except PermissionError:
+                pass
+            time.sleep(0.1)
+        check(reaped, f"isolated child process was not reaped: {new_pid}")
+    else:
+        status, deleted = call("DELETE", f"/api/proxies/{isolated_proxy['id']}")
+        check(status == 200 and deleted.get("ok") is True,
+              f"isolated proxy delete failed: {deleted}")
 
 if os.environ.get("WS_PROXY_PORT") and os.environ.get("WS_PORT"):
     status, created = call("POST", "/api/proxies", {
