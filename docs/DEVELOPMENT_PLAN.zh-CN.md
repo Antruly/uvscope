@@ -545,6 +545,34 @@ WebSocket 透传断言继续通过。
 
 不做：完全异步的 HTTP 客户端、跨进程隔离。
 
+### S11 — 代理配置热重载（已实现）
+
+边界：`src/proxy_manager.cpp`、`src/application.cpp`、smoke、`docs/API.md`、
+`docs/ARCHITECTURE.md`。
+
+内容：
+
+- `Runtime::config` 改为受 `config_mutex` 保护的快照；请求、健康检查和 WebSocket 在入口处
+  获取一致快照；
+- 仅名称、target/upstreams、重试、上游超时和规则变更时原地热切换：监听器与 worker 池保持
+  运行，`configVersion` 递增，已有请求继续使用自己的快照；
+- 已有 WebSocket 会话保留握手时选择的上游；
+- 监听地址/端口、TLS 证书和 worker 数变更仍走停止/启动；
+- 每次热重载记录 `configuration hot-reloaded (version N)` 日志。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 断言规则更新后 `startedAt` 不变、`configVersion` 递增、新规则生效、旧规则移除，并出现
+`hot-reloaded` 日志；worker 数变更则出现 `proxy stopped` / `proxy started` 且服务恢复。
+
+不做：跨进程配置分发、WebSocket 会话迁移到新上游、监听器零停机换端口。
+
 ---
 
 ### 风险与回退（本迭代）

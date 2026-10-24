@@ -21,6 +21,7 @@ WS_ROUTE_PORT="${16:-18801}"
 ASYNC_PROXY_PORT="${17:-18802}"
 ERROR_PROXY_PORT="${18:-18803}"
 TIMEOUT_PROXY_PORT="${19:-18804}"
+HOT_PROXY_PORT="${20:-18805}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -590,6 +591,7 @@ BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
 PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" WS_PORT="${WS_PORT}" WS_PROXY_PORT="${WS_PROXY_PORT}" \
 WS_ROUTE_PORT="${WS_ROUTE_PORT}" ASYNC_PROXY_PORT="${ASYNC_PROXY_PORT}" \
 ERROR_PROXY_PORT="${ERROR_PROXY_PORT}" TIMEOUT_PROXY_PORT="${TIMEOUT_PROXY_PORT}" \
+HOT_PROXY_PORT="${HOT_PROXY_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -700,6 +702,8 @@ class SlowProxyHandler(http.server.BaseHTTPRequestHandler):
         if self.path.startswith("/slow"):
             time.sleep(2.0)
             body = b"slow-ok"
+        elif self.path.startswith("/echo"):
+            body = ("path:" + self.path).encode()
         else:
             body = b"fast-ok"
         try:
@@ -1561,6 +1565,94 @@ if timeout_proxy.get("id"):
     status, deleted = call("DELETE", f"/api/proxies/{timeout_proxy['id']}")
     check(status == 200 and deleted.get("ok") is True,
           f"timeout proxy delete failed: {deleted}")
+
+# Hot reload: rule changes apply without restarting the listener; worker-count
+# changes still restart it.
+hot_rule_old = [{"name": "old", "matchType": "prefix", "pattern": "/hot-old",
+                 "action": "rewrite", "destination": "/echo-old",
+                 "preserveQuery": False}]
+hot_rule_new = [{"name": "new", "matchType": "prefix", "pattern": "/hot-new",
+                 "action": "rewrite", "destination": "/echo-new",
+                 "preserveQuery": False}]
+status, created = call("POST", "/api/proxies", {
+    "name": "smoke-hot-proxy",
+    "listenHost": "127.0.0.1",
+    "listenPort": int(os.environ["HOT_PROXY_PORT"]),
+    "target": f"http://127.0.0.1:{slow_proxy_port}",
+    "workers": 1,
+    "start": True,
+    "rules": hot_rule_old,
+})
+hot_proxy = next((item for item in created.get("proxies", [])
+                  if item.get("name") == "smoke-hot-proxy"), {})
+check(status == 200 and created.get("ok") is True and bool(hot_proxy.get("id")),
+      f"hot proxy creation failed: {created}")
+if hot_proxy.get("id"):
+    base_hot = f"http://127.0.0.1:{os.environ['HOT_PROXY_PORT']}"
+    ready = False
+    for _ in range(50):
+        try:
+            with urllib.request.urlopen(base_hot + "/hot-old", timeout=1) as response:
+                ready = response.read() == b"path:/echo-old"
+            if ready:
+                break
+        except Exception:
+            time.sleep(0.1)
+    check(ready, "hot proxy did not apply its initial rewrite")
+    started_at = hot_proxy.get("startedAt")
+    version = hot_proxy.get("configVersion", 0)
+    time.sleep(1.1)  # make a restart distinguishable by startedAt
+    status, updated = call("POST", "/api/proxies", {
+        "id": hot_proxy["id"],
+        "name": "smoke-hot-proxy",
+        "listenHost": "127.0.0.1",
+        "listenPort": int(os.environ["HOT_PROXY_PORT"]),
+        "target": f"http://127.0.0.1:{slow_proxy_port}",
+        "workers": 1,
+        "start": True,
+        "rules": hot_rule_new,
+    })
+    updated_proxy = next((item for item in updated.get("proxies", [])
+                          if item.get("id") == hot_proxy["id"]), {})
+    check(status == 200 and updated_proxy.get("running") is True,
+          f"hot reload update failed: {updated}")
+    check(updated_proxy.get("configVersion", 0) > version,
+          f"hot reload did not bump configVersion: {updated_proxy}")
+    check(updated_proxy.get("startedAt") == started_at,
+          f"hot reload restarted the listener: {updated_proxy}")
+    with urllib.request.urlopen(base_hot + "/hot-new", timeout=5) as response:
+        check(response.read() == b"path:/echo-new", "new rewrite was not applied")
+    with urllib.request.urlopen(base_hot + "/hot-old", timeout=5) as response:
+        check(response.read() == b"fast-ok", "old rewrite was not removed")
+    status, log_payload = call("GET", f"/api/proxies/{hot_proxy['id']}/logs?after=0")
+    messages = [item.get("message", "") for item in log_payload.get("logs", [])]
+    check(any("hot-reloaded" in message for message in messages),
+          f"hot reload log missing: {messages}")
+
+    # Worker-count changes require a restart.
+    status, restarted = call("POST", "/api/proxies", {
+        "id": hot_proxy["id"],
+        "name": "smoke-hot-proxy",
+        "listenHost": "127.0.0.1",
+        "listenPort": int(os.environ["HOT_PROXY_PORT"]),
+        "target": f"http://127.0.0.1:{slow_proxy_port}",
+        "workers": 2,
+        "start": True,
+        "rules": hot_rule_new,
+    })
+    check(status == 200 and restarted.get("ok") is True,
+          f"worker-count update failed: {restarted}")
+    status, log_payload = call("GET", f"/api/proxies/{hot_proxy['id']}/logs?after=0")
+    messages = [item.get("message", "") for item in log_payload.get("logs", [])]
+    check(any("proxy stopped" in message for message in messages) and
+          any("proxy started" in message for message in messages),
+          f"worker-count change did not restart the proxy: {messages}")
+    with urllib.request.urlopen(base_hot + "/hot-new", timeout=5) as response:
+        check(response.read() == b"path:/echo-new",
+              "proxy did not serve after the worker-count restart")
+    status, deleted = call("DELETE", f"/api/proxies/{hot_proxy['id']}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"hot proxy delete failed: {deleted}")
 
 if os.environ.get("WS_PROXY_PORT") and os.environ.get("WS_PORT"):
     status, created = call("POST", "/api/proxies", {

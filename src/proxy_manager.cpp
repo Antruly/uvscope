@@ -466,7 +466,27 @@ ProxyHttpResult run_proxy_job(const ProxyHttpJob& job) {
 }  // namespace
 
 struct ProxyManager::Runtime {
+  // Guarded by config_mutex: a hot reload swaps this snapshot while handlers
+  // and the health thread read it.
   ProxyConfig config;
+  mutable std::mutex config_mutex;
+  std::atomic<std::uint64_t> config_version{1};
+
+  ProxyConfig config_snapshot() const {
+    std::lock_guard<std::mutex> lock(config_mutex);
+    return config;
+  }
+
+  // Listener/TLS/worker-pool changes need a restart; routing, upstreams,
+  // retries and timeouts can be swapped live.
+  bool can_hot_reload(const ProxyConfig& next) const {
+    std::lock_guard<std::mutex> lock(config_mutex);
+    return config.listen_host == next.listen_host &&
+           config.listen_port == next.listen_port && config.tls == next.tls &&
+           config.cert_path == next.cert_path && config.key_path == next.key_path &&
+           config.workers == next.workers;
+  }
+
   std::unique_ptr<uvcpp::uvcpp_web_app> app;
   std::atomic<bool> running{false};
   std::string last_error;
@@ -506,12 +526,13 @@ struct ProxyManager::Runtime {
   }
 
   nlohmann::json health_json() const {
+    const ProxyConfig cfg = config_snapshot();
     std::lock_guard<std::mutex> lock(health_mutex);
     nlohmann::json out = nlohmann::json::array();
     std::vector<std::string> urls;
-    if (config.upstreams.empty()) urls.push_back(config.target);
+    if (cfg.upstreams.empty()) urls.push_back(cfg.target);
     else {
-      for (const auto& upstream : config.upstreams) urls.push_back(upstream.url);
+      for (const auto& upstream : cfg.upstreams) urls.push_back(upstream.url);
     }
     for (const auto& url : urls) {
       const auto it = health.find(url);
@@ -530,11 +551,12 @@ struct ProxyManager::Runtime {
   }
 
   void check_health() {
+    const ProxyConfig cfg = config_snapshot();
     std::vector<std::string> urls;
-    if (config.upstreams.empty()) {
-      urls.push_back(config.target);
+    if (cfg.upstreams.empty()) {
+      urls.push_back(cfg.target);
     } else {
-      for (const auto& upstream : config.upstreams) urls.push_back(upstream.url);
+      for (const auto& upstream : cfg.upstreams) urls.push_back(upstream.url);
     }
     for (const auto& url : urls) {
       if (stop_health.load()) return;
@@ -582,7 +604,7 @@ struct ProxyManager::Runtime {
   }
 
   void start_health() {
-    if (config.upstreams.size() <= 1) return;
+    if (config_snapshot().upstreams.size() <= 1) return;
     stop_health.store(false);
     if (health_thread.joinable()) health_thread.join();
     health_thread = std::thread([this] { health_loop(); });
@@ -592,6 +614,22 @@ struct ProxyManager::Runtime {
     stop_health.store(true);
     health_cv.notify_all();
     if (health_thread.joinable()) health_thread.join();
+  }
+
+  void apply_config(const ProxyConfig& next) {
+    {
+      std::lock_guard<std::mutex> lock(config_mutex);
+      config = next;
+      config_version.fetch_add(1);
+    }
+    // Upstreams may have changed; rebuild the active health loop from the new
+    // snapshot. This also releases the config lock before joining the thread.
+    stop_health_checks();
+    start_health();
+    add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
+             {"message", "configuration hot-reloaded (version " +
+                             std::to_string(config_version.load()) + ")"},
+             {"latencyMs", 0}});
   }
 
   void record(int status, double latency_ms) {
@@ -623,7 +661,7 @@ struct ProxyManager::Runtime {
   void start_http_workers() {
     http_stopping.store(false);
     if (!http_workers.empty()) return;
-    const int workers = std::max(1, std::min(config.workers, 16));
+    const int workers = std::max(1, std::min(config_snapshot().workers, 16));
     for (int i = 0; i < workers; ++i) {
       http_workers.emplace_back([this] { http_worker_loop(); });
     }
@@ -756,17 +794,17 @@ struct ProxyManager::Runtime {
     if (job->next) job->next();
   }
 
-  std::vector<ProxyCandidate> candidate_list() const {
+  std::vector<ProxyCandidate> candidate_list(const ProxyConfig& cfg) const {
     std::vector<ProxyCandidate> out;
-    if (config.upstreams.empty()) {
+    if (cfg.upstreams.empty()) {
       ProxyCandidate candidate;
-      candidate.url = config.target;
-      candidate.parsed = parse_url(config.target);
+      candidate.url = cfg.target;
+      candidate.parsed = parse_url(cfg.target);
       candidate.weight = 1;
       if (candidate.parsed.valid) out.push_back(std::move(candidate));
       return out;
     }
-    for (const auto& upstream : config.upstreams) {
+    for (const auto& upstream : cfg.upstreams) {
       ProxyCandidate candidate;
       candidate.url = upstream.url;
       candidate.parsed = parse_url(upstream.url);
@@ -781,8 +819,8 @@ struct ProxyManager::Runtime {
 
   // Drops upstreams known to be unhealthy while at least one healthy upstream
   // remains. Unchecked upstreams count as healthy, matching HTTP forwarding.
-  std::vector<ProxyCandidate> selectable_candidates() const {
-    std::vector<ProxyCandidate> out = candidate_list();
+  std::vector<ProxyCandidate> selectable_candidates(const ProxyConfig& cfg) const {
+    std::vector<ProxyCandidate> out = candidate_list(cfg);
     bool any_healthy = false;
     for (const auto& candidate : out) {
       if (is_healthy(candidate.url)) any_healthy = true;
@@ -812,14 +850,14 @@ struct ProxyManager::Runtime {
   // caller; `skip_redirects` lets WebSocket upgrades ignore them because the
   // 101 handshake has already been accepted and cannot be redirected.
   RuleOutcome resolve_rules(
-      const std::string& method, const std::string& host,
+      const ProxyConfig& cfg, const std::string& method, const std::string& host,
       const std::string& request_path, const std::string& request_query,
       const std::function<std::string(const std::string&)>& header,
       bool skip_redirects) const {
     RuleOutcome out;
     out.path = request_path.empty() ? "/" : request_path;
     out.query = request_query;
-    for (const auto& rule : config.rules) {
+    for (const auto& rule : cfg.rules) {
       if (!rule.enabled) continue;
       if (!rule.method.empty() && !method_matches(rule.method, method)) continue;
       if (!rule.host.empty() && !host_matches(rule.host, host)) continue;
@@ -849,7 +887,7 @@ struct ProxyManager::Runtime {
       if (!matched) continue;
       const std::string location =
           expand_destination(rule, out.path, out.query, host,
-                             config.tls ? "https" : "http", rest, capture);
+                             cfg.tls ? "https" : "http", rest, capture);
       const std::string rule_name = rule.name.empty() ? rule.id : rule.name;
       if (rule.action == "redirect") {
         if (skip_redirects) continue;
@@ -875,21 +913,23 @@ struct ProxyManager::Runtime {
   void forward(uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
                uvcpp::uvcpp_web_next next) {
     const auto started = std::chrono::steady_clock::now();
+    const ProxyConfig cfg = config_snapshot();
     requests.fetch_add(1);
-    std::vector<ProxyCandidate> candidates = selectable_candidates();
+    std::vector<ProxyCandidate> candidates = selectable_candidates(cfg);
     if (candidates.empty()) {
       errors.fetch_add(1);
       resp.status(502).json_str("{\"error\":\"invalid proxy target\"}");
       resp.end();
       add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
                {"error", "invalid proxy target"}, {"latencyMs", 0}});
+      if (next) next();
       return;
     }
 
     // First enabled matching rule wins. Redirects answer immediately; rewrites
     // replace the upstream path (the target base path then does not apply).
     const RuleOutcome route =
-        resolve_rules(req.method_name(), req.host(), req.raw_path(),
+        resolve_rules(cfg, req.method_name(), req.host(), req.raw_path(),
                       req.query_string(),
                       [&req](const std::string& name) { return req.header(name); },
                       false);
@@ -900,13 +940,14 @@ struct ProxyManager::Runtime {
       resp.status(route.status)
           .set_header("location", route.location)
           .set_header("cache-control", "no-store")
-          .set_header("x-uvscope-proxy", config.id);
+          .set_header("x-uvscope-proxy", cfg.id);
       resp.end();
       record(route.status, static_cast<double>(elapsed));
       add_log({{"method", req.method_name()}, {"path", req.raw_url()},
                {"status", route.status}, {"rule", route.rule},
                {"action", "redirect"}, {"location", route.location},
                {"latencyMs", elapsed}, {"bytes", 0}});
+      if (next) next();
       return;
     }
     std::string path = route.path;
@@ -923,8 +964,8 @@ struct ProxyManager::Runtime {
       forwarded_headers.emplace_back("x-forwarded-for", req.peer_ip());
     }
     forwarded_headers.emplace_back("x-forwarded-host", req.host());
-    forwarded_headers.emplace_back("x-forwarded-proto", config.tls ? "https" : "http");
-    forwarded_headers.emplace_back("x-uvscope-proxy", config.id);
+    forwarded_headers.emplace_back("x-forwarded-proto", cfg.tls ? "https" : "http");
+    forwarded_headers.emplace_back("x-uvscope-proxy", cfg.id);
 
     const std::string request_method = lower(req.method_name());
     auto job = std::make_shared<ProxyHttpJob>();
@@ -935,17 +976,17 @@ struct ProxyManager::Runtime {
     job->headers = std::move(forwarded_headers);
     job->idempotent = request_method == "get" || request_method == "head" ||
                       request_method == "options" || request_method == "trace";
-    job->max_attempts = 1 + std::min(3, std::max(0, config.retries));
-    job->connect_timeout_ms = config.connect_timeout_ms;
-    job->request_timeout_ms = config.request_timeout_ms;
+    job->max_attempts = 1 + std::min(3, std::max(0, cfg.retries));
+    job->connect_timeout_ms = cfg.connect_timeout_ms;
+    job->request_timeout_ms = cfg.request_timeout_ms;
     job->path = path;
     job->query = query;
     job->rewritten = rewritten;
     job->rule_matched = route.matched;
     job->rule = route.rule;
     job->candidates = std::move(candidates);
-    job->proxy_id = config.id;
-    job->proxy_name = config.name;
+    job->proxy_id = cfg.id;
+    job->proxy_name = cfg.name;
     job->started = started;
     job->resp = &resp;
     job->next = next;
@@ -955,7 +996,7 @@ struct ProxyManager::Runtime {
       resp.status(503)
           .set_header("content-type", "application/json")
           .json_str(nlohmann::json({{"error", "proxy is stopping or overloaded"},
-                                    {"proxy", config.name}})
+                                    {"proxy", cfg.name}})
                         .dump());
       resp.end();
       record(503, 0);
@@ -1010,8 +1051,9 @@ struct ProxyManager::Runtime {
     auto* conn = ws.connection();
     if (conn == nullptr) return;
     const auto started = std::chrono::steady_clock::now();
+    const ProxyConfig cfg = config_snapshot();
     requests.fetch_add(1);
-    std::vector<ProxyCandidate> candidates = selectable_candidates();
+    std::vector<ProxyCandidate> candidates = selectable_candidates(cfg);
     if (candidates.empty()) {
       errors.fetch_add(1);
       conn->close(uvcpp::ws_close_code::INTERNAL_ERROR, "invalid upstream");
@@ -1036,7 +1078,7 @@ struct ProxyManager::Runtime {
     // Redirect rules are skipped: the downstream 101 has already been sent and
     // cannot be turned into a redirect. Rewrites and conditions still apply.
     const RuleOutcome route = resolve_rules(
-        ws.request().method_name(), ws.request().host(), ws.path(),
+        cfg, ws.request().method_name(), ws.request().host(), ws.path(),
         ws.request().query_string(),
         [&ws](const std::string& name) { return ws.header(name); }, true);
 
@@ -1096,7 +1138,7 @@ struct ProxyManager::Runtime {
       headers.emplace_back(header.name, header.value);
     }
     std::thread(run_ws_upstream, relay, url, tls, std::move(headers),
-                config.connect_timeout_ms)
+                cfg.connect_timeout_ms)
         .detach();
   }
 
@@ -1121,7 +1163,7 @@ void ProxyManager::auto_start() {
     if (!start(config.id, &error)) {
       std::lock_guard<std::mutex> lock(mutex_);
       for (auto& runtime : runtimes_) {
-        if (runtime->config.id == config.id) {
+        if (runtime->config_snapshot().id == config.id) {
           runtime->last_error = error;
           runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
                             {"error", "auto-start failed: " + error}, {"latencyMs", 0}});
@@ -1134,7 +1176,7 @@ void ProxyManager::auto_start() {
 std::shared_ptr<ProxyManager::Runtime> ProxyManager::find(const std::string& id) const {
   std::lock_guard<std::mutex> lock(mutex_);
   for (const auto& runtime : runtimes_) {
-    if (runtime->config.id == id) return runtime;
+    if (runtime->config_snapshot().id == id) return runtime;
   }
   return nullptr;
 }
@@ -1149,20 +1191,26 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& existing : runtimes_) {
-      if (existing->config.id == id) {
+      if (existing->config_snapshot().id == id) {
         runtime = existing;
         break;
       }
     }
     if (!runtime) {
       runtime = std::make_shared<Runtime>();
-      runtime->config = *config;
+      {
+        std::lock_guard<std::mutex> cfg_lock(runtime->config_mutex);
+        runtime->config = *config;
+      }
       runtimes_.push_back(runtime);
     } else if (runtime->running.load()) {
       if (error) *error = "proxy is already running";
       return false;
     } else {
-      runtime->config = *config;
+      {
+        std::lock_guard<std::mutex> cfg_lock(runtime->config_mutex);
+        runtime->config = *config;
+      }
       runtime->last_error.clear();
     }
   }
@@ -1288,6 +1336,10 @@ bool ProxyManager::reload(const ProxyConfig& config, std::string* error) {
   }
   const auto runtime = find(config.id);
   if (runtime && runtime->running.load()) {
+    if (runtime->can_hot_reload(config)) {
+      runtime->apply_config(config);
+      return true;
+    }
     if (!stop(config.id, error)) return false;
     return start(config.id, error);
   }
@@ -1307,13 +1359,15 @@ nlohmann::json ProxyManager::snapshot() const {
     runtimes = runtimes_;
   }
   for (const auto& runtime : runtimes) {
-    out.push_back({{"id", runtime->config.id},
-                   {"name", runtime->config.name},
-                   {"listenHost", runtime->config.listen_host},
-                   {"listenPort", runtime->config.listen_port},
-                   {"target", runtime->config.target},
-                   {"autoStart", runtime->config.auto_start},
-                   {"tls", runtime->config.tls},
+    const ProxyConfig cfg = runtime->config_snapshot();
+    out.push_back({{"id", cfg.id},
+                   {"name", cfg.name},
+                   {"listenHost", cfg.listen_host},
+                   {"listenPort", cfg.listen_port},
+                   {"target", cfg.target},
+                   {"autoStart", cfg.auto_start},
+                   {"tls", cfg.tls},
+                   {"configVersion", runtime->config_version.load()},
                    {"running", runtime->running.load()},
                    {"startedAt", runtime->started_at},
                    {"lastError", runtime->last_error},

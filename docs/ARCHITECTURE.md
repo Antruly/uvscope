@@ -47,9 +47,12 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
   bounded queue (32). The proxy loop resolves rules, snapshots the request and enqueues it;
   workers run the blocking libuvcpp client and post the result back with `app->post`, so a slow
   upstream cannot block other connections on the same proxy. A full queue returns `503`.
-  Connect and request timeouts are per-proxy (defaults 15 s / 30 s). Stopping a proxy joins its
-  workers and drains posted completions
-  before stopping the app.
+  Connect and request timeouts are per-proxy (defaults 15 s / 30 s). Config changes that only
+  touch the name, target/upstreams, retries, timeouts or rules are hot-swapped under a versioned
+  snapshot; the listener and worker pool stay up. Listener, TLS certificate and worker-count
+  changes stop and restart the runtime. In-flight requests keep their snapshot, and existing
+  WebSocket sessions keep the upstream chosen at handshake. Stopping a proxy joins its workers
+  and drains posted completions before stopping the app.
 - **Persistent transport sessions**: `TransportManager` owns one dedicated libuv loop on its own
   thread. Web handlers enqueue commands and read mutex-protected snapshots; sessions never run on
   the control-plane loop. A 500 ms sweep enforces connect timeouts and retires closed clients.

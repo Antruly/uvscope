@@ -3100,6 +3100,7 @@ nlohmann::json Application::proxy_view() const {
                            {"connectTimeoutMs", config.connect_timeout_ms},
                            {"requestTimeoutMs", config.request_timeout_ms},
                            {"workers", config.workers},
+                           {"configVersion", 0},
                            {"autoStart", config.auto_start},
                            {"tls", config.tls},
                            {"certConfigured", !config.cert_path.empty()},

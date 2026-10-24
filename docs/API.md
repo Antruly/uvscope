@@ -385,6 +385,12 @@ Per-proxy tuning fields are stored in SQLite and applied when the proxy starts:
 The same connect timeout applies to WebSocket upgrade attempts. Omitted fields keep the existing
 value on update, or the default for a new proxy.
 
+`POST /api/proxies` with an existing `id` hot-reloads a running proxy when only `name`, `target`,
+`upstreams`, `retries`, the timeouts or `rules` changed: the listener and worker pool stay up,
+in-flight requests keep their snapshot, existing WebSocket sessions keep their upstream, and the
+proxy snapshot's `configVersion` increments with a `configuration hot-reloaded` log entry. Changes
+to `listenHost`, `listenPort`, `tls`, certificate paths or `workers` stop and restart the runtime.
+
 `POST /api/proxies` accepts an ordered `rules` array (max 64). The first enabled matching rule
 wins. A rule is:
 

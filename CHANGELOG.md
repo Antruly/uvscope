@@ -13,6 +13,12 @@ All notable changes to uvscope are documented here. The format is based on
   persist in SQLite with an automatic migration for existing databases, apply to HTTP upstreams
   and WebSocket upgrades, and are editable in the proxy editor. The smoke test covers
   persistence and a 500 ms request timeout returning a structured 502.
+- Reverse-proxy configuration is hot-reloaded for name, target/upstreams, retries, upstream
+  timeouts and routing rules. The listener and worker pool stay up, `configVersion` increments,
+  in-flight requests keep their snapshot, and existing WebSocket sessions keep their upstream.
+  Listener, TLS certificate and worker-count changes still stop and restart the runtime. The
+  smoke test verifies the hot path (unchanged `startedAt`, new rule active, `hot-reloaded` log)
+  and the restart path for a worker-count change.
 
 ### Changed
 

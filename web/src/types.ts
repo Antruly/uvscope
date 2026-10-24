@@ -124,6 +124,7 @@ export interface ProxyInfo {
   connectTimeoutMs?: number
   requestTimeoutMs?: number
   workers?: number
+  configVersion?: number
   autoStart: boolean
   tls: boolean
   certConfigured?: boolean
