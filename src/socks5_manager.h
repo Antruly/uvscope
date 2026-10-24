@@ -28,6 +28,8 @@ class Socks5Manager {
   bool start_server(const std::string& id, std::string* error);
   bool stop_server(const std::string& id, std::string* error);
   bool remove_server(const std::string& id, std::string* error);
+  // Cheap thread-safe liveness check used by the desired-state supervisor.
+  bool server_running(const std::string& id) const;
   nlohmann::json servers() const;
   nlohmann::json server(const std::string& id) const;
   nlohmann::json server_events(const std::string& id, std::uint64_t after,

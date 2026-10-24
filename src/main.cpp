@@ -13,6 +13,7 @@
 #include "listener_child.h"
 #include "proxy_child.h"
 #include "socks5_child.h"
+#include "terminal_child.h"
 #include "util.h"
 #include "version.h"
 
@@ -63,6 +64,7 @@ int main(int argc, char** argv) {
   std::string proxy_child_endpoint;
   std::string socks5_child_endpoint;
   std::string listener_child_endpoint;
+  std::string terminal_child_endpoint;
   bool show_help = false;
 
   for (int i = 1; i < argc; ++i) {
@@ -102,6 +104,8 @@ int main(int argc, char** argv) {
       socks5_child_endpoint = require_value("--socks5-child");
     } else if (arg == "--listener-child") {
       listener_child_endpoint = require_value("--listener-child");
+    } else if (arg == "--terminal-child") {
+      terminal_child_endpoint = require_value("--terminal-child");
     } else if (arg == "--version" || arg == "-v") {
       std::printf("uvscope %s\n", UVSCOPE_VERSION);
       return 0;
@@ -129,6 +133,9 @@ int main(int argc, char** argv) {
   }
   if (!listener_child_endpoint.empty()) {
     return uvscope::run_listener_child(listener_child_endpoint);
+  }
+  if (!terminal_child_endpoint.empty()) {
+    return uvscope::run_terminal_child(terminal_child_endpoint);
   }
 
   uvscope::Application app(std::move(options));

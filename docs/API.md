@@ -323,9 +323,10 @@ error. The libuvcpp 1.8.2 session-end callback adds `bytesClientToTarget`,
 `bytesTargetToClient`, `udpDatagrams`, `udpBytes`, `durationMs`, `endedAt` and `endStatus`.
 
 With `isolated: true` the server runs in a `--socks5-child` process. Its snapshot includes
-`isolated: true` and `pid`, and the event/session endpoints serve the cached child logs. If the
-child exits, the snapshot state becomes `error`; `POST .../start` spawns a new child. Deleting the
-server stops the child and waits for it to be reaped.
+`isolated: true` and `pid`, and the event/session endpoints serve the cached child logs. The
+desired-state supervisor restarts the child if it exits unexpectedly and the snapshot reports the
+new `pid`; `POST .../stop` clears the desired state and `POST .../start` re-arms it. Deleting the
+server unregisters it first, then stops the child and waits for it to be reaped.
 
 `POST /api/transport/listeners` binds a local port; `transport` is `tcp` or `udp`. TCP listeners
 produce accepted-session records with `peer`, `state`, byte counters and a per-session event log.
@@ -333,8 +334,9 @@ UDP listeners produce `datagram` and `sent` events with `peer` and `payload`; re
 numeric peer host/port from the datagram log.
 
 `isolated: true` runs the listener in a `--listener-child` process. Its snapshot includes
-`isolated` and `pid`, and session send / close / event reads are proxied over IPC. If the child
-exits, the state becomes `error`; starting it again spawns a new child. Deleting the listener
+`isolated` and `pid`, and session send / close / event reads are proxied over IPC. The
+desired-state supervisor restarts a crashed child with a new `pid`; `POST .../stop` clears the
+desired state and `POST .../start` re-arms it. Deleting the listener unregisters it first, then
 stops and reaps the child.
 
 Listener states are `stopped`, `starting`, `listening`, `stopping` and `error`. A listener error
@@ -540,7 +542,7 @@ survive browser disconnects for the lifetime of the daemon.
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/terminal/sessions` | Own sessions; admins may pass `?all=1` |
-| POST | `/api/terminal/sessions` | `{name, shell, cwd, cols, rows}` → session |
+| POST | `/api/terminal/sessions` | `{name, shell, cwd, cols, rows, isolated}` → session |
 | GET | `/api/terminal/sessions/:id` | One session (owner or admin) |
 | DELETE | `/api/terminal/sessions/:id` | Close a session (owner or admin) |
 | POST | `/api/terminal/sessions/:id/input` | `{data, encoding}` where encoding is text, hex or base64 |
@@ -553,10 +555,21 @@ survive browser disconnects for the lifetime of the daemon.
 | DELETE | `/api/terminal/commands/:id` | Delete a command |
 | POST | `/api/terminal/commands/restore` | Re-insert deleted built-in commands (admin) |
 
-Session states are `starting`, `running`, `closing`, `exited` and `error`. Output chunks carry
-`seq` and base64 `data`; `nextSeq`, `firstSeq`, `truncated` and `missed` describe the bounded
-scrollback (256 KiB). `shell` must be an absolute executable; `cwd` must be an absolute directory.
-Limits: 4 running sessions per user, 32 total.
+Session states are `starting`, `running`, `closing`, `exited`, `stopped` and `error`. Output
+chunks carry `seq` and base64 `data`; `nextSeq`, `firstSeq`, `truncated` and `missed` describe the
+bounded scrollback (256 KiB). `shell` must be an absolute executable; `cwd` must be an absolute
+directory. Limits: 4 running sessions per user, 32 total.
+
+`isolated: true` runs the PTY in a `--terminal-child` process. The parent keeps the id, owner,
+name, input/resize/redraw proxying and a cached 256 KiB scrollback; its snapshot adds `isolated`
+and the child `pid`. The child's PTY state and exit code remain authoritative.
+
+An isolated session is supervised while it exists. If the child process dies, the supervisor
+spawns a fresh shell for the same session and the snapshot reports a new `pid`; the previous
+scrollback is dropped, so attached WebSocket clients receive `{"type":"reset"}` before the new
+output. A normal shell `exit` is not a crash: the child stays alive with status `exited` so the
+output and exit code remain readable. Deleting the session unregisters it first, then stops and
+reaps the child.
 
 The daemon seeds a command catalog into SQLite on first migration (Linux and Windows, grouped by
 system/CPU/disk/network/process/users/files/packages/services/logs/security/containers/development).
@@ -576,6 +589,25 @@ The WebSocket upgrade checks the session cookie, module flag, role, terminal own
 Client messages: `{"type":"input","data":"...","encoding":"text|hex|base64"}`,
 `{"type":"resize","cols":100,"rows":30}` and `{"type":"ping"}`. The server sends SIGWINCH on
 attach so full-screen programs repaint.
+
+## Service supervisor
+
+`/api/supervisor` lists desired-state services of every kind (`proxy`, `listener`, `socks5`,
+`terminal`) with `desired`, `running`, `restarts`, `lastError` and `updatedAt`. The watchdog polls
+liveness every 2 s; a desired service that is not running is started again with exponential
+backoff (2–60 s), and each attempt is recorded in `/api/supervisor/events`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/supervisor` | Snapshot of every supervised service (admin) |
+| GET | `/api/supervisor/events?after=&limit=` | Restart/registration event log (admin) |
+| POST | `/api/supervisor/:id/restart` | Stop and start a service on the daemon loop (admin) |
+| POST | `/api/supervisor/:id/stop-runtime` | Stop the runtime but keep `desired`, so the watchdog restarts it (admin) |
+
+Services register when they are created or loaded at startup. Stopping a proxy, listener or SOCKS5
+server through its own stop route clears `desired`; deleting it unregisters the entry before the
+runtime is removed. Terminals register only when `isolated` is true and stay desired until the
+session is deleted or the module is disabled.
 
 ## Administration
 

@@ -1478,6 +1478,18 @@ bool TransportManager::add_listener(const ListenerConfig& config,
   return true;
 }
 
+bool TransportManager::listener_running(const std::string& id) const {
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  const auto listener = impl_->listener_locked(id);
+  if (!listener) return false;
+  if (listener->config.isolated) {
+    return listener->child && listener->child->running();
+  }
+  // "starting" counts as alive so the supervisor does not enqueue a second
+  // start while the transport loop is still binding.
+  return listener->state == "listening" || listener->state == "starting";
+}
+
 bool TransportManager::start_listener(const std::string& id, std::string* error) {
   std::shared_ptr<Impl::Listener> listener;
   {

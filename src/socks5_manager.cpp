@@ -438,6 +438,16 @@ bool Socks5Manager::add_server(const Socks5ServerConfig& config, std::string* er
   return true;
 }
 
+bool Socks5Manager::server_running(const std::string& id) const {
+  auto server = impl_->find(id);
+  if (!server) return false;
+  if (server->config.isolated) {
+    return server->child && server->child->running();
+  }
+  std::lock_guard<std::mutex> lock(server->mutex);
+  return server->state == "listening" || server->state == "starting";
+}
+
 bool Socks5Manager::start_server(const std::string& id, std::string* error) {
   auto server = impl_->find(id);
   if (!server) {

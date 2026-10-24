@@ -91,6 +91,10 @@ class Application {
   nlohmann::json proxy_view() const;
   bool initialize();
   void supervise_proxy(const ProxyConfig& config, bool desired);
+  void supervise_listener(const ListenerConfig& config, bool desired);
+  void supervise_socks5(const Socks5ServerConfig& config, bool desired);
+  void supervise_terminal(const std::string& id, const std::string& name);
+  void unsupervise_terminals();
 
   AppOptions options_;
   Store store_;

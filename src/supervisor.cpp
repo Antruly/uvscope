@@ -66,6 +66,23 @@ void Supervisor::unregister_service(const std::string& id) {
   add_event("unregistered", id, name);
 }
 
+std::size_t Supervisor::unregister_kind(const std::string& kind) {
+  std::vector<std::pair<std::string, std::string>> removed;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto it = services_.begin(); it != services_.end();) {
+      if (it->second.kind == kind) {
+        removed.emplace_back(it->first, it->second.name);
+        it = services_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  for (const auto& item : removed) add_event("unregistered", item.first, item.second);
+  return removed.size();
+}
+
 void Supervisor::set_desired(const std::string& id, bool desired) {
   std::string name;
   {
@@ -167,6 +184,13 @@ void Supervisor::loop() {
       add_event("restart", attempt.id, attempt.name,
                 "service was not running; restarting");
       dispatch_([this, attempt] {
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          const auto it = services_.find(attempt.id);
+          // A stop or delete may have landed between the watchdog pass and
+          // this dispatch; do not resurrect the runtime in that case.
+          if (it == services_.end() || !it->second.desired) return;
+        }
         std::string error;
         if (!attempt.start || !attempt.start(&error)) {
           std::lock_guard<std::mutex> lock(mutex_);

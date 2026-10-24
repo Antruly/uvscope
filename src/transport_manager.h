@@ -45,6 +45,8 @@ class TransportManager {
   bool start_listener(const std::string& id, std::string* error);
   bool stop_listener(const std::string& id, std::string* error);
   bool remove_listener(const std::string& id, std::string* error);
+  // Cheap thread-safe liveness check used by the desired-state supervisor.
+  bool listener_running(const std::string& id) const;
   nlohmann::json listeners() const;
   nlohmann::json listener(const std::string& id) const;
   nlohmann::json listener_events(const std::string& id, std::uint64_t after,

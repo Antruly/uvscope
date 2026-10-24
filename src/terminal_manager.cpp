@@ -33,6 +33,7 @@
 #include <handle/uvcpp_timer.h>
 #include <uvcpp/uvcpp_buf.h>
 
+#include "terminal_child.h"
 #include "util.h"
 
 #if defined(_WIN32)
@@ -184,6 +185,11 @@ struct TerminalManager::Impl {
 
   struct Session {
     std::string id;
+    // The PTY lives in a child process. The handle can be null between a
+    // failed restart and the supervisor's next attempt, so the flag is
+    // authoritative.
+    bool isolated = false;
+    std::shared_ptr<TerminalChildService> child;
     std::int64_t owner_id = 0;
     std::string owner_name;
     std::string name;
@@ -232,6 +238,8 @@ struct TerminalManager::Impl {
     std::string error;
   };
 
+  std::string executable_path;
+
   std::thread thread;
   std::mutex ready_mutex;
   std::condition_variable ready_cv;
@@ -249,6 +257,8 @@ struct TerminalManager::Impl {
 
   mutable std::mutex state_mutex;
   std::map<std::string, std::shared_ptr<Session>> sessions;
+  std::mutex retired_mutex;
+  std::vector<std::thread> retired;
 
   bool post(std::function<void()> fn) {
     {
@@ -714,48 +724,84 @@ struct TerminalManager::Impl {
   }
 
   void sweep() {
-    std::lock_guard<std::mutex> lock(state_mutex);
-    for (auto it = sessions.begin(); it != sessions.end();) {
-      Session& session = *it->second;
-      if (session.state == "running" || session.state == "closing") reap(session);
-#if defined(_WIN32)
-      if (session.hpc != nullptr &&
-          (session.state == "exited" || session.state == "error") &&
-          session.hpc_close_at_ms > 0) {
-        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now().time_since_epoch())
-                             .count();
-        if (now >= session.hpc_close_at_ms) {
-          if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
-          session.hpc = nullptr;
+    std::vector<std::shared_ptr<Session>> retiring;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex);
+      for (auto it = sessions.begin(); it != sessions.end();) {
+        Session& session = *it->second;
+        if (session.child) {
+          // The child owns the PTY state; mirror it so retention pruning and
+          // the API see exits without a second state machine in the parent.
+          const auto snapshot = session.child->snapshot();
+          session.state = snapshot.value("state", session.state);
+          session.error = snapshot.value("error", session.error);
+          session.cols = snapshot.value("cols", session.cols);
+          session.rows = snapshot.value("rows", session.rows);
+        } else if (session.state == "running" || session.state == "closing") {
+          reap(session);
         }
-      }
-#endif
-      // DELETE: once the child is reaped and the PTY handles are closed the
-      // session has no resources left, so drop it from the registry.
-      const bool reaped =
 #if defined(_WIN32)
-          session.process == nullptr && session.out_pipe == nullptr;
+        if (session.hpc != nullptr &&
+            (session.state == "exited" || session.state == "error") &&
+            session.hpc_close_at_ms > 0) {
+          const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count();
+          if (now >= session.hpc_close_at_ms) {
+            if (conpty_api().close != nullptr) conpty_api().close(session.hpc);
+            session.hpc = nullptr;
+          }
+        }
+#endif
+        // DELETE: once the child is reaped and the PTY handles are closed the
+        // session has no resources left, so drop it from the registry.
+        const bool reaped =
+#if defined(_WIN32)
+            session.process == nullptr && session.out_pipe == nullptr;
 #else
-          session.pid <= 0;
+            session.pid <= 0;
 #endif
-      if (session.remove_on_close && reaped) {
-        it = sessions.erase(it);
-        continue;
-      }
-      ++it;
-    }
-    // Keep a short history of exited sessions without unbounded growth.
-    while (sessions.size() > kMaxRetainedSessions) {
-      auto victim = sessions.end();
-      for (auto it = sessions.begin(); it != sessions.end(); ++it) {
-        if (it->second->state == "exited" || it->second->state == "error") {
-          victim = it;
-          break;
+        if (session.remove_on_close && reaped) {
+          if (session.child) retiring.push_back(it->second);
+          it = sessions.erase(it);
+          continue;
         }
+        ++it;
       }
-      if (victim == sessions.end()) break;
-      sessions.erase(victim);
+      // Keep a short history of exited sessions without unbounded growth.
+      while (sessions.size() > kMaxRetainedSessions) {
+        auto victim = sessions.end();
+        for (auto it = sessions.begin(); it != sessions.end(); ++it) {
+          if (it->second->state == "exited" || it->second->state == "error") {
+            victim = it;
+            break;
+          }
+        }
+        if (victim == sessions.end()) break;
+        if (victim->second->child) retiring.push_back(victim->second);
+        sessions.erase(victim);
+      }
+    }
+    for (const auto& session : retiring) retire(session);
+  }
+
+  // Stopping an isolated session joins its IPC thread and reaps the process;
+  // do that off the manager loop so pruning cannot stall other terminals.
+  void retire(const std::shared_ptr<Session>& session) {
+    auto child = session->child;
+    if (!child) return;
+    std::lock_guard<std::mutex> lock(retired_mutex);
+    retired.emplace_back([child] { child->stop(); });
+  }
+
+  void join_retired() {
+    std::vector<std::thread> threads;
+    {
+      std::lock_guard<std::mutex> lock(retired_mutex);
+      threads.swap(retired);
+    }
+    for (auto& thread : threads) {
+      if (thread.joinable()) thread.join();
     }
   }
 
@@ -955,7 +1001,8 @@ struct TerminalManager::Impl {
 
 thread_local uvcpp::uvcpp_loop* TerminalManager::Impl::current_loop = nullptr;
 
-TerminalManager::TerminalManager() : impl_(new Impl()) {
+TerminalManager::TerminalManager(std::string executable_path) : impl_(new Impl()) {
+  impl_->executable_path = std::move(executable_path);
 #if defined(_WIN32)
   if (!conpty_api().ok) {
     impl_->start_error = "ConPTY is not available on this Windows version";
@@ -969,6 +1016,14 @@ TerminalManager::TerminalManager() : impl_(new Impl()) {
 }
 
 TerminalManager::~TerminalManager() {
+  std::vector<std::shared_ptr<Impl::Session>> isolated;
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    for (const auto& item : impl_->sessions) {
+      if (item.second->child) isolated.push_back(item.second);
+    }
+  }
+  for (const auto& session : isolated) session->child->stop();
   if (!impl_->thread.joinable()) return;
   {
     std::lock_guard<std::mutex> lock(impl_->command_mutex);
@@ -997,6 +1052,7 @@ TerminalManager::~TerminalManager() {
   }
   if (impl_->wake != nullptr) impl_->wake->send();
   impl_->thread.join();
+  impl_->join_retired();
 }
 
 bool TerminalManager::available() const { return impl_ && impl_->available; }
@@ -1036,6 +1092,7 @@ nlohmann::json TerminalManager::create(std::int64_t owner_id,
   session->cwd = options.cwd;
   session->cols = options.cols;
   session->rows = options.rows;
+  session->isolated = options.isolated;
   session->state_mutex = &impl_->state_mutex;
   session->created_at = now_iso8601();
 
@@ -1058,6 +1115,39 @@ nlohmann::json TerminalManager::create(std::int64_t owner_id,
       return nullptr;
     }
     impl_->sessions[session->id] = session;
+  }
+
+  if (options.isolated) {
+    auto child =
+        std::make_shared<TerminalChildService>(impl_->executable_path, options);
+    std::string child_error;
+    if (!child->start(&child_error)) {
+      {
+        std::lock_guard<std::mutex> lock(impl_->state_mutex);
+        impl_->sessions.erase(session->id);
+      }
+      if (error) {
+        *error = child_error.empty() ? "terminal child failed to start" : child_error;
+      }
+      return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    session->child = std::move(child);
+    const auto snapshot = session->child->snapshot();
+    session->state = snapshot.value("state", std::string("running"));
+    session->error = snapshot.value("error", std::string());
+    if (session->state == "error") {
+      impl_->sessions.erase(session->id);
+      if (error) {
+        *error = session->error.empty() ? "terminal child failed to start"
+                                        : session->error;
+      }
+      return nullptr;
+    }
+    const auto stored = impl_->session_locked(session->id);
+    return stored ? nlohmann::json{{"ok", true},
+                                   {"session", Impl::snapshot_locked(*stored)}}
+                  : nullptr;
   }
 
   auto ready = std::make_shared<Impl::CreateState>();
@@ -1100,28 +1190,41 @@ nlohmann::json TerminalManager::create(std::int64_t owner_id,
 }
 
 nlohmann::json TerminalManager::Impl::snapshot_locked(const Session& session) {
-  return {{"id", session.id},
-          {"ownerId", session.owner_id},
-          {"owner", session.owner_name},
-          {"name", session.name},
-          {"shell", session.shell},
-          {"cwd", session.cwd},
-          {"state", session.state},
-          {"error", session.error},
-          {"createdAt", session.created_at},
-          {"exitedAt", session.exited_at},
-          {"lastActivity", session.last_activity},
-          {"exitCode", session.exit_code},
-          {"cols", session.cols},
-          {"rows", session.rows},
-          {"nextSeq", session.next_seq - 1},
-          {"bufferedBytes", session.buffered_bytes},
+  nlohmann::json out = {{"id", session.id},
+                        {"ownerId", session.owner_id},
+                        {"owner", session.owner_name},
+                        {"name", session.name},
+                        {"shell", session.shell},
+                        {"cwd", session.cwd},
+                        {"state", session.state},
+                        {"error", session.error},
+                        {"createdAt", session.created_at},
+                        {"exitedAt", session.exited_at},
+                        {"lastActivity", session.last_activity},
+                        {"exitCode", session.exit_code},
+                        {"cols", session.cols},
+                        {"rows", session.rows},
+                        {"nextSeq", session.next_seq - 1},
+                        {"bufferedBytes", session.buffered_bytes},
+                        {"isolated", session.isolated},
 #if defined(_WIN32)
-          {"inputBytesWritten", session.input_written.load()},
-          {"outputBytesRead", session.output_read.load()},
-          {"lastInputError", session.last_input_error.load()},
+                        {"inputBytesWritten", session.input_written.load()},
+                        {"outputBytesRead", session.output_read.load()},
+                        {"lastInputError", session.last_input_error.load()},
 #endif
   };
+  if (session.child) {
+    // The child owns the authoritative PTY state and scrollback counters; the
+    // parent keeps its own id/owner/name around them.
+    const auto child = session.child->snapshot();
+    for (const char* key : {"state", "error", "exitedAt", "lastActivity",
+                            "exitCode", "cols", "rows", "nextSeq",
+                            "bufferedBytes"}) {
+      if (child.contains(key)) out[key] = child[key];
+    }
+    out["pid"] = child.value("pid", 0);
+  }
+  return out;
 }
 
 nlohmann::json TerminalManager::sessions(std::int64_t owner_id, bool all) const {
@@ -1155,13 +1258,21 @@ bool TerminalManager::owner_of(const std::string& id, std::int64_t* owner_id) co
 
 bool TerminalManager::close(const std::string& id, std::string* error) {
   std::shared_ptr<Impl::Session> session;
+  std::shared_ptr<TerminalChildService> child;
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
     session = impl_->session_locked(id);
+    if (session) child = session->child;
   }
   if (!session) {
     if (error) *error = "terminal not found";
     return false;
+  }
+  if (session->isolated) {
+    if (child) child->close();
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    impl_->sessions.erase(id);
+    return true;
   }
   if (!impl_->post([this, session] {
         std::lock_guard<std::mutex> lock(impl_->state_mutex);
@@ -1213,6 +1324,7 @@ bool TerminalManager::input(const std::string& id, const std::string& bytes,
     return false;
   }
   std::shared_ptr<Impl::Session> session;
+  std::shared_ptr<TerminalChildService> child;
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
     session = impl_->session_locked(id);
@@ -1220,11 +1332,23 @@ bool TerminalManager::input(const std::string& id, const std::string& bytes,
       if (error) *error = "terminal not found";
       return false;
     }
-    if (session->state != "running") {
+    if (session->isolated) {
+      if (!session->child) {
+        if (error) *error = "terminal is not running";
+        return false;
+      }
+      const auto snapshot = session->child->snapshot();
+      if (snapshot.value("state", std::string()) != "running") {
+        if (error) *error = "terminal is not running";
+        return false;
+      }
+      child = session->child;
+    } else if (session->state != "running") {
       if (error) *error = "terminal is not running";
       return false;
     }
   }
+  if (child) return child->input(bytes, error);
   return impl_->post([this, session, bytes] {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
 #if defined(_WIN32)
@@ -1247,6 +1371,7 @@ bool TerminalManager::resize(const std::string& id, int cols, int rows,
   const int safe_cols = clamp_int(cols, 20, 500);
   const int safe_rows = clamp_int(rows, 5, 200);
   std::shared_ptr<Impl::Session> session;
+  std::shared_ptr<TerminalChildService> child;
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
     session = impl_->session_locked(id);
@@ -1254,6 +1379,14 @@ bool TerminalManager::resize(const std::string& id, int cols, int rows,
       if (error) *error = "terminal not found";
       return false;
     }
+    child = session->child;
+  }
+  if (session->isolated) {
+    if (!child) {
+      if (error) *error = "terminal is not running";
+      return false;
+    }
+    return child->resize(safe_cols, safe_rows, error);
   }
   return impl_->post([this, session, safe_cols, safe_rows] {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
@@ -1280,6 +1413,7 @@ bool TerminalManager::resize(const std::string& id, int cols, int rows,
 
 bool TerminalManager::redraw(const std::string& id, std::string* error) {
   std::shared_ptr<Impl::Session> session;
+  std::shared_ptr<TerminalChildService> child;
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
     session = impl_->session_locked(id);
@@ -1287,6 +1421,14 @@ bool TerminalManager::redraw(const std::string& id, std::string* error) {
       if (error) *error = "terminal not found";
       return false;
     }
+    child = session->child;
+  }
+  if (session->isolated) {
+    if (!child) {
+      if (error) *error = "terminal is not running";
+      return false;
+    }
+    return child->redraw(error);
   }
   return impl_->post([this, session] {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
@@ -1313,6 +1455,20 @@ nlohmann::json TerminalManager::output(const std::string& id, std::uint64_t afte
   std::lock_guard<std::mutex> lock(impl_->state_mutex);
   const auto session = impl_->session_locked(id);
   if (!session) return {{"ok", false}, {"error", "terminal not found"}};
+  if (session->isolated) {
+    nlohmann::json out;
+    if (session->child) {
+      out = session->child->output(after, limit);
+    } else {
+      // Between a failed restart and the next supervisor attempt there is no
+      // child; tell attached clients to reset before the replacement stream.
+      out = {{"ok", true},          {"chunks", nlohmann::json::array()},
+             {"firstSeq", 0},       {"nextSeq", 0},
+             {"truncated", false},  {"missed", after > 0}};
+    }
+    out["session"] = Impl::snapshot_locked(*session);
+    return out;
+  }
   const int safe_limit = std::max(1, std::min(limit, 500));
   nlohmann::json chunks = nlohmann::json::array();
   std::uint64_t first_seq = 0;
@@ -1332,11 +1488,110 @@ nlohmann::json TerminalManager::output(const std::string& id, std::uint64_t afte
                          after < session->chunks.front().seq - 1}};
 }
 
-void TerminalManager::close_all() {
-  std::vector<std::shared_ptr<Impl::Session>> all;
+bool TerminalManager::session_running(const std::string& id) const {
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  const auto session = impl_->session_locked(id);
+  if (!session) return false;
+  // An isolated child stays alive after its shell exits so the scrollback and
+  // exit status remain readable; `exit` must not look like a crash.
+  if (session->isolated) return session->child && session->child->running();
+  return session->state == "running" || session->state == "starting";
+}
+
+bool TerminalManager::stop_runtime(const std::string& id, std::string* error) {
+  std::shared_ptr<Impl::Session> session;
+  std::shared_ptr<TerminalChildService> child;
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
-    for (const auto& item : impl_->sessions) all.push_back(item.second);
+    session = impl_->session_locked(id);
+    if (!session) {
+      if (error) *error = "terminal not found";
+      return false;
+    }
+    if (!session->isolated) {
+      if (error) *error = "terminal is not isolated";
+      return false;
+    }
+    child = session->child;
+  }
+  if (child) child->stop();
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  if (session->child == child) session->state = "stopped";
+  return true;
+}
+
+bool TerminalManager::restart(const std::string& id, std::string* error) {
+  TerminalConfig config;
+  std::shared_ptr<Impl::Session> session;
+  std::shared_ptr<TerminalChildService> previous;
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    session = impl_->session_locked(id);
+    if (!session) {
+      if (error) *error = "terminal not found";
+      return false;
+    }
+    if (!session->isolated) {
+      if (error) *error = "terminal is not isolated";
+      return false;
+    }
+    // The supervisor may dispatch twice while a slow spawn is in flight.
+    if (session->child && session->child->running()) return true;
+    previous = session->child;
+    config.name = session->name;
+    config.shell = session->shell;
+    config.cwd = session->cwd;
+    config.cols = session->cols;
+    config.rows = session->rows;
+    config.isolated = true;
+  }
+  if (previous) previous->stop();
+  auto child = std::make_shared<TerminalChildService>(impl_->executable_path, config);
+  std::string child_error;
+  if (!child->start(&child_error)) {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    if (session->child == previous) {
+      // Drop the dead handle so snapshots report the error from this side
+      // instead of merging a stale "stopped" child state.
+      session->child.reset();
+      session->state = "error";
+      session->error =
+          child_error.empty() ? "terminal child failed to start" : child_error;
+    }
+    if (error) {
+      *error = child_error.empty() ? "terminal child failed to start" : child_error;
+    }
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
+  const auto snapshot = child->snapshot();
+  session->child = std::move(child);
+  session->state = snapshot.value("state", std::string("running"));
+  session->error.clear();
+  session->exited_at.clear();
+  session->exit_code = -1;
+  return true;
+}
+
+void TerminalManager::close_all() {
+  std::vector<std::shared_ptr<Impl::Session>> all;
+  std::vector<std::shared_ptr<Impl::Session>> isolated;
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    for (const auto& item : impl_->sessions) {
+      if (item.second->isolated) {
+        isolated.push_back(item.second);
+      } else {
+        all.push_back(item.second);
+      }
+    }
+  }
+  for (const auto& session : isolated) {
+    if (session->child) session->child->stop();
+  }
+  if (!isolated.empty()) {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    for (const auto& session : isolated) impl_->sessions.erase(session->id);
   }
   if (all.empty()) return;
   impl_->post([this, all] {

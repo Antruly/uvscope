@@ -165,6 +165,7 @@ set(UVSCOPE_SOURCES
   src/socks5_proxy.cpp
   src/supervisor.cpp
   src/store.cpp
+  src/terminal_child.cpp
   src/terminal_manager.cpp
   src/tls_probe.cpp
   src/transport_manager.cpp

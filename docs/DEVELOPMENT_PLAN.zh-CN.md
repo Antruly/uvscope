@@ -699,7 +699,7 @@ smoke 创建 `isolated: true` 代理，验证请求、`isolated`/`pid`、遥测 
 - 父侧 `Socks5ChildService`：独立 IPC 循环线程、spawn、500 ms 遥测、事件/会话缓存、PID、
   停止与 reap；
 - `Socks5Manager` 在 start/stop/remove/servers/server/events/sessions 上按 `isolated` 分支；
-- 子进程异常退出后状态为 `error`，再次 start 会 spawn 新 PID（暂无 supervisor 自动重启）；
+- 子进程异常退出后由统一 supervisor 自动重启并生成新 PID（见 S19）；
 - 删除时停止并等待子进程回收。
 
 验收：
@@ -713,7 +713,7 @@ bash ./scripts/smoke-test.sh ./build/uvscope
 smoke 创建隔离 SOCKS5，经其 CONNECT 到本地 TCP echo；kill 子进程后状态为 error，start 后
 新 PID 且再次 CONNECT 成功；删除后确认子进程消失。
 
-不做：SOCKS5 supervisor 自动重启、TCP/UDP 监听与终端子进程化、跨进程鉴权、资源限制。
+不做：TCP/UDP 监听与终端子进程化、跨进程鉴权、资源限制。
 
 ### S17 — TCP/UDP 监听子进程隔离（已实现）
 
@@ -728,7 +728,7 @@ smoke 创建隔离 SOCKS5，经其 CONNECT 到本地 TCP echo；kill 子进程�
   请求/响应命令与停止/reap；
 - `TransportManager` 在 start/stop/remove/listeners/listener/events/sessions/session-events/
   send/close-session 上按 `isolated` 分支；
-- 子进程异常退出后状态为 `error`，再次 start 生成新 PID（暂无 supervisor 自动重启）；
+- 子进程异常退出后由统一 supervisor 自动重启并生成新 PID（见 S19）；
 - 删除时停止并回收子进程。
 
 验收：
@@ -742,8 +742,67 @@ bash ./scripts/smoke-test.sh ./build/uvscope
 smoke 创建隔离 TCP listener，客户端接入并通过 API 回包，检查 session 的 recv/send 事件；
 kill 子进程后状态 error，start 后新 PID；删除后确认子进程消失。
 
-不做：listener supervisor 自动重启、虚拟终端子进程化、跨进程鉴权、资源限制、UDP 隔离的
-额外专项用例（与 TCP 共用同一子进程实现）。
+不做：跨进程鉴权、资源限制、UDP 隔离的额外专项用例（与 TCP 共用同一子进程实现）。
+
+### S18 — 虚拟终端子进程隔离（已实现）
+
+边界：`src/terminal_child.*`、`src/terminal_manager.*`、`src/main.cpp`、创建表单、smoke。
+
+内容：
+
+- `TerminalConfig.isolated` 由创建请求带入，创建表单增加“在子进程中运行 Shell”；
+- 隐藏 `--terminal-child`：子进程复用 `TerminalManager` 跑 PTY，通过 IPC 接收
+  start/input/resize/redraw/close，40 ms 推送 session 快照与增量输出块；
+- 父侧 `TerminalChildService`：独立 IPC 循环线程、spawn、输出块缓存（1024 块 / 256 KiB）、
+  PID、输入/尺寸/重绘转发与停止/reap；
+- `TerminalManager` 在 create/input/resize/redraw/close/output/sessions/session/close_all 上按
+  `isolated` 分支，父侧保留 id/owner/name 并合并子进程的 state/exitCode/scrollback；
+- 子进程异常退出后状态为 `error`，删除会话时停止并回收子进程。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 创建隔离终端，输入 `printf 'term-isolated'; exit`，经 API 读到输出、exit code 0 与
+`exited` 状态，快照含 `isolated: true` 和非零 `pid`；删除后确认会话与子进程都消失。
+
+不做：跨进程鉴权、资源限制、会话跨守护进程重启保留。
+
+### S19 — 统一服务监督与自动重启（已实现）
+
+边界：`src/supervisor.*`、`src/application.*`、三个管理器的运行态查询、smoke、文档。
+
+内容：
+
+- `Supervisor` 保持 2 s 期望状态轮询，新增 `unregister_kind`；受监督种类扩展为 `proxy`、
+  `listener`、`socks5`、`terminal`；
+- 新增线程安全的运行态探针：`TransportManager::listener_running`、
+  `Socks5Manager::server_running`、`TerminalManager::session_running`；
+- 新增终端生命周期入口：`stop_runtime` 只停子进程、保留会话，`restart` 用同一配置拉起新
+  子进程；`TerminalChildService` 区分“主动停止”和“异常退出”；
+- 代理、监听、SOCKS5 在创建/启动时注册 desired；停止路由清除 desired，删除前先反注册；
+- 隔离终端在创建时注册；子进程崩溃后 supervisor 用同一 session id 重启，新 PID；旧输出缓存
+  丢弃，WebSocket 因序列号回退收到 `reset` 后继续接收新输出；
+- 正常 shell `exit` 不算崩溃：子进程保持存活以保留 scrollback 与退出码，不触发重启；
+- 模块禁用、数据重置、进程退出都先反注册并停止运行时，防止看门狗复活已删除的服务。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke kill 隔离 SOCKS5、listener、终端的子进程后，等待 supervisor 自动重启为新的 PID，并检查
+`/api/supervisor` 中对应条目的 `kind`、`desired` 与 `restarts`；手动 stop 后等待 3 s 确认不会
+被拉起；删除后确认子进程被回收、会话不会被复活。另验证正常 shell 退出不会触发重启。
+
+不做：重启次数上限/熔断、跨进程鉴权、资源限制、终端会话跨守护进程重启保留。
 
 ---
 
