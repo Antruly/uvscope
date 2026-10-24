@@ -29,7 +29,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 
 ![HTTP Studio](docs/screenshots/http-studio.png)
 
-## What is in 0.8.0
+## What is in 0.8.1
 
 | Area | Status |
 | --- | --- |
@@ -69,6 +69,8 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | SQLite persistence, local auth, roles, first-run setup | ✅ Stable |
 | Module toggles, factory reset, update check, about/help | ✅ Stable |
 | HTTP/3 and QUIC transports | 🧪 Experimental — needs an OpenSSL 3.6+ SDK build |
+| HTTP/3 ALPN, stream ID and peer GOAWAY metadata | ✅ New in 0.8.1 (experimental builds) |
+| QUIC/HTTP3 end-to-end CI with a local HTTP/3 origin | ✅ New in 0.8.1 |
 | QUIC client probe and echo server | 🧪 Experimental in the OpenSSL 3.6+/QUIC-enabled SDK |
 
 HTTP/2 is the supported alternate transport: selecting H2 negotiates ALPN `h2` and returns the
@@ -87,10 +89,10 @@ than falling back to a direct connection.
 
 ## Download
 
-Prebuilt **v0.8.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.8.0):
+Prebuilt **v0.8.1** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.8.1):
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.8.0-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.8.1-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 The Windows executable and installer share the uvscope icon; Linux packages install the hicolor

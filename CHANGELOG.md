@@ -4,14 +4,7 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Fixed
-
-- Windows MinGW builds no longer fail in `certificate_common_name`: `<wincred.h>` (pulled
-  in by `uv.h`) defines `X509_NAME` as a credential type, so the function now uses the
-  `struct X509_name_st` tag like the rest of the certificate code. This unblocks the Windows
-  CI job and the v0.8.0 release build.
+## [0.8.1] - 2026-10-24
 
 ### Added
 
@@ -28,6 +21,10 @@ All notable changes to uvscope are documented here. The format is based on
 
 ### Fixed
 
+- Windows MinGW builds no longer fail in `certificate_common_name`: `<wincred.h>` (pulled
+  in by `uv.h`) defines `X509_NAME` as a credential type, so the function now uses the
+  `struct X509_name_st` tag like the rest of the certificate code. This unblocks the Windows
+  CI job and release builds.
 - The experimental QUIC SDK build now installs `libuvcpp.so` with the custom OpenSSL 3.6+ lib
   directory in its RUNPATH (`CMAKE_INSTALL_RPATH_USE_LINK_PATH=ON`). Previously the dynamic
   linker resolved `libssl` from the system OpenSSL 3.0 and the daemon failed with
