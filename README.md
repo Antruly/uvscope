@@ -7,7 +7,8 @@
 
 uvscope puts HTTP, WebSocket, TCP, UDP, TLS, SOAP/WSDL and managed reverse proxies behind one
 Vue 3 control plane. A single C++ daemon owns the event loop, SQLite store, authentication and
-all outbound network traffic; the browser only renders state and sends commands.
+all outbound network traffic; long-lived services can optionally move to supervised child
+processes, and the browser only renders state and sends commands.
 
 ![uvscope dashboard](docs/screenshots/dashboard.png)
 
@@ -29,7 +30,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 
 ![HTTP Studio](docs/screenshots/http-studio.png)
 
-## What is in 0.10.0
+## What is in 0.11.0
 
 | Area | Status |
 | --- | --- |
@@ -65,10 +66,10 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Per-upstream circuit breaker with half-open recovery | ✅ New in 0.9.0 |
 | Length-prefixed JSON IPC and child-process runtime foundation | ✅ New in 0.10.0 |
 | Optional per-proxy child-process isolation with supervisor restart | ✅ New in 0.10.0 |
-| Optional SOCKS5 server child-process isolation | ✅ New |
-| Optional TCP/UDP listener child-process isolation | ✅ New |
-| Optional virtual-terminal child-process isolation | ✅ New |
-| Unified desired-state supervision for proxies, listeners, SOCKS5 and terminals | ✅ New |
+| Optional SOCKS5 server child-process isolation | ✅ New in 0.11.0 |
+| Optional TCP/UDP listener child-process isolation | ✅ New in 0.11.0 |
+| Optional virtual-terminal child-process isolation | ✅ New in 0.11.0 |
+| Unified desired-state supervision for proxies, listeners, SOCKS5 and terminals | ✅ New in 0.11.0 |
 | Weighted upstreams with failover and retries | ✅ New in 0.4.4 |
 | Per-proxy QPS, p50/p95 latency and status counts | ✅ New in 0.4.5 |
 | Active upstream health checks (TCP/TLS, 10 s) | ✅ New in 0.4.5 |
@@ -98,10 +99,10 @@ than falling back to a direct connection.
 
 ## Download
 
-Prebuilt **v0.10.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.10.0):
+Prebuilt **v0.11.0** assets are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v0.11.0):
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-0.10.0-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-0.11.0-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 The Windows executable and installer share the uvscope icon; Linux packages install the hicolor

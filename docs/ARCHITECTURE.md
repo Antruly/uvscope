@@ -37,9 +37,10 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
                      HTTP(S) / TCP / UDP / TLS targets
 ```
 
-## Process model in 0.10.0
+## Process model in 0.11.0
 
-- **Main daemon**: the only process. It owns the UI server, SQLite, auth and all protocol clients.
+- **Main daemon**: owns the UI server, SQLite, auth and all protocol clients. Long-lived services
+  (proxies, listeners, SOCKS5 servers, isolated terminals) can move to child processes.
 - **IPC foundation / proxy child**: `IpcChannel` (`src/ipc.*`) frames JSON with a 4-byte
   big-endian length over a Unix domain socket or Windows named pipe. The hidden `--ipc-child`
   mode and `--self-check` exercise process spawn, ping/pong and clean shutdown on every platform.
@@ -306,7 +307,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 - **Vue 3 / Vite / Pinia / Vue Router** — SPA.
 - **Inno Setup** — Windows installer.
 
-## Known architectural gaps (0.10.0)
+## Known architectural gaps (0.11.0)
 
 - HTTP/2 works over TLS (ALPN `h2`, stream IDs, GOAWAY and frame summaries); the runtime matrix
   still needs Windows and macOS coverage. HTTP/3/QUIC remain experimental and closed in release
@@ -336,3 +337,6 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   A restarted terminal starts a fresh shell and drops the previous scrollback; WebSocket clients
   receive a `reset` frame. Liveness for isolated terminals tracks the child process, so a normal
   shell `exit` is not treated as a crash.
+- The supervisor retries a desired service indefinitely with a 60 s backoff cap; there is no
+  restart budget or circuit breaker for a permanently broken child. Terminal sessions do not
+  survive a daemon restart.
