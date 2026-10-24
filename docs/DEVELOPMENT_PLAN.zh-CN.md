@@ -715,6 +715,36 @@ smoke 创建隔离 SOCKS5，经其 CONNECT 到本地 TCP echo；kill 子进程�
 
 不做：SOCKS5 supervisor 自动重启、TCP/UDP 监听与终端子进程化、跨进程鉴权、资源限制。
 
+### S17 — TCP/UDP 监听子进程隔离（已实现）
+
+边界：`src/listener_child.*`、`src/transport_manager.*`、`src/main.cpp`、API/编辑器、smoke。
+
+内容：
+
+- `ListenerConfig.isolated` 持久化到 settings，创建表单增加“在子进程中运行”；
+- 隐藏 `--listener-child`：子进程复用 `TransportManager` 跑单个 TCP/UDP 监听，通过 IPC 接收
+  start/stop/send/close-session/session-events，推送 listener/events/sessions 遥测；
+- 父侧 `ListenerChildService`：独立 IPC 循环线程、spawn、500 ms 遥测、会话/事件缓存、PID、
+  请求/响应命令与停止/reap；
+- `TransportManager` 在 start/stop/remove/listeners/listener/events/sessions/session-events/
+  send/close-session 上按 `isolated` 分支；
+- 子进程异常退出后状态为 `error`，再次 start 生成新 PID（暂无 supervisor 自动重启）；
+- 删除时停止并回收子进程。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 创建隔离 TCP listener，客户端接入并通过 API 回包，检查 session 的 recv/send 事件；
+kill 子进程后状态 error，start 后新 PID；删除后确认子进程消失。
+
+不做：listener supervisor 自动重启、虚拟终端子进程化、跨进程鉴权、资源限制、UDP 隔离的
+额外专项用例（与 TCP 共用同一子进程实现）。
+
 ---
 
 ### 风险与回退（本迭代）

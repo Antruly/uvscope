@@ -79,6 +79,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Reverse-proxy child runtime with IPC start/stop/snapshot/logs
 - [x] Per-proxy child isolation with supervisor restart and telemetry
 - [x] SOCKS5 server child isolation with telemetry and manual restart
+- [x] TCP/UDP listener child isolation with session send/close over IPC
 - [ ] Process isolation + IPC for long-lived services
 
 ## 1.0 — stable

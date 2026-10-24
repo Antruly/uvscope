@@ -332,6 +332,11 @@ produce accepted-session records with `peer`, `state`, byte counters and a per-s
 UDP listeners produce `datagram` and `sent` events with `peer` and `payload`; replies use the
 numeric peer host/port from the datagram log.
 
+`isolated: true` runs the listener in a `--listener-child` process. Its snapshot includes
+`isolated` and `pid`, and session send / close / event reads are proxied over IPC. If the child
+exits, the state becomes `error`; starting it again spawns a new child. Deleting the listener
+stops and reaps the child.
+
 Listener states are `stopped`, `starting`, `listening`, `stopping` and `error`. A listener error
 keeps the config; fix the port and start it again. Listener configs are stored in SQLite settings
 and auto-started when `autoStart` is true. Limits mirror the TCP session limits; accepted sessions

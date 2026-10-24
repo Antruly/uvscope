@@ -73,7 +73,10 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 - **TCP/UDP listeners**: the same transport loop hosts `uvcpp_tcp_server` listeners and raw
   `uv_udp_t` sockets. TCP accepted clients stay server-owned; the manager only observes them and
   queues writes. Listener configs live in SQLite; runtime state and bounded event logs live in the
-  manager.
+  manager. A listener marked `isolated: true` runs in a `--listener-child` process; the parent
+  `ListenerChildService` caches snapshots/events/sessions, exposes the PID, and proxies session
+  send / close / event reads over IPC. A crashed child is reported as `error` and can be started
+  again, but there is no listener supervisor yet.
 - **SOCKS5 servers**: each running server is a `uvcpp_socks5_server` with its own loop and thread.
   Commands are marshaled through `uvcpp_async`; snapshots and bounded logs are mutex-protected.
   A server marked `isolated: true` instead runs in a `--socks5-child` process; the parent
@@ -312,8 +315,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   weighted upstreams with bounded retries, active health checks and a per-upstream circuit
   breaker.
 - The `history` table stores summaries, not full bodies.
-- Reverse proxies can run in supervised child processes (`isolated: true`), and SOCKS5 servers
-  can run in child processes without a supervisor. TCP/UDP listeners and the virtual terminal
-  still run in the daemon process; moving those services into children is the remaining
-  process-isolation work. Isolated telemetry is cached from a 500 ms push, so the API can lag the
-  child slightly.
+- Reverse proxies can run in supervised child processes (`isolated: true`); SOCKS5 servers and
+  TCP/UDP listeners can run in child processes without a supervisor. The virtual terminal still
+  runs in the daemon process; moving it into children is the remaining process-isolation work.
+  Isolated telemetry is cached from a 500 ms push, so the API can lag the child slightly.

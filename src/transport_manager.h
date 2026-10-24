@@ -16,7 +16,7 @@ namespace uvscope {
 // stalled target can never block the control plane.
 class TransportManager {
  public:
-  TransportManager();
+  explicit TransportManager(std::string executable_path = "");
   ~TransportManager();
 
   TransportManager(const TransportManager&) = delete;

@@ -8,6 +8,16 @@ All notable changes to uvscope are documented here. The format is based on
 
 ### Added
 
+- TCP and UDP listeners can run in a child process with `isolated: true`. The parent caches the
+  listener snapshot, event log and session list, exposes the child `pid`, proxies session send /
+  close / per-session event reads over IPC, and stops/reaps the child on stop or delete. A
+  crashed child is reported as `error` and can be started again with a new PID. The listener
+  editor has a “Run in a child process” toggle. The smoke test accepts a client through the
+  isolated listener, replies through the daemon API, checks session events, kills/restarts the
+  child and verifies reaping on delete.
+
+### Added
+
 - SOCKS5 servers can run in a child process with `isolated: true`. The parent caches the server
   snapshot, event log and session list, exposes the child `pid` in `/api/socks5/servers`, and
   stops/reaps the child on stop or delete. A crashed child is reported as `error` and can be

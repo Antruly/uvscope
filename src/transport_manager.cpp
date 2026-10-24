@@ -1,5 +1,7 @@
 #include "transport_manager.h"
 
+#include "listener_child.h"
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -141,6 +143,7 @@ struct TransportManager::Impl {
 
   struct Listener {
     ListenerConfig config;
+    std::shared_ptr<ListenerChildService> child;
     std::string state = "stopped";
     std::string error;
     std::string started_at;
@@ -182,6 +185,7 @@ struct TransportManager::Impl {
   bool accepting = true;
   std::vector<std::function<void()>> commands;
 
+  std::string executable_path;
   mutable std::mutex state_mutex;
   std::map<std::string, std::shared_ptr<Session>> sessions;
 
@@ -333,6 +337,8 @@ struct TransportManager::Impl {
             {"host", listener.config.host},
             {"port", listener.config.port},
             {"autoStart", listener.config.auto_start},
+            {"isolated", listener.config.isolated},
+            {"pid", 0},
             {"state", state_name(listener.state)},
             {"error", listener.error},
             {"startedAt", listener.started_at},
@@ -1253,7 +1259,8 @@ struct TransportManager::Impl {
   }
 };
 
-TransportManager::TransportManager() : impl_(new Impl()) {
+TransportManager::TransportManager(std::string executable_path) : impl_(new Impl()) {
+  impl_->executable_path = std::move(executable_path);
   impl_->thread = std::thread([this] { impl_->run_loop(); });
   std::unique_lock<std::mutex> lock(impl_->ready_mutex);
   impl_->ready_cv.wait(lock, [this] { return impl_->ready; });
@@ -1472,15 +1479,40 @@ bool TransportManager::add_listener(const ListenerConfig& config,
 }
 
 bool TransportManager::start_listener(const std::string& id, std::string* error) {
+  std::shared_ptr<Impl::Listener> listener;
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
-    auto listener = impl_->listener_locked(id);
+    listener = impl_->listener_locked(id);
     if (!listener) {
       if (error) *error = "listener not found";
       return false;
     }
-    if (listener->state == "listening") return true;
-    listener->state = "starting";
+    if (listener->config.isolated) {
+      if (listener->child && listener->child->running()) return true;
+    } else {
+      if (listener->state == "listening") return true;
+      listener->state = "starting";
+    }
+  }
+  if (listener->config.isolated) {
+    listener->child.reset(
+        new ListenerChildService(impl_->executable_path, listener->config));
+    std::string child_error;
+    if (!listener->child->start(&child_error)) {
+      std::lock_guard<std::mutex> lock(impl_->state_mutex);
+      listener->state = "error";
+      listener->error = child_error.empty() ? "listener child failed to start"
+                                            : child_error;
+      listener->child.reset();
+      if (error) *error = listener->error;
+      return false;
+    }
+    const auto snapshot = listener->child->snapshot();
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    listener->state = snapshot.value("state", std::string("listening"));
+    listener->error.clear();
+    listener->started_at = now_iso8601();
+    return true;
   }
   if (!impl_->post([this, id] { impl_->start_listener_loop(id); })) {
     if (error) *error = "transport manager is stopping";
@@ -1490,14 +1522,25 @@ bool TransportManager::start_listener(const std::string& id, std::string* error)
 }
 
 bool TransportManager::stop_listener(const std::string& id, std::string* error) {
+  std::shared_ptr<Impl::Listener> listener;
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
-    auto listener = impl_->listener_locked(id);
+    listener = impl_->listener_locked(id);
     if (!listener) {
       if (error) *error = "listener not found";
       return false;
     }
-    if (listener->state == "stopped") return true;
+    if (!listener->config.isolated && listener->state == "stopped") return true;
+  }
+  if (listener->config.isolated) {
+    if (listener->child) {
+      listener->child->stop();
+      listener->child.reset();
+    }
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    listener->state = "stopped";
+    listener->stopped_at = now_iso8601();
+    return true;
   }
   if (!impl_->post([this, id] { impl_->stop_listener_loop(id); })) {
     if (error) *error = "transport manager is stopping";
@@ -1507,12 +1550,23 @@ bool TransportManager::stop_listener(const std::string& id, std::string* error) 
 }
 
 bool TransportManager::remove_listener(const std::string& id, std::string* error) {
+  std::shared_ptr<Impl::Listener> listener;
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
-    if (!impl_->listener_locked(id)) {
+    listener = impl_->listener_locked(id);
+    if (!listener) {
       if (error) *error = "listener not found";
       return false;
     }
+  }
+  if (listener->config.isolated) {
+    if (listener->child) {
+      listener->child->stop();
+      listener->child.reset();
+    }
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    impl_->listeners.erase(id);
+    return true;
   }
   if (!impl_->post([this, id] {
         impl_->stop_listener_loop(id);
@@ -1529,7 +1583,11 @@ nlohmann::json TransportManager::listeners() const {
   std::lock_guard<std::mutex> lock(impl_->state_mutex);
   nlohmann::json out = nlohmann::json::array();
   for (const auto& item : impl_->listeners) {
-    out.push_back(impl_->listener_snapshot_locked(*item.second));
+    if (item.second->child) {
+      out.push_back(item.second->child->snapshot());
+    } else {
+      out.push_back(impl_->listener_snapshot_locked(*item.second));
+    }
   }
   std::sort(out.begin(), out.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
     return a.value("id", std::string()) < b.value("id", std::string());
@@ -1541,6 +1599,9 @@ nlohmann::json TransportManager::listener(const std::string& id) const {
   std::lock_guard<std::mutex> lock(impl_->state_mutex);
   auto listener = impl_->listener_locked(id);
   if (!listener) return {{"ok", false}, {"error", "listener not found"}};
+  if (listener->child) {
+    return {{"ok", true}, {"listener", listener->child->snapshot()}};
+  }
   return {{"ok", true}, {"listener", impl_->listener_snapshot_locked(*listener)}};
 }
 
@@ -1551,6 +1612,15 @@ nlohmann::json TransportManager::listener_events(const std::string& id,
   auto listener = impl_->listener_locked(id);
   if (!listener) return {{"ok", false}, {"error", "listener not found"}};
   const int safe_limit = std::max(1, std::min(limit, 500));
+  if (listener->child) {
+    const auto events = listener->child->events(after, safe_limit);
+    const std::uint64_t next =
+        events.is_array() && !events.empty() ? events.back().value("seq", after) : after;
+    return {{"ok", true},
+            {"listener", listener->child->snapshot()},
+            {"events", events},
+            {"nextSeq", next}};
+  }
   nlohmann::json events = nlohmann::json::array();
   for (const auto& event : listener->events) {
     if (event.json.value("seq", std::uint64_t{0}) <= after) continue;
@@ -1567,6 +1637,9 @@ nlohmann::json TransportManager::listener_sessions(const std::string& id) const 
   std::lock_guard<std::mutex> lock(impl_->state_mutex);
   auto listener = impl_->listener_locked(id);
   if (!listener) return {{"ok", false}, {"error", "listener not found"}};
+  if (listener->child) {
+    return {{"ok", true}, {"sessions", listener->child->sessions()}};
+  }
   nlohmann::json sessions = nlohmann::json::array();
   for (const auto& item : listener->sessions) {
     auto snapshot = impl_->accepted_snapshot_locked(*item.second);
@@ -1585,6 +1658,14 @@ nlohmann::json TransportManager::listener_session_events(
   std::lock_guard<std::mutex> lock(impl_->state_mutex);
   auto listener = impl_->listener_locked(id);
   if (!listener) return {{"ok", false}, {"error", "listener not found"}};
+  if (listener->child) {
+    std::string error;
+    auto result = listener->child->session_events(session_id, after, limit, &error);
+    if (!result.is_object()) {
+      return {{"ok", false}, {"error", error.empty() ? "session not found" : error}};
+    }
+    return result;
+  }
   auto it = listener->sessions.find(session_id);
   if (it == listener->sessions.end()) {
     return {{"ok", false}, {"error", "session not found"}};
@@ -1608,6 +1689,24 @@ bool TransportManager::listener_send(const std::string& id,
                                      const std::string& payload,
                                      const std::string& encoding,
                                      std::string* error) {
+  std::shared_ptr<Impl::Listener> isolated;
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    auto listener = impl_->listener_locked(id);
+    if (!listener) {
+      if (error) *error = "listener not found";
+      return false;
+    }
+    if (listener->config.isolated) isolated = listener;
+  }
+  if (isolated) {
+    if (!isolated->child || !isolated->child->running()) {
+      if (error) *error = "listener is not running";
+      return false;
+    }
+    return isolated->child->send(session_id, peer_host, peer_port, payload,
+                                 encoding, error);
+  }
   std::string bytes;
   if (!decode_payload(payload, encoding, &bytes, error)) return false;
   if (bytes.empty()) {
@@ -1667,6 +1766,23 @@ bool TransportManager::listener_send(const std::string& id,
 bool TransportManager::listener_close_session(const std::string& id,
                                               const std::string& session_id,
                                               std::string* error) {
+  std::shared_ptr<Impl::Listener> isolated;
+  {
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
+    auto listener = impl_->listener_locked(id);
+    if (!listener) {
+      if (error) *error = "listener not found";
+      return false;
+    }
+    if (listener->config.isolated) isolated = listener;
+  }
+  if (isolated) {
+    if (!isolated->child || !isolated->child->running()) {
+      if (error) *error = "listener is not running";
+      return false;
+    }
+    return isolated->child->close_session(session_id, error);
+  }
   {
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
     auto listener = impl_->listener_locked(id);
