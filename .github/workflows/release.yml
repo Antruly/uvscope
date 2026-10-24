@@ -63,11 +63,18 @@ jobs:
           cmake --build build -j"$(nproc)"
           ./build/uvscope --self-check
           bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788
+      - name: Resolve version
+        id: version
+        # Tag: v1.0.0 -> 1.0.0. Branch dispatch: chore/release-1.0.0 ->
+        # chore-release-1.0.0, so a dry run cannot create slashed paths.
+        run: |
+          label="${GITHUB_REF_NAME#v}"
+          echo "label=${label//\//-}" >> "$GITHUB_OUTPUT"
       - name: Package
         run: |
           mkdir -p packages stage
           cmake --install build --prefix "$PWD/stage"
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.version.outputs.label }}"
           tar -C stage -czf "packages/uvscope-${VERSION}-linux-${{ matrix.arch }}.tar.gz" .
           cpack --config build/CPackConfig.cmake -G DEB -B packages || true
           cpack --config build/CPackConfig.cmake -G RPM -B packages || true
@@ -139,11 +146,17 @@ jobs:
           done
           curl -fsSL https://curl.se/ca/cacert.pem -o stage/bin/cacert.pem || \
             cp "$MINGW_PREFIX/ssl/certs/ca-bundle.crt" stage/bin/cacert.pem || true
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $name = "${{ github.ref_name }}".TrimStart('v').Replace('/', '-')
+          "label=$name" >> $env:GITHUB_OUTPUT
       - name: Create zip
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force packages | Out-Null
-          $name = "${{ github.ref_name }}".TrimStart('v')
+          $name = "${{ steps.version.outputs.label }}"
           Compress-Archive -Path stage\* -DestinationPath "packages\uvscope-$name-mingw-x64.zip" -Force
       - name: Install Inno Setup
         shell: pwsh
@@ -189,6 +202,11 @@ jobs:
           ./build/uvscope --self-check
           OPENSSL_BIN="$(brew --prefix openssl@3)/bin/openssl" \
             bash ./scripts/h2-smoke.sh ./build/uvscope 18820 18821
+      - name: Resolve version
+        id: version
+        run: |
+          label="${GITHUB_REF_NAME#v}"
+          echo "label=${label//\//-}" >> "$GITHUB_OUTPUT"
       - name: Bundle and package
         run: |
           mkdir -p packages stage
@@ -198,7 +216,7 @@ jobs:
           # diagnostics and ad-hoc sign the executable.
           otool -L stage/bin/uvscope || true
           codesign --force --deep -s - stage/bin/uvscope || true
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ steps.version.outputs.label }}"
           tar -C stage -czf "packages/uvscope-${VERSION}-macos-arm64.tar.gz" .
           ls -lh packages
       - uses: actions/upload-artifact@v4
