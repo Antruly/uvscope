@@ -88,7 +88,7 @@ original byte count; `truncated` means the retained sample is shorter than `leng
 | `stopped` | — |
 | `error` | `error` |
 | `accepted` | `sessionId`, `peer` |
-| `session-closed` | `sessionId`, `peer`, `reason` |
+| `session-closed` | `sessionId` (see the per-session `closed`/`error` event for the reason) |
 | `datagram` | `peer`, `partial`, `payload` |
 
 Per-session events (`.../sessions/:sid/events`) use the same envelope:
