@@ -370,6 +370,11 @@ Deleting a certificate still referenced by a proxy returns `409 certificate_in_u
 
 ## Reverse proxy routing rules
 
+Upstream requests run on a per-instance worker pool (4 threads, 32 queued jobs). The listener loop
+only resolves rules and writes the result back, so a slow upstream does not block other requests
+on the same proxy. A full queue returns `503` with `proxy is stopping or overloaded`. Stopping a
+proxy waits for in-flight upstream requests before closing the listener.
+
 `POST /api/proxies` accepts an ordered `rules` array (max 64). The first enabled matching rule
 wins. A rule is:
 

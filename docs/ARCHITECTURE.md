@@ -43,9 +43,12 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 - **Short-lived work**: HTTP/TCP/UDP/TLS probes run on the libuv thread pool through `uvcpp_work`; the
   response is written back on the event-loop thread.
 - **Reverse proxy runtimes**: each running proxy is a `uvcpp_web_app` with its own event loop and
-  thread. Requests use a synchronous libuvcpp HTTP client on that proxy loop. This keeps proxy
-  blocking isolated from the control plane, at the cost of per-instance serialization for slow
-  upstreams.
+  thread. Each runtime also owns four upstream worker threads and a bounded queue (32). The proxy
+  loop resolves rules, snapshots the request and enqueues it; workers run the blocking libuvcpp
+  client and post the result back with `app->post`, so a slow upstream cannot block other
+  connections on the same proxy. A full queue returns `503`. Upstream timeouts remain 15 s for
+  connect and 30 s for send. Stopping a proxy joins its workers and drains posted completions
+  before stopping the app.
 - **Persistent transport sessions**: `TransportManager` owns one dedicated libuv loop on its own
   thread. Web handlers enqueue commands and read mutex-protected snapshots; sessions never run on
   the control-plane loop. A 500 ms sweep enforces connect timeouts and retires closed clients.
@@ -275,7 +278,9 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   file and downloaded (512 MiB cap, HTTP/1.1, attachment-only). A failed transfer keeps its
   partial file and resumes in place with `Range`; a short body against a known `Content-Length`
   is treated as an error rather than a ready file.
-- Proxy upstreams use a blocking client inside the proxy loop; throughput is limited.
+- Proxy upstreams use a blocking client on a bounded per-proxy worker pool (4 threads, 32 queued
+  jobs). The proxy loop stays responsive, but this is not a fully asynchronous client: worker
+  count and upstream timeouts are fixed, and stopping a proxy waits for in-flight requests.
 - WebSocket upgrades use the same routing conditions/rewrites and health-filtered weighted
   upstream selection as HTTP. Redirect rules are skipped after the 101 handshake, relayed frames
   are not logged individually, and retries do not apply to upgrades.

@@ -8,6 +8,7 @@
 #include <random>
 #include <condition_variable>
 #include <deque>
+#include <future>
 #include <map>
 #include <regex>
 #include <sstream>
@@ -322,6 +323,140 @@ void run_ws_upstream(std::shared_ptr<WsRelay> relay, std::string url,
   client.run(UV_RUN_NOWAIT);
 }
 
+// A proxy request snapshot handed to a worker thread. The worker only reads
+// this data; the response object and next callback are touched on the proxy
+// loop when the result is posted back.
+struct ProxyHttpJob {
+  std::string method_name;
+  uvcpp::http_method method = uvcpp::http_method::HTTP_GET;
+  std::string raw_url;
+  std::string body;
+  std::vector<std::pair<std::string, std::string>> headers;
+  bool idempotent = false;
+  int max_attempts = 1;
+  std::string path;
+  std::string query;
+  bool rewritten = false;
+  bool rule_matched = false;
+  std::string rule;
+  std::vector<ProxyCandidate> candidates;
+  std::string proxy_id;
+  std::string proxy_name;
+  std::chrono::steady_clock::time_point started;
+  uvcpp::uvcpp_web_response* resp = nullptr;
+  uvcpp::uvcpp_web_next next;
+};
+
+struct ProxyHttpResult {
+  bool ok = false;
+  int status = 0;
+  std::string body;
+  std::vector<std::pair<std::string, std::string>> headers;
+  std::string error;
+  int attempts = 0;
+  std::string used_url;
+  long long latency_ms = 0;
+};
+
+// Blocking upstream request loop. It runs on a proxy worker thread, never on
+// the proxy's libuv loop. Retry semantics match the previous synchronous path.
+ProxyHttpResult run_proxy_job(const ProxyHttpJob& job) {
+  ProxyHttpResult out;
+  std::mt19937 rng{std::random_device{}()};
+  std::vector<bool> tried(job.candidates.size(), false);
+  uvcpp::uvcpp_http_response response;
+  int rc = 0;
+  int attempts = 0;
+  std::string last_error;
+  std::string used_url;
+
+  for (int attempt = 0; attempt < job.max_attempts; ++attempt) {
+    const int index = pick_candidate(rng, job.candidates, tried);
+    if (index < 0) break;
+    tried[static_cast<std::size_t>(index)] = true;
+    const ProxyCandidate& candidate = job.candidates[static_cast<std::size_t>(index)];
+    const ParsedUrl& target = candidate.parsed;
+    used_url = candidate.url;
+
+    std::string attempt_path = job.path;
+    if (!job.rewritten && target.path != "/" && !target.path.empty()) {
+      attempt_path = join_path(target.path, attempt_path);
+    }
+    if (!job.query.empty()) attempt_path += "?" + job.query;
+
+    uvcpp::uvcpp_http_request upstream;
+    upstream.method = job.method;
+    upstream.url = attempt_path;
+    for (const auto& header : job.headers) {
+      upstream.set_header(header.first, header.second);
+    }
+    const int default_port = target.scheme == "https" ? 443 : 80;
+    upstream.set_header("host", target.port == default_port
+                                    ? target.host
+                                    : target.host + ":" + std::to_string(target.port));
+    upstream.body.clone_data(job.body.data(), job.body.size());
+
+    std::unique_ptr<uvcpp::uvcpp_ssl_context> ssl;
+    const bool tls_upstream = target.scheme == "https";
+    if (tls_upstream) {
+      ssl.reset(new uvcpp::uvcpp_ssl_context(uvcpp::tls_mode::CLIENT,
+                                             uvcpp::tls_version::TLS_1_2));
+      const std::string ca = find_ca_bundle(executable_dir(nullptr));
+      if (!ca.empty()) ssl->load_ca_file(ca);
+      ssl->set_verify_mode(uvcpp::tls_verify_mode::PEER_STRICT);
+    }
+
+    uvcpp::uvcpp_http_client client;
+    if (ssl) client.set_ssl_context(ssl.get());
+    ++attempts;
+    const int connect_rc = client.connect_wait(target.host.c_str(), target.port, 15000);
+    if (connect_rc != 0) {
+      rc = connect_rc;
+      last_error = uv_error_string(connect_rc);
+      // Nothing was sent, so a retry is safe for any method.
+      continue;
+    }
+    uvcpp::uvcpp_http_response attempt_response;
+    const int send_rc = ssl ? client.send_wait_ssl(upstream, attempt_response, 30000)
+                            : client.send_wait_plain(upstream, attempt_response, 30000);
+    if (send_rc != 0) {
+      rc = send_rc;
+      last_error = uv_error_string(send_rc);
+      if (job.idempotent) continue;
+      break;
+    }
+    response = std::move(attempt_response);
+    rc = 0;
+    const int status = static_cast<int>(response.status_code);
+    if (job.idempotent && (status == 502 || status == 503 || status == 504) &&
+        attempt + 1 < job.max_attempts) {
+      last_error = "upstream status " + std::to_string(status);
+      continue;
+    }
+    break;
+  }
+
+  out.latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - job.started)
+                       .count();
+  out.attempts = attempts;
+  out.used_url = used_url;
+  if (rc != 0) {
+    out.ok = false;
+    out.status = 502;
+    out.error = last_error.empty() ? "upstream failed" : last_error;
+    return out;
+  }
+  out.ok = true;
+  out.status = static_cast<int>(response.status_code);
+  out.body = response.body.to_string();
+  for (const auto& header : response.headers) {
+    if (hop_by_hop(header.name)) continue;
+    out.headers.emplace_back(header.name, header.value);
+  }
+  return out;
+}
+
 }  // namespace
 
 struct ProxyManager::Runtime {
@@ -470,6 +605,151 @@ struct ProxyManager::Runtime {
     while (log_entries.size() > 500) log_entries.pop_front();
   }
 
+  // Upstream requests run on this proxy's own worker pool, so a slow target
+  // cannot block the proxy loop that accepts downstream connections.
+  static constexpr std::size_t kMaxHttpJobs = 32;
+  static constexpr int kHttpWorkers = 4;
+  std::mutex http_mutex;
+  std::condition_variable http_cv;
+  std::deque<std::shared_ptr<ProxyHttpJob>> http_queue;
+  std::vector<std::thread> http_workers;
+  std::atomic<bool> http_stopping{false};
+
+  void start_http_workers() {
+    http_stopping.store(false);
+    if (!http_workers.empty()) return;
+    for (int i = 0; i < kHttpWorkers; ++i) {
+      http_workers.emplace_back([this] { http_worker_loop(); });
+    }
+  }
+
+  void stop_http_workers() {
+    {
+      std::lock_guard<std::mutex> lock(http_mutex);
+      http_stopping.store(true);
+    }
+    http_cv.notify_all();
+    for (auto& worker : http_workers) {
+      if (worker.joinable()) worker.join();
+    }
+    http_workers.clear();
+    // Workers posted every result before exiting. Let the app loop run those
+    // completions while the response contexts are still alive.
+    if (app) {
+      auto barrier = std::make_shared<std::promise<void>>();
+      auto future = barrier->get_future();
+      app->post([barrier] { barrier->set_value(); });
+      future.wait_for(std::chrono::seconds(5));
+    }
+    std::deque<std::shared_ptr<ProxyHttpJob>> dropped;
+    {
+      std::lock_guard<std::mutex> lock(http_mutex);
+      dropped.swap(http_queue);
+    }
+  }
+
+  bool enqueue_http(const std::shared_ptr<ProxyHttpJob>& job) {
+    std::lock_guard<std::mutex> lock(http_mutex);
+    if (http_stopping.load() || http_queue.size() >= kMaxHttpJobs) return false;
+    http_queue.push_back(job);
+    http_cv.notify_one();
+    return true;
+  }
+
+  void http_worker_loop() {
+    for (;;) {
+      std::shared_ptr<ProxyHttpJob> job;
+      {
+        std::unique_lock<std::mutex> lock(http_mutex);
+        http_cv.wait(lock, [this] {
+          return http_stopping.load() || !http_queue.empty();
+        });
+        if (http_queue.empty() && http_stopping.load()) break;
+        job = http_queue.front();
+        http_queue.pop_front();
+      }
+      ProxyHttpResult result;
+      if (http_stopping.load()) {
+        // Drain the queue quickly during shutdown instead of starting new
+        // upstream work. In-flight jobs are still allowed to finish.
+        result.ok = false;
+        result.status = 503;
+        result.error = "proxy is stopping";
+        result.latency_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now() - job->started)
+                                .count();
+      } else {
+        result = run_proxy_job(*job);
+      }
+      uvcpp::uvcpp_web_app* target = app.get();
+      if (target == nullptr) continue;
+      target->post([this, job, result = std::move(result)]() mutable {
+        complete_http(job, std::move(result));
+      });
+    }
+  }
+
+  void complete_http(const std::shared_ptr<ProxyHttpJob>& job, ProxyHttpResult result) {
+    auto* resp = job->resp;
+    if (resp == nullptr) return;
+    if (!result.ok) {
+      errors.fetch_add(1);
+      const int error_status = result.status >= 400 ? result.status : 502;
+      const std::string error_title =
+          error_status == 503 ? "proxy is stopping" : "upstream request failed";
+      resp->status(error_status)
+          .set_header("content-type", "application/json")
+          .json_str(nlohmann::json({{"error", error_title},
+                                    {"detail", result.error},
+                                    {"proxy", job->proxy_name},
+                                    {"attempts", result.attempts},
+                                    {"upstream", result.used_url}})
+                        .dump());
+      resp->end();
+      record(error_status, static_cast<double>(result.latency_ms));
+      nlohmann::json entry = {{"method", job->method_name}, {"path", job->raw_url},
+                              {"status", error_status}, {"error", result.error},
+                              {"attempts", result.attempts},
+                              {"upstream", result.used_url},
+                              {"latencyMs", result.latency_ms}, {"bytes", 0}};
+      if (job->rule_matched) entry["rule"] = job->rule;
+      add_log(entry);
+      if (job->next) job->next();
+      return;
+    }
+
+    resp->status(result.status);
+    std::string content_type;
+    for (const auto& header : result.headers) {
+      if (lower(header.first) == "set-cookie") {
+        resp->add_header(header.first, header.second);
+      } else {
+        resp->set_header(header.first, header.second);
+      }
+      if (lower(header.first) == "content-type") content_type = header.second;
+    }
+    bytes.fetch_add(result.body.size());
+    if (!result.body.empty()) {
+      if (!content_type.empty()) {
+        resp->body(result.body, content_type);
+      } else {
+        resp->body(result.body);
+      }
+    }
+    resp->set_header("x-uvscope-proxy", job->proxy_id);
+    resp->end();
+    record(result.status, static_cast<double>(result.latency_ms));
+    nlohmann::json entry = {{"method", job->method_name}, {"path", job->raw_url},
+                            {"status", result.status},
+                            {"latencyMs", result.latency_ms},
+                            {"attempts", result.attempts},
+                            {"upstream", result.used_url},
+                            {"bytes", result.body.size()}};
+    if (job->rule_matched) entry["rule"] = job->rule;
+    add_log(entry);
+    if (job->next) job->next();
+  }
+
   std::vector<ProxyCandidate> candidate_list() const {
     std::vector<ProxyCandidate> out;
     if (config.upstreams.empty()) {
@@ -586,7 +866,8 @@ struct ProxyManager::Runtime {
     return out;
   }
 
-  void forward(uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp) {
+  void forward(uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+               uvcpp::uvcpp_web_next next) {
     const auto started = std::chrono::steady_clock::now();
     requests.fetch_add(1);
     std::vector<ProxyCandidate> candidates = selectable_candidates();
@@ -640,134 +921,41 @@ struct ProxyManager::Runtime {
     forwarded_headers.emplace_back("x-uvscope-proxy", config.id);
 
     const std::string request_method = lower(req.method_name());
-    const bool idempotent = request_method == "get" || request_method == "head" ||
-                            request_method == "options" || request_method == "trace";
-    const int max_attempts = 1 + std::min(3, std::max(0, config.retries));
-    std::vector<bool> tried(candidates.size(), false);
-    uvcpp::uvcpp_http_response response;
-    int rc = 0;
-    int attempts = 0;
-    std::string last_error;
-    std::string used_url;
+    auto job = std::make_shared<ProxyHttpJob>();
+    job->method_name = req.method_name();
+    job->method = req.method();
+    job->raw_url = req.raw_url();
+    if (req.body_size() > 0) job->body.assign(req.body_data(), req.body_size());
+    job->headers = std::move(forwarded_headers);
+    job->idempotent = request_method == "get" || request_method == "head" ||
+                      request_method == "options" || request_method == "trace";
+    job->max_attempts = 1 + std::min(3, std::max(0, config.retries));
+    job->path = path;
+    job->query = query;
+    job->rewritten = rewritten;
+    job->rule_matched = route.matched;
+    job->rule = route.rule;
+    job->candidates = std::move(candidates);
+    job->proxy_id = config.id;
+    job->proxy_name = config.name;
+    job->started = started;
+    job->resp = &resp;
+    job->next = next;
 
-    for (int attempt = 0; attempt < max_attempts; ++attempt) {
-      const int index = pick_candidate(rng, candidates, tried);
-      if (index < 0) break;
-      tried[static_cast<std::size_t>(index)] = true;
-      const ProxyCandidate& candidate = candidates[static_cast<std::size_t>(index)];
-      const ParsedUrl& target = candidate.parsed;
-      used_url = candidate.url;
-
-      std::string attempt_path = path;
-      if (!rewritten && target.path != "/" && !target.path.empty()) {
-        attempt_path = join_path(target.path, attempt_path);
-      }
-      if (!query.empty()) attempt_path += "?" + query;
-
-      uvcpp::uvcpp_http_request upstream;
-      upstream.method = req.method();
-      upstream.url = attempt_path;
-      for (const auto& header : forwarded_headers) {
-        upstream.set_header(header.first, header.second);
-      }
-      const int default_port = target.scheme == "https" ? 443 : 80;
-      upstream.set_header("host", target.port == default_port
-                                      ? target.host
-                                      : target.host + ":" + std::to_string(target.port));
-      upstream.body.clone_data(req.body_data(), req.body_size());
-
-      std::unique_ptr<uvcpp::uvcpp_ssl_context> ssl;
-      const bool tls_upstream = target.scheme == "https";
-      if (tls_upstream) {
-        ssl.reset(new uvcpp::uvcpp_ssl_context(uvcpp::tls_mode::CLIENT,
-                                               uvcpp::tls_version::TLS_1_2));
-        const std::string ca = find_ca_bundle(executable_dir(nullptr));
-        if (!ca.empty()) ssl->load_ca_file(ca);
-        ssl->set_verify_mode(uvcpp::tls_verify_mode::PEER_STRICT);
-      }
-
-      uvcpp::uvcpp_http_client client;
-      if (ssl) client.set_ssl_context(ssl.get());
-      ++attempts;
-      const int connect_rc = client.connect_wait(target.host.c_str(), target.port, 15000);
-      if (connect_rc != 0) {
-        rc = connect_rc;
-        last_error = uv_error_string(connect_rc);
-        // Nothing was sent, so a retry is safe for any method.
-        continue;
-      }
-      uvcpp::uvcpp_http_response attempt_response;
-      const int send_rc = ssl ? client.send_wait_ssl(upstream, attempt_response, 30000)
-                              : client.send_wait_plain(upstream, attempt_response, 30000);
-      if (send_rc != 0) {
-        rc = send_rc;
-        last_error = uv_error_string(send_rc);
-        if (idempotent) continue;
-        break;
-      }
-      response = std::move(attempt_response);
-      rc = 0;
-      const int status = static_cast<int>(response.status_code);
-      if (idempotent && (status == 502 || status == 503 || status == 504) &&
-          attempt + 1 < max_attempts) {
-        last_error = "upstream status " + std::to_string(status);
-        continue;
-      }
-      break;
-    }
-
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             std::chrono::steady_clock::now() - started)
-                             .count();
-    if (rc != 0) {
+    if (!enqueue_http(job)) {
       errors.fetch_add(1);
-      const std::string message = last_error.empty() ? "upstream failed" : last_error;
-      resp.status(502).set_header("content-type", "application/json")
-          .json_str(nlohmann::json({{"error", "upstream request failed"},
-                                    {"detail", message},
-                                    {"proxy", config.name},
-                                    {"attempts", attempts},
-                                    {"upstream", used_url}})
+      resp.status(503)
+          .set_header("content-type", "application/json")
+          .json_str(nlohmann::json({{"error", "proxy is stopping or overloaded"},
+                                    {"proxy", config.name}})
                         .dump());
       resp.end();
-      record(502, static_cast<double>(elapsed));
-      nlohmann::json entry = {{"method", req.method_name()}, {"path", req.raw_url()},
-                              {"status", 502}, {"error", message},
-                              {"attempts", attempts}, {"upstream", used_url},
-                              {"latencyMs", elapsed}, {"bytes", 0}};
-      if (route.matched) entry["rule"] = route.rule;
-      add_log(entry);
-      return;
+      record(503, 0);
+      add_log({{"method", job->method_name}, {"path", job->raw_url},
+               {"status", 503}, {"error", "proxy is stopping or overloaded"},
+               {"latencyMs", 0}, {"bytes", 0}});
+      if (next) next();
     }
-
-    resp.status(static_cast<int>(response.status_code));
-    for (const auto& header : response.headers) {
-      if (hop_by_hop(header.name)) continue;
-      if (lower(header.name) == "set-cookie") {
-        resp.add_header(header.name, header.value);
-      } else {
-        resp.set_header(header.name, header.value);
-      }
-    }
-    const std::string body = response.body.to_string();
-    bytes.fetch_add(body.size());
-    if (!body.empty()) {
-      const std::string ct = response.get_header("content-type");
-      if (!ct.empty()) {
-        resp.body(body, ct);
-      } else {
-        resp.body(body);
-      }
-    }
-    resp.set_header("x-uvscope-proxy", config.id);
-    resp.end();
-    record(static_cast<int>(response.status_code), static_cast<double>(elapsed));
-    nlohmann::json entry = {
-        {"method", req.method_name()}, {"path", req.raw_url()},
-        {"status", static_cast<int>(response.status_code)}, {"latencyMs", elapsed},
-        {"attempts", attempts}, {"upstream", used_url}, {"bytes", body.size()}};
-    if (route.matched) entry["rule"] = route.rule;
-    add_log(entry);
   }
 
   nlohmann::json metrics_snapshot() const {
@@ -903,6 +1091,7 @@ struct ProxyManager::Runtime {
   }
 
   ~Runtime() {
+    stop_http_workers();
     stop_health_checks();
     if (app) {
       app->stop();
@@ -968,6 +1157,7 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
     }
   }
 
+  runtime->stop_http_workers();
   if (runtime->app) {
     runtime->app->stop();
     runtime->app->join();
@@ -1001,7 +1191,9 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
   }
   Runtime* raw = runtime.get();
   const auto handler = [raw](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
-                             uvcpp::uvcpp_web_next) { raw->forward(req, resp); };
+                             uvcpp::uvcpp_web_next next) {
+    raw->forward(req, resp, std::move(next));
+  };
   app->any("/", handler);
   app->any("/*path", handler);
   auto ws_handler = [raw](uvcpp::uvcpp_web_ws_request& ws) {
@@ -1023,6 +1215,7 @@ bool ProxyManager::start(const std::string& id, std::string* error) {
   runtime->app = std::move(app);
   runtime->running.store(true);
   runtime->started_at = now_iso8601();
+  runtime->start_http_workers();
   runtime->start_health();
   runtime->last_error.clear();
   runtime->add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
@@ -1038,6 +1231,7 @@ bool ProxyManager::stop(const std::string& id, std::string* error) {
     if (error) *error = "proxy not found";
     return false;
   }
+  runtime->stop_http_workers();
   runtime->stop_health_checks();
   if (runtime->app) {
     runtime->app->stop();
@@ -1057,6 +1251,7 @@ void ProxyManager::stop_all() {
     runtimes = runtimes_;
   }
   for (const auto& runtime : runtimes) {
+    runtime->stop_http_workers();
     runtime->stop_health_checks();
     if (runtime->app) {
       runtime->app->stop();

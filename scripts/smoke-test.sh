@@ -18,6 +18,8 @@ MULTI_PORT="${13:-18798}"
 DEAD_PORT="${14:-18799}"
 WS_PROXY_PORT="${15:-18800}"
 WS_ROUTE_PORT="${16:-18801}"
+ASYNC_PROXY_PORT="${17:-18802}"
+ERROR_PROXY_PORT="${18:-18803}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -585,7 +587,8 @@ PY
 
 BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
 PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" WS_PORT="${WS_PORT}" WS_PROXY_PORT="${WS_PROXY_PORT}" \
-WS_ROUTE_PORT="${WS_ROUTE_PORT}" \
+WS_ROUTE_PORT="${WS_ROUTE_PORT}" ASYNC_PROXY_PORT="${ASYNC_PROXY_PORT}" \
+ERROR_PROXY_PORT="${ERROR_PROXY_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -682,6 +685,32 @@ class ResumeHandler(http.server.BaseHTTPRequestHandler):
 resume_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ResumeHandler)
 resume_port = resume_server.server_address[1]
 threading.Thread(target=resume_server.serve_forever, daemon=True).start()
+
+
+# Slow origin for the proxy async test. ThreadingHTTPServer keeps the slow and
+# fast requests in flight at the same time.
+class SlowProxyHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        if self.path.startswith("/slow"):
+            time.sleep(2.0)
+            body = b"slow-ok"
+        else:
+            body = b"fast-ok"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+slow_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), SlowProxyHandler)
+slow_proxy_port = slow_server.server_address[1]
+threading.Thread(target=slow_server.serve_forever, daemon=True).start()
 
 
 def wait_listener(listener_id, state="listening", timeout=5):
@@ -1391,6 +1420,92 @@ check(dead_entry.get("checked") is True and dead_entry.get("healthy") is False,
       f"dead upstream was not marked unhealthy: {dead_entry}")
 check(live_entry.get("checked") is True and live_entry.get("healthy") is True,
       f"live upstream was not marked healthy: {live_entry}")
+
+# Proxy upstream I/O runs on worker threads, so a slow request must not block a
+# second request on the same proxy instance.
+status, created = call("POST", "/api/proxies", {
+    "name": "smoke-async-proxy",
+    "listenHost": "127.0.0.1",
+    "listenPort": int(os.environ["ASYNC_PROXY_PORT"]),
+    "target": f"http://127.0.0.1:{slow_proxy_port}",
+    "start": True,
+    "rules": [],
+})
+async_proxy = next((item for item in created.get("proxies", [])
+                    if item.get("name") == "smoke-async-proxy"), {})
+check(status == 200 and created.get("ok") is True and bool(async_proxy.get("id")),
+      f"async proxy creation failed: {created}")
+if async_proxy.get("id"):
+    base_async = f"http://127.0.0.1:{os.environ['ASYNC_PROXY_PORT']}"
+    ready = False
+    for _ in range(50):
+        try:
+            with urllib.request.urlopen(base_async + "/fast", timeout=1) as response:
+                ready = response.read() == b"fast-ok"
+            if ready:
+                break
+        except Exception:
+            time.sleep(0.1)
+    check(ready, "async proxy did not become reachable")
+    if ready:
+        slow_result = {}
+
+        def run_slow():
+            try:
+                with urllib.request.urlopen(base_async + "/slow", timeout=10) as response:
+                    slow_result["status"] = response.status
+                    slow_result["body"] = response.read()
+            except Exception as error:
+                slow_result["error"] = str(error)
+
+        slow_thread = threading.Thread(target=run_slow)
+        slow_thread.start()
+        time.sleep(0.3)
+        started = time.time()
+        with urllib.request.urlopen(base_async + "/fast", timeout=5) as response:
+            fast_body = response.read()
+        fast_elapsed = time.time() - started
+        slow_thread.join()
+        check(fast_body == b"fast-ok", f"async proxy fast body mismatch: {fast_body}")
+        check(fast_elapsed < 1.0,
+              f"proxy loop was blocked by the slow upstream ({fast_elapsed:.2f}s)")
+        check(slow_result.get("status") == 200 and slow_result.get("body") == b"slow-ok",
+              f"async proxy slow request failed: {slow_result}")
+    status, deleted = call("DELETE", f"/api/proxies/{async_proxy['id']}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"async proxy delete failed: {deleted}")
+
+# A failed upstream returns the structured 502 from the worker completion path.
+status, created = call("POST", "/api/proxies", {
+    "name": "smoke-error-proxy",
+    "listenHost": "127.0.0.1",
+    "listenPort": int(os.environ["ERROR_PROXY_PORT"]),
+    "target": "http://127.0.0.1:" + os.environ["DEAD_PORT"],
+    "start": True,
+    "rules": [],
+})
+error_proxy = next((item for item in created.get("proxies", [])
+                    if item.get("name") == "smoke-error-proxy"), {})
+check(status == 200 and created.get("ok") is True and bool(error_proxy.get("id")),
+      f"error proxy creation failed: {created}")
+if error_proxy.get("id"):
+    error_payload = {}
+    for _ in range(50):
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{os.environ['ERROR_PROXY_PORT']}/fail", timeout=2)
+        except urllib.error.HTTPError as error:
+            if error.code == 502:
+                error_payload = json.loads(error.read())
+                break
+        except Exception:
+            pass
+        time.sleep(0.1)
+    check(bool(error_payload.get("detail")),
+          f"failed upstream did not return a structured 502: {error_payload}")
+    status, deleted = call("DELETE", f"/api/proxies/{error_proxy['id']}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"error proxy delete failed: {deleted}")
 
 if os.environ.get("WS_PROXY_PORT") and os.environ.get("WS_PORT"):
     status, created = call("POST", "/api/proxies", {

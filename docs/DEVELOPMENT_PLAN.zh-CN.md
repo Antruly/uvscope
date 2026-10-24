@@ -515,6 +515,32 @@ smoke 内嵌 Range 服务器：首个响应 64 KiB 后断开，断言任务进�
 
 不做：跨守护进程重启的续传、自动重试调度、分片并行下载。
 
+### S10 — 代理异步上游（已实现）
+
+边界：`src/proxy_manager.cpp`、smoke、`docs/API.md`、`docs/ARCHITECTURE.md`。
+
+内容：
+
+- 每个代理实例拥有 4 个上游 worker 线程和 32 个排队上限；代理循环只做路由、请求快照与
+  响应写回；
+- 阻塞的 libuvcpp HTTP 客户端在 worker 上执行，完成后通过 `app->post` 回到代理循环；
+- 慢上游不再阻塞同一代理上的其他请求；队列满返回 `503 proxy is stopping or overloaded`；
+- 停止代理时先 join worker，再通过 app 循环屏障排空已提交的完成回调，最后停止 app；
+- 保留原有的重试、健康过滤、加权上游、日志与指标语义。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 对同一代理同时发起 2 秒慢请求和一个快请求，断言快请求在 1 秒内完成，随后两者都返回
+200；原有代理规则、指标、健康检查与 WebSocket 透传断言继续通过。
+
+不做：完全异步的 HTTP 客户端、worker 数与上游超时的配置化、跨进程隔离。
+
 ---
 
 ### 风险与回退（本迭代）

@@ -4,6 +4,18 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Reverse-proxy upstream requests now run on a per-proxy worker pool (4 threads, 32 queued
+  requests) instead of blocking the proxy's libuv loop. A slow upstream no longer prevents other
+  requests on the same proxy from being served; a full queue returns `503` with
+  `proxy is stopping or overloaded`. Stopping a proxy joins its workers and drains posted
+  completions before closing the listener. Retries, health-filtered upstream selection, logging
+  and metrics are unchanged. The smoke test sends a 2 s request and a fast request through one
+  proxy and asserts the fast one completes in under a second.
+
 ## [0.8.1] - 2026-10-24
 
 ### Added
