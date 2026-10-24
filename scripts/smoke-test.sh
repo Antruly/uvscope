@@ -1107,14 +1107,47 @@ if isolated_socks:
         check(False, f"isolated SOCKS5 tunnel failed: {error}")
     if os.name == "posix" and child_pid:
         os.kill(child_pid, signal.SIGKILL)
-        for _ in range(80):
-            time.sleep(0.1)
+        new_pid = 0
+        for _ in range(150):
             status, payload = call("GET", f"/api/socks5/servers/{isolated_socks}")
             state = payload.get("server", {})
-            if state.get("state") != "listening":
+            new_pid = state.get("pid", 0)
+            if state.get("state") == "listening" and new_pid and new_pid != child_pid:
                 break
-        check(state.get("state") in ("error", "stopped"),
-              f"killed SOCKS5 child still reports {state.get('state')}")
+            time.sleep(0.1)
+        check(new_pid and new_pid != child_pid,
+              f"supervisor did not restart the SOCKS5 child: "
+              f"old={child_pid} new={new_pid} state={state.get('state')}")
+        supervisor_entry = {}
+        for _ in range(50):
+            status, supervised = call("GET", "/api/supervisor")
+            supervisor_entry = next(
+                (item for item in supervised.get("services", [])
+                 if item.get("id") == isolated_socks), {})
+            if supervisor_entry.get("restarts", 0) >= 1:
+                break
+            time.sleep(0.1)
+        check(supervisor_entry.get("kind") == "socks5" and
+              supervisor_entry.get("desired") is True and
+              supervisor_entry.get("restarts", 0) >= 1,
+              f"supervisor did not track the SOCKS5 restart: {supervisor_entry}")
+        tunnel = socks5_connect(int(os.environ["ISOLATED_SOCKS5_PORT"]), "127.0.0.1",
+                                int(os.environ["TCP_PORT"]))
+        tunnel.sendall(b"isolated-again")
+        reply = recv_exact(tunnel, len(b"echo:isolated-again"))
+        check(reply == b"echo:isolated-again",
+              f"restarted SOCKS5 tunnel mismatch: {reply}")
+        tunnel.close()
+        restarted_pid = new_pid
+        # A manual stop clears the desired state: the watchdog must leave it down.
+        status, stopped = call("POST", f"/api/socks5/servers/{isolated_socks}/stop")
+        check(status == 200 and stopped.get("ok") is True,
+              f"isolated SOCKS5 stop failed: {stopped}")
+        time.sleep(3)
+        status, payload = call("GET", f"/api/socks5/servers/{isolated_socks}")
+        state = payload.get("server", {})
+        check(state.get("state") == "stopped",
+              f"stopped SOCKS5 was restarted by the supervisor: {state}")
         status, started = call("POST", f"/api/socks5/servers/{isolated_socks}/start")
         check(status == 200 and started.get("ok") is True,
               f"isolated SOCKS5 restart failed: {started}")
@@ -1123,18 +1156,11 @@ if isolated_socks:
             status, payload = call("GET", f"/api/socks5/servers/{isolated_socks}")
             state = payload.get("server", {})
             new_pid = state.get("pid", 0)
-            if state.get("state") == "listening" and new_pid and new_pid != child_pid:
+            if state.get("state") == "listening" and new_pid and new_pid != restarted_pid:
                 break
             time.sleep(0.1)
-        check(new_pid and new_pid != child_pid,
-              f"isolated SOCKS5 did not restart: old={child_pid} new={new_pid}")
-        tunnel = socks5_connect(int(os.environ["ISOLATED_SOCKS5_PORT"]), "127.0.0.1",
-                                int(os.environ["TCP_PORT"]))
-        tunnel.sendall(b"isolated-again")
-        reply = recv_exact(tunnel, len(b"echo:isolated-again"))
-        check(reply == b"echo:isolated-again",
-              f"restarted SOCKS5 tunnel mismatch: {reply}")
-        tunnel.close()
+        check(new_pid and new_pid != restarted_pid,
+              f"isolated SOCKS5 did not restart: old={restarted_pid} new={new_pid}")
         status, deleted = call("DELETE", f"/api/socks5/servers/{isolated_socks}")
         check(status == 200 and deleted.get("ok") is True,
               f"isolated SOCKS5 delete failed: {deleted}")
@@ -1207,17 +1233,42 @@ if isolated_listener:
         check("recv" in types and "send" in types,
               f"isolated listener session events missing: {types}")
     client.close()
-    new_pid = 0
+    restarted_pid = 0
     if os.name == "posix" and child_pid:
         os.kill(child_pid, signal.SIGKILL)
-        for _ in range(80):
-            time.sleep(0.1)
+        for _ in range(150):
             status, payload = call("GET", f"/api/transport/listeners/{isolated_listener}")
             state = payload.get("listener", {})
-            if state.get("state") != "listening":
+            restarted_pid = state.get("pid", 0)
+            if state.get("state") == "listening" and restarted_pid and restarted_pid != child_pid:
                 break
-        check(state.get("state") in ("error", "stopped"),
-              f"killed listener child still reports {state.get('state')}")
+            time.sleep(0.1)
+        check(restarted_pid and restarted_pid != child_pid,
+              f"supervisor did not restart the listener child: "
+              f"old={child_pid} new={restarted_pid} state={state.get('state')}")
+        supervisor_entry = {}
+        for _ in range(50):
+            status, supervised = call("GET", "/api/supervisor")
+            supervisor_entry = next(
+                (item for item in supervised.get("services", [])
+                 if item.get("id") == isolated_listener), {})
+            if supervisor_entry.get("restarts", 0) >= 1:
+                break
+            time.sleep(0.1)
+        check(supervisor_entry.get("kind") == "listener" and
+              supervisor_entry.get("desired") is True and
+              supervisor_entry.get("restarts", 0) >= 1,
+              f"supervisor did not track the listener restart: {supervisor_entry}")
+        # A manual stop clears the desired state: the watchdog must leave it down.
+        status, stopped = call(
+            "POST", f"/api/transport/listeners/{isolated_listener}/stop")
+        check(status == 200 and stopped.get("ok") is True,
+              f"isolated listener stop failed: {stopped}")
+        time.sleep(3)
+        status, payload = call("GET", f"/api/transport/listeners/{isolated_listener}")
+        state = payload.get("listener", {})
+        check(state.get("state") == "stopped",
+              f"stopped listener was restarted by the supervisor: {state}")
         status, started = call(
             "POST", f"/api/transport/listeners/{isolated_listener}/start")
         check(status == 200 and started.get("ok") is True,
@@ -1226,17 +1277,18 @@ if isolated_listener:
             status, payload = call("GET", f"/api/transport/listeners/{isolated_listener}")
             state = payload.get("listener", {})
             new_pid = state.get("pid", 0)
-            if state.get("state") == "listening" and new_pid and new_pid != child_pid:
+            if state.get("state") == "listening" and new_pid and new_pid != restarted_pid:
                 break
             time.sleep(0.1)
-        check(new_pid and new_pid != child_pid,
-              f"isolated listener did not restart: old={child_pid} new={new_pid}")
+        check(new_pid and new_pid != restarted_pid,
+              f"isolated listener did not restart: old={restarted_pid} new={new_pid}")
+        restarted_pid = new_pid
     status, deleted = call(
         "DELETE", f"/api/transport/listeners/{isolated_listener}")
     check(status == 200 and deleted.get("ok") is True,
           f"isolated listener delete failed: {deleted}")
     if os.name == "posix":
-        target_pid = new_pid if new_pid else child_pid
+        target_pid = restarted_pid if restarted_pid else child_pid
         reaped = False
         for _ in range(80):
             try:
@@ -1400,6 +1452,126 @@ if terminal_id:
     check("term-smoke" in terminal_text, f"terminal output missing: {terminal_text!r}")
     status, deleted = call("DELETE", f"/api/terminal/sessions/{terminal_id}")
     check(status in (200, 400), f"terminal close failed: {deleted}")
+
+# An isolated terminal keeps the PTY in a child process while the parent still
+# serves the session list, input, scrollback and exit status.
+status, created = call("POST", "/api/terminal/sessions",
+                       {"name": "smoke-isolated", "cols": 80, "rows": 24,
+                        "isolated": True})
+isolated_session = created.get("session", {})
+check(status == 200 and isolated_session.get("state") == "running",
+      f"isolated terminal create failed: {created}")
+check(isolated_session.get("isolated") is True,
+      f"isolated terminal did not report isolation: {created}")
+check(isolated_session.get("pid", 0) > 0,
+      f"isolated terminal has no child pid: {created}")
+isolated_id = isolated_session.get("id", "")
+if isolated_id:
+    status, sent = call("POST", f"/api/terminal/sessions/{isolated_id}/input",
+                        {"data": "printf 'term-isolated\\n'; exit\n",
+                         "encoding": "text"})
+    check(status == 200 and sent.get("ok") is True,
+          f"isolated terminal input failed: {sent}")
+    isolated_state = ""
+    isolated_text = ""
+    isolated_output = {}
+    for _ in range(80):
+        status, isolated_output = call(
+            "GET", f"/api/terminal/sessions/{isolated_id}/output?after=0&limit=200")
+        chunks = isolated_output.get("chunks", [])
+        isolated_text = b"".join(base64.b64decode(item["data"])
+                                 for item in chunks).decode(errors="replace")
+        isolated_state = isolated_output.get("session", {}).get("state", "")
+        if isolated_state == "exited" and "term-isolated" in isolated_text:
+            break
+        time.sleep(0.1)
+    check(isolated_state == "exited",
+          f"isolated terminal did not exit: {isolated_state}")
+    check(isolated_output.get("session", {}).get("exitCode") == 0,
+          f"isolated terminal exit code: "
+          f"{isolated_output.get('session', {}).get('exitCode')}")
+    check("term-isolated" in isolated_text,
+          f"isolated terminal output missing: {isolated_text!r}")
+    # A normal shell exit must not look like a crash: the child process stays
+    # alive so the scrollback and exit status remain readable.
+    status, current = call("GET", f"/api/terminal/sessions/{isolated_id}")
+    exited_pid = current.get("session", {}).get("pid", 0)
+    check(exited_pid == isolated_session.get("pid") and
+          current.get("session", {}).get("state") == "exited",
+          f"normal shell exit changed the terminal state: {current}")
+    time.sleep(3)
+    status, current = call("GET", f"/api/terminal/sessions/{isolated_id}")
+    check(current.get("session", {}).get("pid") == exited_pid,
+          f"a normal shell exit triggered a supervisor restart: {current}")
+    revived_pid = 0
+    if os.name == "posix" and exited_pid:
+        os.kill(exited_pid, signal.SIGKILL)
+        for _ in range(150):
+            status, current = call("GET", f"/api/terminal/sessions/{isolated_id}")
+            session_state = current.get("session", {})
+            revived_pid = session_state.get("pid", 0)
+            if (session_state.get("state") == "running" and revived_pid and
+                    revived_pid != exited_pid):
+                break
+            time.sleep(0.1)
+        check(revived_pid and revived_pid != exited_pid,
+              f"supervisor did not restart the terminal child: "
+              f"old={exited_pid} new={revived_pid}")
+        supervisor_entry = {}
+        for _ in range(50):
+            status, supervised = call("GET", "/api/supervisor")
+            supervisor_entry = next(
+                (item for item in supervised.get("services", [])
+                 if item.get("id") == isolated_id), {})
+            if supervisor_entry.get("restarts", 0) >= 1:
+                break
+            time.sleep(0.1)
+        check(supervisor_entry.get("kind") == "terminal" and
+              supervisor_entry.get("desired") is True and
+              supervisor_entry.get("restarts", 0) >= 1,
+              f"supervisor did not track the terminal restart: {supervisor_entry}")
+        status, sent = call("POST", f"/api/terminal/sessions/{isolated_id}/input",
+                            {"data": "printf 'term-revived\\n'; exit\n",
+                             "encoding": "text"})
+        check(status == 200 and sent.get("ok") is True,
+              f"revived terminal input failed: {sent}")
+        revived_state = ""
+        revived_text = ""
+        revived_output = {}
+        for _ in range(80):
+            status, revived_output = call(
+                "GET", f"/api/terminal/sessions/{isolated_id}/output?after=0&limit=200")
+            revived_text = b"".join(base64.b64decode(item["data"])
+                                    for item in revived_output.get("chunks", [])).decode(
+                                        errors="replace")
+            revived_state = revived_output.get("session", {}).get("state", "")
+            if revived_state == "exited" and "term-revived" in revived_text:
+                break
+            time.sleep(0.1)
+        check(revived_state == "exited" and "term-revived" in revived_text,
+              f"revived terminal did not run a new shell: "
+              f"state={revived_state} text={revived_text!r}")
+        revived_pid = revived_output.get("session", {}).get("pid", revived_pid)
+    status, deleted = call("DELETE", f"/api/terminal/sessions/{isolated_id}")
+    check(status == 200, f"isolated terminal close failed: {deleted}")
+    time.sleep(2.5)
+    status, listed = call("GET", "/api/terminal/sessions")
+    check(all(item.get("id") != isolated_id for item in listed.get("sessions", [])),
+          "deleted isolated terminal still appears in the session list")
+    status, gone = call("GET", f"/api/terminal/sessions/{isolated_id}")
+    check(status == 404, f"deleted isolated terminal was resurrected: {status} {gone}")
+    if os.name == "posix" and revived_pid:
+        reaped = False
+        for _ in range(80):
+            try:
+                os.kill(revived_pid, 0)
+            except ProcessLookupError:
+                reaped = True
+                break
+            except PermissionError:
+                pass
+            time.sleep(0.1)
+        check(reaped, f"isolated terminal child was not reaped: {revived_pid}")
 status, settings = call("PUT", "/api/settings", {"modules": {"terminal": False}})
 check(status == 200 and settings.get("ok") is True,
       f"could not disable the terminal module: {settings}")

@@ -51,6 +51,9 @@ class Supervisor {
                         std::function<bool(std::string*)> stop,
                         std::function<bool()> running);
   void unregister_service(const std::string& id);
+  // Remove every service of one kind (used when a module or a session class
+  // is torn down as a group). Returns the number removed.
+  std::size_t unregister_kind(const std::string& kind);
   void set_desired(const std::string& id, bool desired);
   // Stop then start on the daemon loop. Returns false when the service is unknown.
   bool restart(const std::string& id);

@@ -51,7 +51,7 @@ const showAll = ref(false)
 const loading = ref(true)
 const createOpen = ref(false)
 const creating = ref(false)
-const form = ref({ name: '', shell: '', cwd: '' })
+const form = ref({ name: '', shell: '', cwd: '', isolated: false })
 const wsStates = ref<Record<string, string>>({})
 const quickCommands = ref<Array<{
   id: number
@@ -219,6 +219,7 @@ async function createTerminal() {
         cwd: form.value.cwd.trim(),
         cols: 100,
         rows: 30,
+        isolated: form.value.isolated,
       },
     )
     if (!response.ok || !response.session) {
@@ -226,7 +227,7 @@ async function createTerminal() {
       return
     }
     createOpen.value = false
-    form.value = { name: '', shell: '', cwd: '' }
+    form.value = { name: '', shell: '', cwd: '', isolated: false }
     sessions.value = [response.session, ...sessions.value]
     await openTerminal(response.session.id)
     saveOpen()
@@ -550,7 +551,7 @@ function consumePendingCommand() {
 }
 
 function openCreate() {
-  form.value = { name: '', shell: '', cwd: '' }
+  form.value = { name: '', shell: '', cwd: '', isolated: false }
   createOpen.value = true
 }
 
@@ -743,6 +744,7 @@ watch(activeId, (id) => {
               <label class="field"><span>{{ t('terminal.create.name') }}</span><input v-model="form.name" :placeholder="t('terminal.create.namePlaceholder')" autofocus /></label>
               <label class="field"><span>{{ t('terminal.create.shell') }}</span><input v-model="form.shell" class="mono" :placeholder="t('terminal.create.shellPlaceholder')" /></label>
               <label class="field"><span>{{ t('terminal.create.cwd') }}</span><input v-model="form.cwd" class="mono" :placeholder="t('terminal.create.cwdPlaceholder')" /></label>
+              <label class="listener-check"><input v-model="form.isolated" type="checkbox" />{{ t('terminal.create.isolated') }}</label>
             </div>
             <footer class="modal-foot">
               <button type="button" class="button" @click="createOpen = false">{{ t('terminal.create.cancel') }}</button>

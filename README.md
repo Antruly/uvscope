@@ -67,6 +67,8 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Optional per-proxy child-process isolation with supervisor restart | ✅ New in 0.10.0 |
 | Optional SOCKS5 server child-process isolation | ✅ New |
 | Optional TCP/UDP listener child-process isolation | ✅ New |
+| Optional virtual-terminal child-process isolation | ✅ New |
+| Unified desired-state supervision for proxies, listeners, SOCKS5 and terminals | ✅ New |
 | Weighted upstreams with failover and retries | ✅ New in 0.4.4 |
 | Per-proxy QPS, p50/p95 latency and status counts | ✅ New in 0.4.5 |
 | Active upstream health checks (TCP/TLS, 10 s) | ✅ New in 0.4.5 |

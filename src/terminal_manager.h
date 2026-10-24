@@ -14,6 +14,7 @@ struct TerminalConfig {
   std::string cwd;
   int cols = 100;
   int rows = 30;
+  bool isolated = false;
 };
 
 // Server-side PTY sessions. Each session owns a real shell process on a
@@ -21,7 +22,7 @@ struct TerminalConfig {
 // live for the lifetime of the daemon (not across restarts).
 class TerminalManager {
  public:
-  TerminalManager();
+  explicit TerminalManager(std::string executable_path = std::string());
   ~TerminalManager();
 
   TerminalManager(const TerminalManager&) = delete;
@@ -42,6 +43,15 @@ class TerminalManager {
   // so full-screen programs repaint without changing the PTY size.
   bool redraw(const std::string& id, std::string* error);
   nlohmann::json output(const std::string& id, std::uint64_t after, int limit) const;
+  // Liveness for the desired-state supervisor. An isolated session counts as
+  // running while its child process lives, even after the shell exits, so a
+  // normal `exit` is not treated as a crash.
+  bool session_running(const std::string& id) const;
+  // Stop only the isolated child, keeping the session (used by supervisor
+  // restart/stop-runtime).
+  bool stop_runtime(const std::string& id, std::string* error);
+  // Spawn a replacement child for a crashed or stopped isolated session.
+  bool restart(const std::string& id, std::string* error);
   void close_all();
 
  private:

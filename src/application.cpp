@@ -189,7 +189,14 @@ void terminal_ws_tick(uv_timer_t* timer) {
   }
   const auto session = result["session"];
   const std::string state = session.value("state", std::string());
+  const bool isolated = session.value("isolated", false);
   const std::uint64_t next_seq = result.value("nextSeq", std::uint64_t{0});
+  if (att->exit_sent && state == "running") {
+    // A supervised isolated child came back with a fresh shell. The output
+    // poll already reset the client because its sequence numbers restarted.
+    att->exit_sent = false;
+    uv_timer_start(timer, terminal_ws_tick, 25, 25);
+  }
   if (!att->exit_sent && (state == "exited" || state == "error") &&
       att->last_seq >= next_seq) {
     nlohmann::json message = {{"type", "exit"},
@@ -198,7 +205,12 @@ void terminal_ws_tick(uv_timer_t* timer) {
     const std::string text = message.dump();
     att->conn->send_text(text.data(), text.size());
     att->exit_sent = true;
-    uv_timer_stop(timer);
+    if (isolated) {
+      // Keep watching at a low rate so a supervisor restart can reattach.
+      uv_timer_start(timer, terminal_ws_tick, 500, 500);
+    } else {
+      uv_timer_stop(timer);
+    }
   }
 }
 
@@ -590,6 +602,9 @@ Application::Application(AppOptions options)
 
 Application::~Application() {
   if (update_thread_.joinable()) update_thread_.join();
+  // The watchdog reads the managers through callbacks; stop it before any of
+  // them are reset.
+  if (supervisor_) supervisor_->stop();
 
   terminal_.reset();
   socks5_.reset();
@@ -606,6 +621,41 @@ void Application::supervise_proxy(const ProxyConfig& config, bool desired) {
       [this, id](std::string* error) { return proxies_->start(id, error); },
       [this, id](std::string* error) { return proxies_->stop(id, error); },
       [this, id] { return proxies_->is_running(id); });
+}
+
+void Application::supervise_listener(const ListenerConfig& config, bool desired) {
+  if (!supervisor_ || !transport_) return;
+  const std::string id = config.id;
+  const std::string name = config.name.empty() ? id : config.name;
+  supervisor_->register_service(
+      "listener", id, name, desired,
+      [this, id](std::string* error) { return transport_->start_listener(id, error); },
+      [this, id](std::string* error) { return transport_->stop_listener(id, error); },
+      [this, id] { return transport_->listener_running(id); });
+}
+
+void Application::supervise_socks5(const Socks5ServerConfig& config, bool desired) {
+  if (!supervisor_ || !socks5_) return;
+  const std::string id = config.id;
+  const std::string name = config.name.empty() ? id : config.name;
+  supervisor_->register_service(
+      "socks5", id, name, desired,
+      [this, id](std::string* error) { return socks5_->start_server(id, error); },
+      [this, id](std::string* error) { return socks5_->stop_server(id, error); },
+      [this, id] { return socks5_->server_running(id); });
+}
+
+void Application::supervise_terminal(const std::string& id, const std::string& name) {
+  if (!supervisor_ || !terminal_) return;
+  supervisor_->register_service(
+      "terminal", id, name.empty() ? id : name, true,
+      [this, id](std::string* error) { return terminal_->restart(id, error); },
+      [this, id](std::string* error) { return terminal_->stop_runtime(id, error); },
+      [this, id] { return terminal_->session_running(id); });
+}
+
+void Application::unsupervise_terminals() {
+  if (supervisor_) supervisor_->unregister_kind("terminal");
 }
 
 bool Application::initialize() {
@@ -628,6 +678,7 @@ bool Application::initialize() {
   } else {
     for (const auto& listener : store_.listeners()) {
       if (!transport_->add_listener(listener, nullptr)) continue;
+      supervise_listener(listener, listener.auto_start);
       if (listener.auto_start) transport_->start_listener(listener.id, nullptr);
     }
   }
@@ -637,13 +688,14 @@ bool Application::initialize() {
   socks5_.reset(new Socks5Manager(options_.self_path));
   for (const auto& server : store_.socks5_servers()) {
     if (!socks5_->add_server(server, nullptr)) continue;
+    supervise_socks5(server, server.auto_start);
     if (server.auto_start) socks5_->start_server(server.id, nullptr);
   }
   certificates_.reset(new CertificateManager(options_.data_dir / "certs"));
   downloads_.reset(new DownloadManager(options_.data_dir));
   ws_.reset(new WsManager());
   quic_.reset(new QuicManager());
-  terminal_.reset(new TerminalManager());
+  terminal_.reset(new TerminalManager(options_.self_path));
   if (!terminal_->available()) {
     std::fprintf(stderr, "uvscope: terminal sessions unavailable: %s\n",
                  terminal_->start_error().c_str());
@@ -1556,7 +1608,8 @@ void Application::register_debug_routes() {
       send_error(resp, 500, error, "persist_failed");
       return;
     }
-    if (bool_field(*body, "start", true)) {
+    const bool started = bool_field(*body, "start", true);
+    if (started) {
       if (!transport_->start_listener(config.id, &error)) {
         transport_->remove_listener(config.id, nullptr);
         store_.delete_listener(config.id, nullptr);
@@ -1564,6 +1617,7 @@ void Application::register_debug_routes() {
         return;
       }
     }
+    supervise_listener(config, started);
     send_json(resp, 200, {{"ok", true}, {"listener", config.id}});
   });
 
@@ -1578,6 +1632,7 @@ void Application::register_debug_routes() {
       send_error(resp, 400, error.empty() ? "listener not found" : error, "listener_failed");
       return;
     }
+    if (supervisor_) supervisor_->set_desired(*id, true);
     send_json(resp, 200, {{"ok", true}});
   });
 
@@ -1592,6 +1647,8 @@ void Application::register_debug_routes() {
       send_error(resp, 400, error.empty() ? "listener not found" : error, "listener_failed");
       return;
     }
+    // Clear the desired state first so the watchdog does not start it again.
+    if (supervisor_) supervisor_->set_desired(*id, false);
     send_json(resp, 200, {{"ok", true}});
   });
 
@@ -1601,6 +1658,9 @@ void Application::register_debug_routes() {
     const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
     if (!principal) return;
     const std::string* id = req.param("id");
+    // Unregister first: otherwise the watchdog can restart the runtime between
+    // remove and unregister.
+    if (id && supervisor_) supervisor_->unregister_service(*id);
     if (!id || !transport_ || !transport_->remove_listener(*id, nullptr)) {
       send_error(resp, 404, "listener not found", "not_found");
       return;
@@ -1933,7 +1993,8 @@ void Application::register_socks5_routes() {
       send_error(resp, 500, error, "persist_failed");
       return;
     }
-    if (bool_field(*body, "start", true)) {
+    const bool started = bool_field(*body, "start", true);
+    if (started) {
       if (!socks5_->start_server(config.id, &error)) {
         socks5_->remove_server(config.id, nullptr);
         store_.delete_socks5_server(config.id, nullptr);
@@ -1941,6 +2002,7 @@ void Application::register_socks5_routes() {
         return;
       }
     }
+    supervise_socks5(config, started);
     send_json(resp, 200, {{"ok", true}, {"server", config.id}});
   });
 
@@ -1975,6 +2037,7 @@ void Application::register_socks5_routes() {
                  "socks5_server_failed");
       return;
     }
+    if (supervisor_) supervisor_->set_desired(*id, true);
     send_json(resp, 200, {{"ok", true}});
   });
 
@@ -1990,6 +2053,7 @@ void Application::register_socks5_routes() {
                  "socks5_server_failed");
       return;
     }
+    if (supervisor_) supervisor_->set_desired(*id, false);
     send_json(resp, 200, {{"ok", true}});
   });
 
@@ -1999,6 +2063,8 @@ void Application::register_socks5_routes() {
     const auto principal = auth_.require_module(req, resp, "tcpudp", "debug");
     if (!principal) return;
     const std::string* id = req.param("id");
+    // Unregister first so the watchdog cannot restart a deleted server.
+    if (id && supervisor_) supervisor_->unregister_service(*id);
     if (!id || !socks5_ || !socks5_->remove_server(*id, nullptr)) {
       send_error(resp, 404, "SOCKS5 server not found", "not_found");
       return;
@@ -2094,12 +2160,18 @@ void Application::register_terminal_routes() {
     config.cwd = string_field(*body, "cwd");
     config.cols = int_field(*body, "cols", 100);
     config.rows = int_field(*body, "rows", 30);
+    config.isolated = bool_field(*body, "isolated", false);
     std::string error;
     auto result = terminal_->create(principal->user.id, principal->user.username, config, &error);
     if (!result.is_object() || !result.value("ok", false)) {
       send_error(resp, 400, error.empty() ? "could not create terminal" : error,
                  "terminal_failed");
       return;
+    }
+    const auto session = result.value("session", nlohmann::json::object());
+    if (session.value("isolated", false)) {
+      supervise_terminal(session.value("id", std::string()),
+                         session.value("name", std::string()));
     }
     send_json(resp, 200, result);
   });
@@ -2127,6 +2199,9 @@ void Application::register_terminal_routes() {
       send_error(resp, 404, "terminal not found", "not_found");
       return;
     }
+    // Unregister first: a supervised isolated terminal would otherwise be
+    // restarted by the watchdog between close and unregister.
+    if (supervisor_) supervisor_->unregister_service(*id);
     std::string error;
     if (!terminal_->close(*id, &error)) {
       send_error(resp, 400, error, "terminal_failed");
@@ -3577,6 +3652,7 @@ void Application::register_admin_routes() {
           return;
         }
         if (it.key() == "terminal" && !it.value().get<bool>() && terminal_) {
+          unsupervise_terminals();
           terminal_->close_all();
         }
       }
@@ -3693,8 +3769,33 @@ void Application::register_admin_routes() {
       return;
     }
     std::string error;
+    // Every service class is supervised now, so a reset must unregister the
+    // desired-state entries before it tears the runtimes down; otherwise the
+    // watchdog keeps resurrecting services whose config was just deleted.
+    auto unregister_kind = [this](const std::string& kind) {
+      if (supervisor_) supervisor_->unregister_kind(kind);
+    };
+    auto remove_runtimes = [this] {
+      if (transport_) {
+        const auto state = transport_->listeners();
+        for (const auto& item : state.value("listeners", nlohmann::json::array())) {
+          transport_->remove_listener(item.value("id", std::string()), nullptr);
+        }
+      }
+      if (socks5_) {
+        const auto state = socks5_->servers();
+        for (const auto& item : state.value("servers", nlohmann::json::array())) {
+          socks5_->remove_server(item.value("id", std::string()), nullptr);
+        }
+      }
+    };
     if (module == "all") {
+      unregister_kind("proxy");
+      unregister_kind("listener");
+      unregister_kind("socks5");
+      unregister_kind("terminal");
       if (terminal_) terminal_->close_all();
+      remove_runtimes();
       if (proxies_) proxies_->stop_all();
       if (!store_.reset_database(&error)) {
         send_error(resp, 500, "database reset failed: " + error, "reset_failed");
@@ -3705,8 +3806,19 @@ void Application::register_admin_routes() {
       send_json(resp, 200, {{"ok", true}, {"setupRequired", true}});
       return;
     }
-    if (module == "proxy" && proxies_) proxies_->stop_all();
-    if (module == "terminal" && terminal_) terminal_->close_all();
+    if (module == "proxy") {
+      unregister_kind("proxy");
+      if (proxies_) proxies_->stop_all();
+    }
+    if (module == "tcpudp") {
+      unregister_kind("listener");
+      unregister_kind("socks5");
+      remove_runtimes();
+    }
+    if (module == "terminal") {
+      unregister_kind("terminal");
+      if (terminal_) terminal_->close_all();
+    }
     if (!store_.reset_module(module, &error)) {
       send_error(resp, 500, error, "reset_failed");
       return;

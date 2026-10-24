@@ -70,7 +70,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] cURL, HAR, OpenAPI and Postman import/export (HAR export is one entry)
 - [x] Audit log and active session management
 - [x] Backup download and staged restore (migrations still ad hoc)
-- [~] In-process service supervisor with desired-state restarts
+- [x] Service supervisor with desired-state restarts (proxies, listeners, SOCKS5, terminals)
 - [x] Proxy upstream I/O off the proxy loop (bounded per-instance worker pool)
 - [x] Configurable upstream connect/request timeouts and worker count
 - [x] Proxy config hot reload with runtime config versioning
@@ -80,7 +80,8 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Per-proxy child isolation with supervisor restart and telemetry
 - [x] SOCKS5 server child isolation with telemetry and manual restart
 - [x] TCP/UDP listener child isolation with session send/close over IPC
-- [ ] Process isolation + IPC for long-lived services
+- [x] Virtual-terminal PTY child isolation with streamed output over IPC
+- [x] Process isolation + IPC + supervision for all long-lived services
 
 ## 1.0 — stable
 

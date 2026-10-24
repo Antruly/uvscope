@@ -48,7 +48,13 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
   `isolated: true` is spawned as a child: `ProxyChildService` owns its IPC loop thread, caches
   telemetry snapshots and bounded logs, exposes the child PID, and reaps the process on stop.
   The supervisor restarts a crashed child; deleting an isolated proxy unregisters it before
-  stopping. Other long-lived services (listeners, SOCKS5, terminal) remain in-process.
+  stopping.
+- **Service supervisor**: `Supervisor` (`src/supervisor.*`) is a desired-state watchdog for every
+  long-lived runtime: proxies, TCP/UDP listeners, SOCKS5 servers and isolated terminal sessions.
+  A 2 s poll reads each manager's thread-safe `running()` probe; a desired service that is down is
+  restarted with exponential backoff (2–60 s) on the daemon loop, and restarts are counted in
+  `/api/supervisor`. Stop routes clear `desired`, delete routes unregister before teardown, and
+  the supervisor is stopped before any manager is destroyed.
 - **Short-lived work**: HTTP/TCP/UDP/TLS probes run on the libuv thread pool through `uvcpp_work`; the
   response is written back on the event-loop thread.
 - **Reverse proxy runtimes**: each running proxy is a `uvcpp_web_app` with its own event loop and
@@ -75,14 +81,14 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
   queues writes. Listener configs live in SQLite; runtime state and bounded event logs live in the
   manager. A listener marked `isolated: true` runs in a `--listener-child` process; the parent
   `ListenerChildService` caches snapshots/events/sessions, exposes the PID, and proxies session
-  send / close / event reads over IPC. A crashed child is reported as `error` and can be started
-  again, but there is no listener supervisor yet.
+  send / close / event reads over IPC. A crashed child is restarted by the service supervisor
+  with a new PID; a manual stop clears the desired state.
 - **SOCKS5 servers**: each running server is a `uvcpp_socks5_server` with its own loop and thread.
   Commands are marshaled through `uvcpp_async`; snapshots and bounded logs are mutex-protected.
   A server marked `isolated: true` instead runs in a `--socks5-child` process; the parent
   `Socks5ChildService` caches the snapshot, events and sessions from a 500 ms push, exposes the
-  PID, and stops/reaps the child on stop or delete. A crashed child is reported as `error` and
-  can be started again (there is no SOCKS5 supervisor yet).
+  PID, and stops/reaps the child on stop or delete. A crashed child is restarted by the service
+  supervisor with a new PID; a manual stop clears the desired state.
 - **Static assets**: served by the same `uvcpp_web_app`; SPA fallback is enabled so deep links work.
 
 The roadmap moves persistent proxy/transport services into explicit child processes with a
@@ -203,6 +209,14 @@ proxies(id PK, name, listen_host, listen_port, target, auto_start, tls, cert_pat
   loaded dynamically because MinGW headers do not always declare ConPTY. Console output/input
   pipes are wrapped as libuv pipes; the default shell is `powershell.exe`, and resize goes through
   `ResizePseudoConsole`.
+- A session marked `isolated: true` runs its PTY in a `--terminal-child` process instead. The
+  parent `TerminalChildService` spawns it, sends start/input/resize/redraw/close over IPC and
+  caches a 40 ms telemetry stream of sequenced output chunks plus the child session snapshot.
+  The parent keeps the id/owner/name and proxies the read-only output and state; input, resize
+  and redraw travel to the child. Deleting the session stops and reaps the child. While the
+  session exists the supervisor watches the child process; a crash respawns the shell with the
+  same id and a new PID (WebSocket clients get a `reset` because sequence numbers restart), while
+  a normal shell exit keeps the child alive for scrollback/exit-status reads.
 - The module is off by default; enabling it grants shell access on the daemon host to admin and
   operator roles.
 
@@ -315,7 +329,10 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   weighted upstreams with bounded retries, active health checks and a per-upstream circuit
   breaker.
 - The `history` table stores summaries, not full bodies.
-- Reverse proxies can run in supervised child processes (`isolated: true`); SOCKS5 servers and
-  TCP/UDP listeners can run in child processes without a supervisor. The virtual terminal still
-  runs in the daemon process; moving it into children is the remaining process-isolation work.
-  Isolated telemetry is cached from a 500 ms push, so the API can lag the child slightly.
+- Reverse proxies, SOCKS5 servers, TCP/UDP listeners and virtual terminals can all run in child
+  processes (`isolated: true`) and share one desired-state supervisor: a crashed child is
+  restarted with a new PID, while an explicit stop clears the desired state. Isolated telemetry is
+  cached from a 500 ms push (40 ms for terminal output), so the API can lag the child slightly.
+  A restarted terminal starts a fresh shell and drops the previous scrollback; WebSocket clients
+  receive a `reset` frame. Liveness for isolated terminals tracks the child process, so a normal
+  shell `exit` is not treated as a crash.
