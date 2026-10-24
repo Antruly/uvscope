@@ -54,6 +54,8 @@ const en: Record<string, string> = {
   'proxy.editor.connectTimeout': 'Connect timeout (ms)',
   'proxy.editor.requestTimeout': 'Request timeout (ms)',
   'proxy.editor.workers': 'Upstream workers',
+  'proxy.editor.breakerThreshold': 'Breaker failures (0 = off)',
+  'proxy.editor.breakerCooldown': 'Breaker cooldown (ms)',
   'proxy.upstreams.title': 'Additional upstreams',
   'proxy.upstreams.hint':
     'Requests are distributed across all upstreams by weight. Retries fail over to another upstream; non-idempotent requests are only retried when the connection could not be established.',
@@ -174,6 +176,8 @@ const zh: Record<string, string> = {
   'proxy.editor.connectTimeout': '连接超时（ms）',
   'proxy.editor.requestTimeout': '请求超时（ms）',
   'proxy.editor.workers': '上游 worker 数',
+  'proxy.editor.breakerThreshold': '熔断失败阈值（0 = 关闭）',
+  'proxy.editor.breakerCooldown': '熔断冷却（ms）',
   'proxy.upstreams.title': '附加上游',
   'proxy.upstreams.hint':
     '请求按权重分配到所有上游。失败时会重试并切换到其他上游；非幂等请求只会在连接未建立时重试。',

@@ -3100,6 +3100,8 @@ nlohmann::json Application::proxy_view() const {
                            {"connectTimeoutMs", config.connect_timeout_ms},
                            {"requestTimeoutMs", config.request_timeout_ms},
                            {"workers", config.workers},
+                           {"breakerThreshold", config.breaker_threshold},
+                           {"breakerCooldownMs", config.breaker_cooldown_ms},
                            {"configVersion", 0},
                            {"autoStart", config.auto_start},
                            {"tls", config.tls},
@@ -3210,6 +3212,23 @@ void Application::register_proxy_routes() {
                                                : (existing ? existing->workers : 4);
     if (config.workers < 1 || config.workers > 16) {
       send_error(resp, 400, "workers must be between 1 and 16", "bad_request");
+      return;
+    }
+    config.breaker_threshold =
+        body->contains("breakerThreshold")
+            ? int_field(*body, "breakerThreshold", 5)
+            : (existing ? existing->breaker_threshold : 5);
+    if (config.breaker_threshold < 0 || config.breaker_threshold > 100) {
+      send_error(resp, 400, "breakerThreshold must be between 0 and 100", "bad_request");
+      return;
+    }
+    config.breaker_cooldown_ms =
+        body->contains("breakerCooldownMs")
+            ? int_field(*body, "breakerCooldownMs", 30000)
+            : (existing ? existing->breaker_cooldown_ms : 30000);
+    if (config.breaker_cooldown_ms < 1000 || config.breaker_cooldown_ms > 300000) {
+      send_error(resp, 400, "breakerCooldownMs must be between 1000 and 300000",
+                 "bad_request");
       return;
     }
     if (config.target.empty() && !config.upstreams.empty()) {

@@ -19,6 +19,14 @@ All notable changes to uvscope are documented here. The format is based on
   Listener, TLS certificate and worker-count changes still stop and restart the runtime. The
   smoke test verifies the hot path (unchanged `startedAt`, new rule active, `hot-reloaded` log)
   and the restart path for a worker-count change.
+- Per-upstream circuit breaker. `breakerThreshold` (0–100, default 5; 0 disables) consecutive
+  transport failures or 5xx responses open an upstream circuit for `breakerCooldownMs`
+  (1000–300000, default 30000), after which one half-open probe is allowed. A successful probe
+  closes the circuit; while open the upstream is skipped. `health[].breaker` exposes
+  `open`/`failures`/`retryAfterMs`/`lastError`, open and close events are logged, and a request
+  with every upstream circuit-open returns `502` without contacting them. The breaker settings
+  are hot-reloadable and editable in the proxy editor. The smoke test drives a flaky origin
+  through open, fast-fail and recovery.
 
 ### Changed
 

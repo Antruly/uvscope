@@ -53,6 +53,11 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
   changes stop and restart the runtime. In-flight requests keep their snapshot, and existing
   WebSocket sessions keep the upstream chosen at handshake. Stopping a proxy joins its workers
   and drains posted completions before stopping the app.
+- **Upstream circuit breaker**: consecutive transport failures or 5xx responses open an
+  upstream circuit for `breakerCooldownMs`; while open it is skipped, and after the cooldown one
+  half-open probe is allowed. A successful probe closes the circuit. `health[].breaker` exposes
+  the state and open/close events are logged. WebSocket upgrades use health checks but not the
+  breaker, because their failures are reported on the relay thread.
 - **Persistent transport sessions**: `TransportManager` owns one dedicated libuv loop on its own
   thread. Web handlers enqueue commands and read mutex-protected snapshots; sessions never run on
   the control-plane loop. A 500 ms sweep enforces connect timeouts and retires closed clients.
@@ -291,7 +296,8 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   upstream selection as HTTP. Redirect rules are skipped after the 101 handshake, relayed frames
   are not logged individually, and retries do not apply to upgrades.
 - Routing supports ordered exact / prefix / regex rules plus method/host/header conditions, and
-  weighted upstreams with bounded retries and active health checks. There is no circuit breaker.
+  weighted upstreams with bounded retries, active health checks and a per-upstream circuit
+  breaker.
 - The `history` table stores summaries, not full bodies.
 - Long-lived proxies are supervised in-process (desired state, restart on runtime stop); process
   isolation and IPC for the service runtimes are still missing.
