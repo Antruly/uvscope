@@ -325,6 +325,14 @@ void run_ws_upstream(std::shared_ptr<WsRelay> relay, std::string url,
   client.run(UV_RUN_NOWAIT);
 }
 
+// One upstream attempt outcome, replayed on the proxy loop to update the
+// per-upstream circuit breaker.
+struct ProxyBreakerEvent {
+  std::string url;
+  bool failure = false;
+  std::string error;
+};
+
 // A proxy request snapshot handed to a worker thread. The worker only reads
 // this data; the response object and next callback are touched on the proxy
 // loop when the result is posted back.
@@ -338,6 +346,8 @@ struct ProxyHttpJob {
   int max_attempts = 1;
   int connect_timeout_ms = 15000;
   int request_timeout_ms = 30000;
+  int breaker_threshold = 5;
+  int breaker_cooldown_ms = 30000;
   std::string path;
   std::string query;
   bool rewritten = false;
@@ -360,6 +370,7 @@ struct ProxyHttpResult {
   int attempts = 0;
   std::string used_url;
   long long latency_ms = 0;
+  std::vector<ProxyBreakerEvent> breaker_events;
 };
 
 // Blocking upstream request loop. It runs on a proxy worker thread, never on
@@ -418,6 +429,7 @@ ProxyHttpResult run_proxy_job(const ProxyHttpJob& job) {
     if (connect_rc != 0) {
       rc = connect_rc;
       last_error = uv_error_string(connect_rc);
+      out.breaker_events.push_back({candidate.url, true, last_error});
       // Nothing was sent, so a retry is safe for any method.
       continue;
     }
@@ -428,12 +440,22 @@ ProxyHttpResult run_proxy_job(const ProxyHttpJob& job) {
     if (send_rc != 0) {
       rc = send_rc;
       last_error = uv_error_string(send_rc);
+      out.breaker_events.push_back({candidate.url, true, last_error});
       if (job.idempotent) continue;
       break;
     }
     response = std::move(attempt_response);
     rc = 0;
     const int status = static_cast<int>(response.status_code);
+    {
+      ProxyBreakerEvent event;
+      event.url = candidate.url;
+      if (status >= 500) {
+        event.failure = true;
+        event.error = "upstream status " + std::to_string(status);
+      }
+      out.breaker_events.push_back(std::move(event));
+    }
     if (job.idempotent && (status == 502 || status == 503 || status == 504) &&
         attempt + 1 < job.max_attempts) {
       last_error = "upstream status " + std::to_string(status);
@@ -525,8 +547,82 @@ struct ProxyManager::Runtime {
     return it->second.healthy;
   }
 
+  struct BreakerEntry {
+    int failures = 0;
+    bool open = false;
+    std::chrono::steady_clock::time_point open_until{};
+    std::string last_error;
+  };
+  mutable std::mutex breaker_mutex;
+  std::map<std::string, BreakerEntry> breakers;
+
+  bool breaker_open(const std::string& url, int threshold) const {
+    if (threshold <= 0) return false;
+    std::lock_guard<std::mutex> lock(breaker_mutex);
+    const auto it = breakers.find(url);
+    if (it == breakers.end() || !it->second.open) return false;
+    return std::chrono::steady_clock::now() < it->second.open_until;
+  }
+
+  void record_breaker(const std::vector<ProxyBreakerEvent>& events, int threshold,
+                      int cooldown_ms) {
+    if (threshold <= 0) return;
+    std::vector<std::string> messages;
+    {
+      std::lock_guard<std::mutex> lock(breaker_mutex);
+      for (const auto& event : events) {
+        BreakerEntry& entry = breakers[event.url];
+        if (!event.failure) {
+          if (entry.open || entry.failures > 0) {
+            messages.push_back("upstream circuit closed: " + event.url);
+          }
+          entry = BreakerEntry{};
+          continue;
+        }
+        ++entry.failures;
+        entry.last_error = event.error;
+        if (entry.failures >= threshold) {
+          const bool reopen = entry.open;
+          entry.open = true;
+          entry.open_until = std::chrono::steady_clock::now() +
+                             std::chrono::milliseconds(std::max(1000, cooldown_ms));
+          messages.push_back((reopen ? "upstream circuit re-opened: "
+                                     : "upstream circuit opened: ") +
+                             event.url);
+        }
+      }
+    }
+    for (const auto& message : messages) {
+      add_log({{"method", "SYSTEM"}, {"path", "/"}, {"status", 0},
+               {"message", message}, {"latencyMs", 0}});
+    }
+  }
+
   nlohmann::json health_json() const {
     const ProxyConfig cfg = config_snapshot();
+    std::map<std::string, BreakerEntry> breaker_copy;
+    {
+      std::lock_guard<std::mutex> lock(breaker_mutex);
+      breaker_copy = breakers;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    auto breaker_json = [&breaker_copy, now](const std::string& url) {
+      nlohmann::json state = {{"open", false}, {"failures", 0},
+                              {"retryAfterMs", 0}, {"lastError", ""}};
+      const auto it = breaker_copy.find(url);
+      if (it == breaker_copy.end()) return state;
+      const bool open = it->second.open && now < it->second.open_until;
+      long long retry = 0;
+      if (open) {
+        retry = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    it->second.open_until - now)
+                    .count();
+      }
+      return nlohmann::json({{"open", open},
+                             {"failures", it->second.failures},
+                             {"retryAfterMs", retry},
+                             {"lastError", it->second.last_error}});
+    };
     std::lock_guard<std::mutex> lock(health_mutex);
     nlohmann::json out = nlohmann::json::array();
     std::vector<std::string> urls;
@@ -538,13 +634,15 @@ struct ProxyManager::Runtime {
       const auto it = health.find(url);
       if (it == health.end()) {
         out.push_back({{"url", url}, {"healthy", true}, {"checked", false},
-                       {"latencyMs", 0}, {"checkedAt", ""}, {"error", ""}});
+                       {"latencyMs", 0}, {"checkedAt", ""}, {"error", ""},
+                       {"breaker", breaker_json(url)}});
       } else {
         out.push_back({{"url", url}, {"healthy", it->second.healthy},
                        {"checked", it->second.checked},
                        {"latencyMs", it->second.latency_ms},
                        {"checkedAt", it->second.checked_at},
-                       {"error", it->second.error}});
+                       {"error", it->second.error},
+                       {"breaker", breaker_json(url)}});
       }
     }
     return out;
@@ -736,6 +834,8 @@ struct ProxyManager::Runtime {
   void complete_http(const std::shared_ptr<ProxyHttpJob>& job, ProxyHttpResult result) {
     auto* resp = job->resp;
     if (resp == nullptr) return;
+    record_breaker(result.breaker_events, job->breaker_threshold,
+                   job->breaker_cooldown_ms);
     if (!result.ok) {
       errors.fetch_add(1);
       const int error_status = result.status >= 400 ? result.status : 502;
@@ -832,6 +932,16 @@ struct ProxyManager::Runtime {
                                }),
                 out.end());
     }
+    if (cfg.breaker_threshold > 0) {
+      std::vector<ProxyCandidate> available;
+      for (const auto& candidate : out) {
+        if (!breaker_open(candidate.url, cfg.breaker_threshold)) {
+          available.push_back(candidate);
+        }
+      }
+      if (available.empty()) return {};
+      out = std::move(available);
+    }
     return out;
   }
 
@@ -918,10 +1028,13 @@ struct ProxyManager::Runtime {
     std::vector<ProxyCandidate> candidates = selectable_candidates(cfg);
     if (candidates.empty()) {
       errors.fetch_add(1);
-      resp.status(502).json_str("{\"error\":\"invalid proxy target\"}");
+      const std::string message = candidate_list(cfg).empty()
+                                      ? "invalid proxy target"
+                                      : "all upstreams are circuit-open";
+      resp.status(502).json_str(nlohmann::json({{"error", message}}).dump());
       resp.end();
       add_log({{"method", req.method_name()}, {"path", req.raw_url()}, {"status", 502},
-               {"error", "invalid proxy target"}, {"latencyMs", 0}});
+               {"error", message}, {"latencyMs", 0}});
       if (next) next();
       return;
     }
@@ -979,6 +1092,8 @@ struct ProxyManager::Runtime {
     job->max_attempts = 1 + std::min(3, std::max(0, cfg.retries));
     job->connect_timeout_ms = cfg.connect_timeout_ms;
     job->request_timeout_ms = cfg.request_timeout_ms;
+    job->breaker_threshold = cfg.breaker_threshold;
+    job->breaker_cooldown_ms = cfg.breaker_cooldown_ms;
     job->path = path;
     job->query = query;
     job->rewritten = rewritten;

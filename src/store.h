@@ -140,6 +140,10 @@ struct ProxyConfig {
   int connect_timeout_ms = 15000;
   int request_timeout_ms = 30000;
   int workers = 4;
+  // 0 disables the breaker. After this many consecutive failures an upstream
+  // is skipped for breaker_cooldown_ms, then a half-open probe is allowed.
+  int breaker_threshold = 5;
+  int breaker_cooldown_ms = 30000;
   bool auto_start = false;
   bool tls = false;
   std::string cert_path;

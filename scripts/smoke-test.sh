@@ -22,6 +22,7 @@ ASYNC_PROXY_PORT="${17:-18802}"
 ERROR_PROXY_PORT="${18:-18803}"
 TIMEOUT_PROXY_PORT="${19:-18804}"
 HOT_PROXY_PORT="${20:-18805}"
+BREAKER_PROXY_PORT="${21:-18806}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -591,7 +592,7 @@ BASE="http://127.0.0.1:${PORT}" COOKIE_JAR="${COOKIE_JAR}" \
 PORT="${PORT}" DEAD_PORT="${DEAD_PORT}" WS_PORT="${WS_PORT}" WS_PROXY_PORT="${WS_PROXY_PORT}" \
 WS_ROUTE_PORT="${WS_ROUTE_PORT}" ASYNC_PROXY_PORT="${ASYNC_PROXY_PORT}" \
 ERROR_PROXY_PORT="${ERROR_PROXY_PORT}" TIMEOUT_PROXY_PORT="${TIMEOUT_PROXY_PORT}" \
-HOT_PROXY_PORT="${HOT_PROXY_PORT}" \
+HOT_PROXY_PORT="${HOT_PROXY_PORT}" BREAKER_PROXY_PORT="${BREAKER_PROXY_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -694,12 +695,21 @@ threading.Thread(target=resume_server.serve_forever, daemon=True).start()
 # fast requests in flight at the same time.
 class SlowProxyHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    flaky_count = 0
 
     def log_message(self, *args):
         pass
 
     def do_GET(self):
-        if self.path.startswith("/slow"):
+        status = 200
+        if self.path.startswith("/flaky"):
+            SlowProxyHandler.flaky_count += 1
+            if SlowProxyHandler.flaky_count <= 2:
+                status = 500
+                body = b"flaky-fail"
+            else:
+                body = b"flaky-ok"
+        elif self.path.startswith("/slow"):
             time.sleep(2.0)
             body = b"slow-ok"
         elif self.path.startswith("/echo"):
@@ -707,7 +717,7 @@ class SlowProxyHandler(http.server.BaseHTTPRequestHandler):
         else:
             body = b"fast-ok"
         try:
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -1653,6 +1663,89 @@ if hot_proxy.get("id"):
     status, deleted = call("DELETE", f"/api/proxies/{hot_proxy['id']}")
     check(status == 200 and deleted.get("ok") is True,
           f"hot proxy delete failed: {deleted}")
+
+# Circuit breaker: two 5xx responses open the circuit, the next request fails
+# fast without touching the upstream, and a half-open probe closes it.
+SlowProxyHandler.flaky_count = 0
+status, created = call("POST", "/api/proxies", {
+    "name": "smoke-breaker",
+    "listenHost": "127.0.0.1",
+    "listenPort": int(os.environ["BREAKER_PROXY_PORT"]),
+    "target": f"http://127.0.0.1:{slow_proxy_port}/flaky",
+    "workers": 1,
+    "retries": 0,
+    "breakerThreshold": 2,
+    "breakerCooldownMs": 2000,
+    "start": True,
+    "rules": [],
+})
+breaker_proxy = next((item for item in created.get("proxies", [])
+                      if item.get("name") == "smoke-breaker"), {})
+check(status == 200 and created.get("ok") is True and bool(breaker_proxy.get("id")),
+      f"breaker proxy creation failed: {created}")
+if breaker_proxy.get("id"):
+    base_breaker = f"http://127.0.0.1:{os.environ['BREAKER_PROXY_PORT']}"
+    running = False
+    for _ in range(50):
+        status, payload = call("GET", "/api/proxies")
+        entry = next((item for item in payload.get("proxies", [])
+                      if item.get("id") == breaker_proxy["id"]), {})
+        if entry.get("running"):
+            running = True
+            break
+        time.sleep(0.1)
+    check(running, "breaker proxy did not start")
+    time.sleep(0.2)
+    SlowProxyHandler.flaky_count = 0
+    codes = []
+    for _ in range(2):
+        try:
+            with urllib.request.urlopen(base_breaker + "/", timeout=5) as response:
+                codes.append(response.status)
+        except urllib.error.HTTPError as error:
+            codes.append(error.code)
+    check(codes == [500, 500], f"breaker seed requests returned {codes}")
+    check(SlowProxyHandler.flaky_count == 2,
+          f"breaker seed requests hit the upstream {SlowProxyHandler.flaky_count} times")
+    started = time.time()
+    breaker_code = 0
+    breaker_error = ""
+    try:
+        with urllib.request.urlopen(base_breaker + "/", timeout=5) as response:
+            breaker_code = response.status
+    except urllib.error.HTTPError as error:
+        breaker_code = error.code
+        breaker_error = json.loads(error.read()).get("error", "")
+    breaker_elapsed = time.time() - started
+    check(breaker_code == 502 and "circuit" in breaker_error.lower(),
+          f"open circuit did not fail fast with 502: {breaker_code} {breaker_error}")
+    check(SlowProxyHandler.flaky_count == 2,
+          "open circuit still forwarded the request upstream")
+    check(breaker_elapsed < 1.0,
+          f"open circuit was not fast ({breaker_elapsed:.2f}s)")
+    time.sleep(2.1)
+    with urllib.request.urlopen(base_breaker + "/", timeout=5) as response:
+        check(response.read() == b"flaky-ok", "half-open probe did not reach the upstream")
+    check(SlowProxyHandler.flaky_count == 3,
+          f"half-open probe count is {SlowProxyHandler.flaky_count}")
+    with urllib.request.urlopen(base_breaker + "/", timeout=5) as response:
+        check(response.read() == b"flaky-ok", "closed circuit did not serve the next request")
+    status, payload = call("GET", "/api/proxies")
+    entry = next((item for item in payload.get("proxies", [])
+                  if item.get("id") == breaker_proxy["id"]), {})
+    breaker_state = next((item.get("breaker") for item in entry.get("health", [])
+                          if "/flaky" in item.get("url", "")), {})
+    check(breaker_state.get("open") is False and breaker_state.get("failures") == 0,
+          f"breaker did not close after recovery: {breaker_state}")
+    status, logs = call("GET", f"/api/proxies/{breaker_proxy['id']}/logs?after=0")
+    messages = [item.get("message", "") for item in logs.get("logs", [])]
+    check(any("circuit opened" in message for message in messages),
+          f"breaker open log missing: {messages}")
+    check(any("circuit closed" in message for message in messages),
+          f"breaker close log missing: {messages}")
+    status, deleted = call("DELETE", f"/api/proxies/{breaker_proxy['id']}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"breaker proxy delete failed: {deleted}")
 
 if os.environ.get("WS_PROXY_PORT") and os.environ.get("WS_PORT"):
     status, created = call("POST", "/api/proxies", {

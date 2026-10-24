@@ -74,6 +74,7 @@ uvscope is developed in small, verifiable slices. The detailed plan is in
 - [x] Proxy upstream I/O off the proxy loop (bounded per-instance worker pool)
 - [x] Configurable upstream connect/request timeouts and worker count
 - [x] Proxy config hot reload with runtime config versioning
+- [x] Per-upstream circuit breaker with half-open recovery
 - [ ] Process isolation + IPC for long-lived services
 
 ## 1.0 — stable

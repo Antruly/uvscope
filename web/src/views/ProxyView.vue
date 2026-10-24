@@ -55,6 +55,8 @@ const blank = () => ({
   connectTimeoutMs: 15000,
   requestTimeoutMs: 30000,
   workers: 4,
+  breakerThreshold: 5,
+  breakerCooldownMs: 30000,
   autoStart: false,
   tls: false,
   certPath: '',
@@ -124,6 +126,8 @@ function openEdit(proxy: ProxyInfo) {
     connectTimeoutMs: proxy.connectTimeoutMs ?? 15000,
     requestTimeoutMs: proxy.requestTimeoutMs ?? 30000,
     workers: proxy.workers ?? 4,
+    breakerThreshold: proxy.breakerThreshold ?? 5,
+    breakerCooldownMs: proxy.breakerCooldownMs ?? 30000,
     autoStart: proxy.autoStart,
     tls: proxy.tls,
     certPath: proxy.certPath || '',
@@ -443,6 +447,10 @@ onBeforeUnmount(stopLogPolling)
                 <label class="field"><span>{{ t('proxy.editor.connectTimeout') }}</span><input v-model.number="form.connectTimeoutMs" type="number" min="100" max="120000" class="mono" /></label>
                 <label class="field"><span>{{ t('proxy.editor.requestTimeout') }}</span><input v-model.number="form.requestTimeoutMs" type="number" min="100" max="300000" class="mono" /></label>
                 <label class="field"><span>{{ t('proxy.editor.workers') }}</span><input v-model.number="form.workers" type="number" min="1" max="16" class="mono" /></label>
+              </div>
+              <div class="form-grid">
+                <label class="field"><span>{{ t('proxy.editor.breakerThreshold') }}</span><input v-model.number="form.breakerThreshold" type="number" min="0" max="100" class="mono" /></label>
+                <label class="field"><span>{{ t('proxy.editor.breakerCooldown') }}</span><input v-model.number="form.breakerCooldownMs" type="number" min="1000" max="300000" class="mono" /></label>
               </div>
               <div class="switch-row">
                 <label class="switch-field"><span>{{ t('proxy.editor.autoStart') }}</span><button type="button" class="switch" :class="{ on: form.autoStart }" @click="form.autoStart = !form.autoStart"><i /></button></label>

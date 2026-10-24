@@ -124,6 +124,8 @@ export interface ProxyInfo {
   connectTimeoutMs?: number
   requestTimeoutMs?: number
   workers?: number
+  breakerThreshold?: number
+  breakerCooldownMs?: number
   configVersion?: number
   autoStart: boolean
   tls: boolean
@@ -144,6 +146,12 @@ export interface ProxyInfo {
     latencyMs: number
     checkedAt: string
     error: string
+    breaker?: {
+      open: boolean
+      failures: number
+      retryAfterMs: number
+      lastError: string
+    }
   }>
   metrics?: {
     windowSeconds: number

@@ -573,6 +573,34 @@ smoke 断言规则更新后 `startedAt` 不变、`configVersion` 递增、新规
 
 不做：跨进程配置分发、WebSocket 会话迁移到新上游、监听器零停机换端口。
 
+### S12 — 上游熔断器（已实现）
+
+边界：`src/proxy_manager.cpp`、`src/store.*`、`src/application.cpp`、代理编辑器、smoke。
+
+内容：
+
+- 每个上游维护连续失败计数；传输失败或 5xx 计入，任何 <500 的响应清零；
+- 达到 `breakerThreshold`（0–100，默认 5；0 关闭）后熔断 `breakerCooldownMs`
+  （1000–300000，默认 30000）；
+- 熔断期间跳过该上游；冷却结束后允许一次半开探测，成功关闭、失败重新计时；
+- 全部上游熔断时直接返回 `502 all upstreams are circuit-open`，不触达上游；
+- `health[].breaker` 返回 `open` / `failures` / `retryAfterMs` / `lastError`，并记录
+  `circuit opened` / `circuit closed` 日志；
+- 熔断参数可热重载，代理编辑器可配置。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/smoke-test.sh ./build/uvscope
+```
+
+smoke 用前两次 500、之后 200 的 flaky 上游：两次失败后第三次请求在 1 秒内返回 502 且未触达
+上游；冷却后半开探测成功、熔断关闭，日志与 health 状态同步。
+
+不做：WebSocket 升级失败计入熔断、跨实例共享熔断状态、自适应阈值。
+
 ---
 
 ### 风险与回退（本迭代）

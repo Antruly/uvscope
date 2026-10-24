@@ -270,6 +270,8 @@ bool Store::migrate(std::string* error) {
            connect_timeout_ms INTEGER NOT NULL DEFAULT 15000,
            request_timeout_ms INTEGER NOT NULL DEFAULT 30000,
            workers INTEGER NOT NULL DEFAULT 4,
+           breaker_threshold INTEGER NOT NULL DEFAULT 5,
+           breaker_cooldown_ms INTEGER NOT NULL DEFAULT 30000,
            created_at TEXT NOT NULL,
            updated_at TEXT NOT NULL
          ))",
@@ -318,6 +320,8 @@ bool Store::migrate(std::string* error) {
   bool has_connect_timeout_column = false;
   bool has_request_timeout_column = false;
   bool has_workers_column = false;
+  bool has_breaker_threshold_column = false;
+  bool has_breaker_cooldown_column = false;
   if (const auto columns = query("PRAGMA table_info(proxies)")) {
     for (const auto& row : columns->rows()) {
       if (row["name"].to_text() == "upstreams_json") has_upstreams_column = true;
@@ -325,6 +329,8 @@ bool Store::migrate(std::string* error) {
       if (row["name"].to_text() == "connect_timeout_ms") has_connect_timeout_column = true;
       if (row["name"].to_text() == "request_timeout_ms") has_request_timeout_column = true;
       if (row["name"].to_text() == "workers") has_workers_column = true;
+      if (row["name"].to_text() == "breaker_threshold") has_breaker_threshold_column = true;
+      if (row["name"].to_text() == "breaker_cooldown_ms") has_breaker_cooldown_column = true;
     }
   }
   if (!has_upstreams_column) {
@@ -351,6 +357,18 @@ bool Store::migrate(std::string* error) {
   }
   if (!has_workers_column) {
     if (!exec("ALTER TABLE proxies ADD COLUMN workers INTEGER NOT NULL DEFAULT 4", error)) {
+      return false;
+    }
+  }
+  if (!has_breaker_threshold_column) {
+    if (!exec("ALTER TABLE proxies ADD COLUMN breaker_threshold INTEGER NOT NULL DEFAULT 5",
+              error)) {
+      return false;
+    }
+  }
+  if (!has_breaker_cooldown_column) {
+    if (!exec("ALTER TABLE proxies ADD COLUMN breaker_cooldown_ms INTEGER NOT NULL DEFAULT 30000",
+              error)) {
       return false;
     }
   }
@@ -922,6 +940,7 @@ std::vector<ProxyConfig> Store::proxies() const {
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"
                            "cert_path,key_path,rules_json,upstreams_json,retries,"
                            "connect_timeout_ms,request_timeout_ms,workers,"
+                           "breaker_threshold,breaker_cooldown_ms,"
                            "created_at,updated_at FROM proxies ORDER BY name");
   if (!table) return out;
   for (const auto& row : table->rows()) out.push_back(row_to_proxy(row));
@@ -932,6 +951,7 @@ std::optional<ProxyConfig> Store::proxy(const std::string& id) const {
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"
                            "cert_path,key_path,rules_json,upstreams_json,retries,"
                            "connect_timeout_ms,request_timeout_ms,workers,"
+                           "breaker_threshold,breaker_cooldown_ms,"
                            "created_at,updated_at FROM proxies WHERE id = ?",
                            {id});
   if (!table || table->empty()) return std::nullopt;
@@ -943,14 +963,16 @@ bool Store::save_proxy(const ProxyConfig& proxy, std::string* error) {
   return exec(
       "INSERT INTO proxies(id,name,listen_host,listen_port,target,auto_start,tls,cert_path,key_path,"
       "rules_json,upstreams_json,retries,connect_timeout_ms,request_timeout_ms,workers,"
-      "created_at,updated_at) "
-      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+      "breaker_threshold,breaker_cooldown_ms,created_at,updated_at) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
       "ON CONFLICT(id) DO UPDATE SET name=excluded.name, listen_host=excluded.listen_host, "
       "listen_port=excluded.listen_port, target=excluded.target, auto_start=excluded.auto_start, "
       "tls=excluded.tls, cert_path=excluded.cert_path, key_path=excluded.key_path, "
       "rules_json=excluded.rules_json, upstreams_json=excluded.upstreams_json, "
       "retries=excluded.retries, connect_timeout_ms=excluded.connect_timeout_ms, "
       "request_timeout_ms=excluded.request_timeout_ms, workers=excluded.workers, "
+      "breaker_threshold=excluded.breaker_threshold, "
+      "breaker_cooldown_ms=excluded.breaker_cooldown_ms, "
       "updated_at=excluded.updated_at",
       {proxy.id, proxy.name, proxy.listen_host, proxy.listen_port, proxy.target,
        proxy.auto_start ? 1 : 0, proxy.tls ? 1 : 0, proxy.cert_path, proxy.key_path,
@@ -960,6 +982,8 @@ bool Store::save_proxy(const ProxyConfig& proxy, std::string* error) {
        std::max(100, std::min(proxy.connect_timeout_ms, 120000)),
        std::max(100, std::min(proxy.request_timeout_ms, 300000)),
        std::max(1, std::min(proxy.workers, 16)),
+       std::max(0, std::min(proxy.breaker_threshold, 100)),
+       std::max(1000, std::min(proxy.breaker_cooldown_ms, 300000)),
        proxy.created_at.empty() ? now : proxy.created_at, now},
       error);
 }
@@ -1278,6 +1302,15 @@ ProxyConfig Store::row_to_proxy(const uvcpp::uvcpp_db_row& row) {
   p.workers = row.has("workers")
                   ? std::max(1, std::min(16, static_cast<int>(row["workers"].to_int64())))
                   : 4;
+  p.breaker_threshold =
+      row.has("breaker_threshold")
+          ? std::max(0, std::min(100, static_cast<int>(row["breaker_threshold"].to_int64())))
+          : 5;
+  p.breaker_cooldown_ms =
+      row.has("breaker_cooldown_ms")
+          ? std::max(1000, std::min(300000,
+                                    static_cast<int>(row["breaker_cooldown_ms"].to_int64())))
+          : 30000;
   p.created_at = row["created_at"].to_text();
   p.updated_at = row["updated_at"].to_text();
   return p;

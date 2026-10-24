@@ -381,12 +381,17 @@ Per-proxy tuning fields are stored in SQLite and applied when the proxy starts:
 - `connectTimeoutMs`: 100–120000, default 15000.
 - `requestTimeoutMs`: 100–300000, default 30000 (per upstream attempt).
 - `workers`: 1–16, default 4.
+- `breakerThreshold`: 0–100, default 5; consecutive transport failures or 5xx responses
+  needed to open an upstream circuit. `0` disables the breaker.
+- `breakerCooldownMs`: 1000–300000, default 30000; how long an open circuit skips the upstream
+  before allowing one half-open probe.
 
 The same connect timeout applies to WebSocket upgrade attempts. Omitted fields keep the existing
 value on update, or the default for a new proxy.
 
 `POST /api/proxies` with an existing `id` hot-reloads a running proxy when only `name`, `target`,
-`upstreams`, `retries`, the timeouts or `rules` changed: the listener and worker pool stay up,
+`upstreams`, `retries`, the timeouts, breaker settings or `rules` changed: the listener and worker
+pool stay up,
 in-flight requests keep their snapshot, existing WebSocket sessions keep their upstream, and the
 proxy snapshot's `configVersion` increments with a `configuration hot-reloaded` log entry. Changes
 to `listenHost`, `listenPort`, `tls`, certificate paths or `workers` stop and restart the runtime.
@@ -477,15 +482,24 @@ every 10 seconds (3-second timeout). Snapshots include a `health` array:
 ```json
 "health": [
   {"url": "http://127.0.0.1:8001", "healthy": true, "checked": true,
-   "latencyMs": 2, "checkedAt": "2026-10-21T13:07:48Z", "error": ""},
+   "latencyMs": 2, "checkedAt": "2026-10-21T13:07:48Z", "error": "",
+   "breaker": {"open": false, "failures": 0, "retryAfterMs": 0, "lastError": ""}},
   {"url": "http://127.0.0.1:8002", "healthy": false, "checked": true,
-   "latencyMs": 1, "checkedAt": "2026-10-21T13:07:48Z", "error": "connection refused"}
+   "latencyMs": 1, "checkedAt": "2026-10-21T13:07:48Z", "error": "connection refused",
+   "breaker": {"open": true, "failures": 5, "retryAfterMs": 21400,
+               "lastError": "connection refused"}}
 ]
 ```
 
 Healthy upstreams are preferred; an unhealthy upstream is skipped as long as at least one healthy
 one remains, and becomes eligible again automatically once a probe succeeds. The probe checks
 TCP reachability (and the TLS handshake for `https://`), not application-level health.
+
+Consecutive transport failures or 5xx responses increment `breaker.failures`; any response below
+500 resets it. Once `breakerThreshold` is reached, `breaker.open` becomes true and the upstream is
+skipped until `breakerCooldownMs` elapses (shown as `retryAfterMs`); the next request is a
+half-open probe whose success closes the circuit. When every upstream is circuit-open the proxy
+returns `502 {"error":"all upstreams are circuit-open"}` without contacting them.
 
 ### Upstreams and retries
 
