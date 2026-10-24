@@ -51,9 +51,11 @@ cleanup() {
   fi
   if [[ -n "${DAEMON_PID}" ]] && kill -0 "${DAEMON_PID}" 2>/dev/null; then
     kill "${DAEMON_PID}" 2>/dev/null || true
-    for _ in $(seq 1 30); do
+    local i=0
+    while [[ "${i}" -lt 30 ]]; do
       kill -0 "${DAEMON_PID}" 2>/dev/null || break
       sleep 0.1
+      i=$((i + 1))
     done
     kill -9 "${DAEMON_PID}" 2>/dev/null || true
   fi
@@ -78,9 +80,11 @@ fi
 node "${H2_SERVER}" "${H2_KEY}" "${H2_CERT}" "${H2_PORT}" \
   >"${DATA_DIR}/h2.log" 2>&1 &
 H2_PID=$!
-for _ in $(seq 1 80); do
+i=0
+while [[ "${i}" -lt 80 ]]; do
   grep -q "H2 LISTENING" "${DATA_DIR}/h2.log" 2>/dev/null && break
   sleep 0.1
+  i=$((i + 1))
 done
 if ! grep -q "H2 LISTENING" "${DATA_DIR}/h2.log" 2>/dev/null; then
   echo "h2-smoke: the local h2 server did not start" >&2
@@ -91,7 +95,8 @@ fi
 UVSCOPE_DATA_DIR="${DATA_ARG}" "${BIN}" --host 127.0.0.1 --port "${PORT}" \
   >"${DATA_DIR}/daemon.log" 2>&1 &
 DAEMON_PID=$!
-for _ in $(seq 1 100); do
+i=0
+while [[ "${i}" -lt 100 ]]; do
   if curl -fsS --max-time 1 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
     break
   fi
@@ -101,6 +106,7 @@ for _ in $(seq 1 100); do
     exit 1
   fi
   sleep 0.1
+  i=$((i + 1))
 done
 if ! curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
   echo "h2-smoke: the daemon did not become ready" >&2
