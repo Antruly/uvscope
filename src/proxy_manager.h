@@ -22,10 +22,14 @@ namespace uvscope {
 
 class ProxyManager {
  public:
-  explicit ProxyManager(Store& store);
+  explicit ProxyManager(Store& store, bool auto_start = true);
   ~ProxyManager();
 
   bool start(const std::string& id, std::string* error);
+  // Start/reload one runtime from an in-memory config. The child proxy
+  // process uses these instead of a SQLite-backed Store.
+  bool start_config(const ProxyConfig& config, std::string* error);
+  bool reload_config(const ProxyConfig& config, std::string* error);
   bool stop(const std::string& id, std::string* error);
   void stop_all();
   bool reload(const ProxyConfig& config, std::string* error);

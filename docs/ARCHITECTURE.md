@@ -40,11 +40,13 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
 ## Process model in 0.9.0
 
 - **Main daemon**: the only process. It owns the UI server, SQLite, auth and all protocol clients.
-- **IPC foundation**: `IpcChannel` (`src/ipc.*`) frames JSON with a 4-byte big-endian length over
-  a Unix domain socket or Windows named pipe. The hidden `--ipc-child` mode and `--self-check`
-  exercise process spawn, ping/pong and clean shutdown on every platform. Service runtimes still
-  run in the daemon process; moving proxies and listeners into supervised children is the next
-  step.
+- **IPC foundation / proxy child**: `IpcChannel` (`src/ipc.*`) frames JSON with a 4-byte
+  big-endian length over a Unix domain socket or Windows named pipe. The hidden `--ipc-child`
+  mode and `--self-check` exercise process spawn, ping/pong and clean shutdown on every platform.
+  `--proxy-child` runs one reverse proxy from an IPC `start`/`reload` config and answers
+  `snapshot`/`logs`; the self-check sends a real request through it. The daemon still starts
+  proxies in-process — the parent-side isolated backend and `isolated` setting are the next
+  slice.
 - **Short-lived work**: HTTP/TCP/UDP/TLS probes run on the libuv thread pool through `uvcpp_work`; the
   response is written back on the event-loop thread.
 - **Reverse proxy runtimes**: each running proxy is a `uvcpp_web_app` with its own event loop and

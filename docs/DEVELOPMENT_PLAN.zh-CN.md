@@ -628,6 +628,33 @@ self-check 新增 `IPC child ping/pong` 断言；失败时打印具体原因（�
 
 不做：代理/监听/终端运行时子进程化、IPC RPC 快照与日志流、崩溃回收与重启策略、跨进程鉴权。
 
+### S14 — 代理子进程运行时（已实现，父侧接入待做）
+
+边界：`src/proxy_child.*`、`src/proxy_manager.*`、`src/main.cpp`、self-check。
+
+内容：
+
+- `ProxyManager` 新增 `start_config` / `reload_config`，可不依赖 Store 直接从内存配置启动；
+- 隐藏 `--proxy-child <endpoint>`：通过 IPC 接收 `start` / `reload`，返回
+  `started` + 运行时快照，响应 `snapshot` / `logs`，收到 `stop` 或父进程断开后停止并退出；
+- 子进程内复用现有代理运行时、worker 池、热重载、熔断与指标逻辑；
+- 配置通过 JSON 传递（`proxy_config_to_json` / `proxy_config_from_json`），子进程强制进程内运行；
+- `--self-check` spawn 子进程、启动一个监听 0 端口的代理、通过它请求本地 `/hello`、校验
+  snapshot 的 `requests >= 1`，再 stop；Linux / Windows / macOS 都执行。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+ctest --test-dir build --output-on-failure
+```
+
+self-check 新增 `IPC proxy child request` 断言；现有 smoke 继续覆盖进程内代理。
+
+不做（下一片）：父进程 `ChildProxyService`、每代理 `isolated` 开关、按需选择进程内/子进程、
+子进程崩溃后的 supervisor 重启、快照/日志的增量推送与跨进程鉴权。
+
 ---
 
 ### 风险与回退（本迭代）
