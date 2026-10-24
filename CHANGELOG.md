@@ -4,6 +4,17 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- IPC foundation for process isolation: `IpcChannel` frames JSON with a 4-byte big-endian length
+  over a Unix domain socket or Windows named pipe, with bounded frames, a write queue and
+  backpressure. A hidden `--ipc-child` mode answers ping/stop messages, and `--self-check` now
+  spawns that child, verifies ping/pong and clean shutdown on every platform. Proxy and listener
+  services still run in the daemon process; moving them into supervised children is the next
+  slice.
+
 ## [0.9.0] - 2026-10-24
 
 ### Added

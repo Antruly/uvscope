@@ -601,6 +601,33 @@ smoke 用前两次 500、之后 200 的 flaky 上游：两次失败后第三次�
 
 不做：WebSocket 升级失败计入熔断、跨实例共享熔断状态、自适应阈值。
 
+### S13 — IPC 基座（已实现，进程隔离第一步）
+
+边界：`src/ipc.*`、`src/main.cpp`、`src/application.cpp`、`CMakeLists.txt`、self-check。
+
+内容：
+
+- `IpcChannel` 使用 libuv pipe（POSIX Unix domain socket / Windows 命名管道），4 字节大端长度
+  前缀 + UTF-8 JSON，单帧上限 4 MiB；
+- 写队列与背压、读侧分帧与坏帧关闭；
+- 隐藏 `--ipc-child <endpoint>` 模式：响应 `ping`/`stop`，父进程退出或超时后自行退出；
+- `--self-check` 启动子进程、发送 ping、校验 pong、发送 stop 并等待子进程退出，Linux /
+  Windows / macOS 都会执行；
+- 服务运行时仍在主进程内，本切片只建立 IPC 与进程生命周期基础。
+
+验收：
+
+```sh
+./scripts/build.sh
+./build/uvscope --self-check
+ctest --test-dir build --output-on-failure
+```
+
+self-check 新增 `IPC child ping/pong` 断言；失败时打印具体原因（超时、无法 spawn、无 pong、
+子进程未退出等）。
+
+不做：代理/监听/终端运行时子进程化、IPC RPC 快照与日志流、崩溃回收与重启策略、跨进程鉴权。
+
 ---
 
 ### 风险与回退（本迭代）

@@ -34,6 +34,9 @@ struct AppOptions {
   std::filesystem::path web_root;
   std::string tls_cert;
   std::string tls_key;
+  // Absolute path of the running executable, used by --self-check to spawn
+  // the IPC child mode.
+  std::string self_path;
   bool self_check = false;
   bool open_browser = false;
 };
