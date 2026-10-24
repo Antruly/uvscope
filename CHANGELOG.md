@@ -4,48 +4,30 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Added
-
-- One desired-state supervisor now covers every long-lived runtime, not only reverse proxies:
-  TCP/UDP listeners, SOCKS5 servers and isolated terminal sessions register with
-  `/api/supervisor`, are restarted with backoff after an unexpected child exit, and expose
-  `kind`, `desired`, `running` and `restarts`. Stop routes clear the desired state, delete routes
-  unregister first, and module disable/reset unregister before tearing runtimes down. Isolated
-  terminal sessions restart under the same id with a new PID and a fresh shell; a normal shell
-  `exit` keeps the child alive for scrollback reads and is not restarted, and attached WebSocket
-  clients receive `reset` before the restarted stream. The smoke test kills each isolated child,
-  waits for the supervised restart, checks the supervisor entry, verifies a manual stop stays
-  down, and confirms deletion reaps without resurrection.
+## [0.11.0] - 2026-10-25
 
 ### Added
 
 - Virtual terminals can run their PTY in a child process with `isolated: true`. The parent keeps
   the session id/owner/name, proxies input/resize/redraw over IPC, caches the child's 40 ms output
   stream (256 KiB) and exit status, and exposes `isolated` plus the child `pid` in the session
-  snapshot. A crashed child is reported as `error`; deleting the session stops and reaps it. The
-  new-terminal dialog has a “Run the shell in a child process” toggle, and the smoke test runs an
-  isolated PTY round-trip (input, output, exit code, delete).
-
-### Added
-
-- TCP and UDP listeners can run in a child process with `isolated: true`. The parent caches the
-  listener snapshot, event log and session list, exposes the child `pid`, proxies session send /
-  close / per-session event reads over IPC, and stops/reaps the child on stop or delete. A
-  crashed child is reported as `error` and can be started again with a new PID. The listener
-  editor has a “Run in a child process” toggle. The smoke test accepts a client through the
-  isolated listener, replies through the daemon API, checks session events, kills/restarts the
-  child and verifies reaping on delete.
-
-### Added
-
-- SOCKS5 servers can run in a child process with `isolated: true`. The parent caches the server
-  snapshot, event log and session list, exposes the child `pid` in `/api/socks5/servers`, and
-  stops/reaps the child on stop or delete. A crashed child is reported as `error` and can be
-  started again, which spawns a new PID. The SOCKS5 editor has a “Run in a child process” toggle.
-  The smoke test opens a CONNECT tunnel through the isolated server, kills it, restarts it and
-  opens another tunnel, then verifies the child is reaped on delete.
+  snapshot. The new-terminal dialog has a “Run the shell in a child process” toggle.
+- SOCKS5 servers and TCP/UDP listeners can run in a child process with `isolated: true`. The
+  parent caches snapshots, bounded event logs and sessions, exposes the child `pid`, proxies
+  session send / close / event reads over IPC for listeners, and stops/reaps the child on stop or
+  delete.
+- One desired-state supervisor now covers every long-lived runtime, not only reverse proxies:
+  proxies, listeners, SOCKS5 servers and isolated terminal sessions register with
+  `/api/supervisor`, are restarted with exponential backoff after an unexpected child exit, and
+  expose `kind`, `desired`, `running` and `restarts`. Stop routes clear the desired state, delete
+  routes unregister first, and module disable/reset unregister before tearing runtimes down.
+- An isolated terminal restarts under the same session id with a new PID and a fresh shell; a
+  normal shell `exit` keeps the child alive for scrollback reads and is not restarted. Attached
+  WebSocket clients receive `reset` before the restarted stream, and the stream poll slows to
+  500 ms after exit instead of stopping.
+- The smoke test covers isolated listener, SOCKS5 and terminal round-trips, supervised restarts
+  with a new PID and supervisor counters, a manual stop staying down, delete reaping, and a
+  normal shell exit not triggering a restart.
 
 ## [0.10.0] - 2026-10-24
 
