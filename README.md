@@ -63,6 +63,7 @@ Most tools stop at request/response. uvscope is designed around the whole handsh
 | Async proxy upstream pool (slow targets do not block other requests) | ✅ New in 0.9.0 |
 | Configurable upstream timeouts, worker count and hot reload | ✅ New in 0.9.0 |
 | Per-upstream circuit breaker with half-open recovery | ✅ New in 0.9.0 |
+| Optional per-proxy child-process isolation with supervisor restart | ✅ New |
 | Weighted upstreams with failover and retries | ✅ New in 0.4.4 |
 | Per-proxy QPS, p50/p95 latency and status counts | ✅ New in 0.4.5 |
 | Active upstream health checks (TCP/TLS, 10 s) | ✅ New in 0.4.5 |

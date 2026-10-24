@@ -19,6 +19,14 @@ All notable changes to uvscope are documented here. The format is based on
   `--self-check` now spawns it, starts a proxy on an ephemeral port, sends a real request through
   it, verifies the snapshot request count and stops it on Linux, Windows and macOS. The daemon
   still starts proxies in-process; the parent-side isolated backend is the next slice.
+- Reverse proxies can run in a child process with `isolated: true`. The daemon spawns
+  `--proxy-child`, caches its telemetry snapshot and logs, exposes the child `pid` in
+  `/api/proxies`, and the existing supervisor restarts the child after a crash. Deleting an
+  isolated proxy unregisters it from the supervisor first, stops the child and waits for it to be
+  reaped. The proxy editor has a “Run in a child process” toggle; changing the mode while running
+  returns `409 proxy_running`. The `isolated` column migrates existing databases automatically.
+  The smoke test covers a real request through the child, telemetry, kill → new PID, request after
+  restart and child reaping on delete.
 
 ## [0.9.0] - 2026-10-24
 

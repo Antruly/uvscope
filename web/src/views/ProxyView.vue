@@ -57,6 +57,7 @@ const blank = () => ({
   workers: 4,
   breakerThreshold: 5,
   breakerCooldownMs: 30000,
+  isolated: false,
   autoStart: false,
   tls: false,
   certPath: '',
@@ -128,6 +129,7 @@ function openEdit(proxy: ProxyInfo) {
     workers: proxy.workers ?? 4,
     breakerThreshold: proxy.breakerThreshold ?? 5,
     breakerCooldownMs: proxy.breakerCooldownMs ?? 30000,
+    isolated: proxy.isolated ?? false,
     autoStart: proxy.autoStart,
     tls: proxy.tls,
     certPath: proxy.certPath || '',
@@ -454,6 +456,7 @@ onBeforeUnmount(stopLogPolling)
               </div>
               <div class="switch-row">
                 <label class="switch-field"><span>{{ t('proxy.editor.autoStart') }}</span><button type="button" class="switch" :class="{ on: form.autoStart }" @click="form.autoStart = !form.autoStart"><i /></button></label>
+                <label class="switch-field"><span>{{ t('proxy.editor.isolated') }}</span><button type="button" class="switch" :class="{ on: form.isolated }" @click="form.isolated = !form.isolated"><i /></button></label>
                 <label class="switch-field"><span>{{ t('proxy.editor.tls') }}</span><button type="button" class="switch" :class="{ on: form.tls }" @click="form.tls = !form.tls"><i /></button></label>
               </div>
               <label v-if="form.tls" class="field">

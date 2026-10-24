@@ -44,9 +44,11 @@ persistence, protocol clients and the gateway runtimes. The SPA is a view over t
   big-endian length over a Unix domain socket or Windows named pipe. The hidden `--ipc-child`
   mode and `--self-check` exercise process spawn, ping/pong and clean shutdown on every platform.
   `--proxy-child` runs one reverse proxy from an IPC `start`/`reload` config and answers
-  `snapshot`/`logs`; the self-check sends a real request through it. The daemon still starts
-  proxies in-process — the parent-side isolated backend and `isolated` setting are the next
-  slice.
+  `snapshot`/`logs`; the self-check sends a real request through it. A proxy marked
+  `isolated: true` is spawned as a child: `ProxyChildService` owns its IPC loop thread, caches
+  telemetry snapshots and bounded logs, exposes the child PID, and reaps the process on stop.
+  The supervisor restarts a crashed child; deleting an isolated proxy unregisters it before
+  stopping. Other long-lived services (listeners, SOCKS5, terminal) remain in-process.
 - **Short-lived work**: HTTP/TCP/UDP/TLS probes run on the libuv thread pool through `uvcpp_work`; the
   response is written back on the event-loop thread.
 - **Reverse proxy runtimes**: each running proxy is a `uvcpp_web_app` with its own event loop and
@@ -306,6 +308,7 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
   weighted upstreams with bounded retries, active health checks and a per-upstream circuit
   breaker.
 - The `history` table stores summaries, not full bodies.
-- Long-lived proxies are supervised in-process (desired state, restart on runtime stop). The IPC
-  transport, child mode and spawn/ping self-check exist, but service runtimes still run in the
-  daemon process; moving them into supervised children is the remaining step.
+- Reverse proxies can run in supervised child processes (`isolated: true`). TCP/UDP listeners,
+  SOCKS5 servers and the virtual terminal still run in the daemon process; moving those services
+  into children is the remaining process-isolation work. Isolated proxy telemetry is cached from
+  a 500 ms push, so the API can lag the child slightly.
