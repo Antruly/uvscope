@@ -6,6 +6,13 @@ All notable changes to uvscope are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows MinGW builds no longer fail in `certificate_common_name`: `<wincred.h>` (pulled
+  in by `uv.h`) defines `X509_NAME` as a credential type, so the function now uses the
+  `struct X509_name_st` tag like the rest of the certificate code. This unblocks the Windows
+  CI job and the v0.8.0 release build.
+
 ### Added
 
 - HTTP/3 probe results now include the peer GOAWAY state on QUIC-enabled builds:
