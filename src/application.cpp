@@ -621,7 +621,7 @@ bool Application::initialize() {
   proxies_.reset(new ProxyManager(store_, options_.self_path));
   supervisor_.reset(new Supervisor(
       [this](std::function<void()> fn) { app_.post(std::move(fn)); }));
-  transport_.reset(new TransportManager());
+  transport_.reset(new TransportManager(options_.self_path));
   if (!transport_->available()) {
     std::fprintf(stderr, "uvscope: transport sessions unavailable: %s\n",
                  transport_->start_error().c_str());
@@ -1539,6 +1539,7 @@ void Application::register_debug_routes() {
     config.host = string_field(*body, "host", "127.0.0.1");
     config.port = int_field(*body, "port", 0);
     config.auto_start = bool_field(*body, "autoStart", false);
+    config.isolated = bool_field(*body, "isolated", false);
     config.created_at = now_iso8601();
     if ((config.transport != "tcp" && config.transport != "udp") ||
         config.host.empty() || config.port <= 0 || config.port > 65535) {

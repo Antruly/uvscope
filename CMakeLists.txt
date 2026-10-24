@@ -154,6 +154,7 @@ set(UVSCOPE_SOURCES
   src/download_manager.cpp
   src/http_probe.cpp
   src/ipc.cpp
+  src/listener_child.cpp
   src/net_probe.cpp
   src/preview_store.cpp
   src/quic_manager.cpp

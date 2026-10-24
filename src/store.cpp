@@ -1018,6 +1018,7 @@ std::vector<ListenerConfig> Store::listeners() const {
     listener.host = item.value("host", std::string("127.0.0.1"));
     listener.port = item.value("port", 0);
     listener.auto_start = item.value("autoStart", false);
+    listener.isolated = item.value("isolated", false);
     listener.created_at = item.value("createdAt", std::string());
     listener.updated_at = item.value("updatedAt", std::string());
     if (listener.id.empty() || (listener.transport != "tcp" && listener.transport != "udp") ||
@@ -1067,6 +1068,7 @@ bool Store::save_listener(const ListenerConfig& listener, std::string* error) {
                    {"host", item.host},
                    {"port", item.port},
                    {"autoStart", item.auto_start},
+                   {"isolated", item.isolated},
                    {"createdAt", item.created_at},
                    {"updatedAt", item.updated_at}});
   }
@@ -1091,6 +1093,7 @@ bool Store::delete_listener(const std::string& id, std::string* error) {
                    {"host", item.host},
                    {"port", item.port},
                    {"autoStart", item.auto_start},
+                   {"isolated", item.isolated},
                    {"createdAt", item.created_at},
                    {"updatedAt", item.updated_at}});
   }

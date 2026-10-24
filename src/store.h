@@ -67,6 +67,7 @@ struct ListenerConfig {
   std::string host = "127.0.0.1";
   int port = 0;
   bool auto_start = false;
+  bool isolated = false;
   std::string created_at;
   std::string updated_at;
 };

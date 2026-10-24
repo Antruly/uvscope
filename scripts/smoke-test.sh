@@ -25,6 +25,7 @@ HOT_PROXY_PORT="${20:-18805}"
 BREAKER_PROXY_PORT="${21:-18806}"
 ISOLATED_PROXY_PORT="${22:-18807}"
 ISOLATED_SOCKS5_PORT="${23:-18808}"
+ISOLATED_LISTENER_PORT="${24:-18809}"
 DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uvscope-smoke.XXXXXX")"
 COOKIE_JAR="${DATA_DIR}/cookies.txt"
 LOG="${DATA_DIR}/daemon.log"
@@ -596,6 +597,7 @@ WS_ROUTE_PORT="${WS_ROUTE_PORT}" ASYNC_PROXY_PORT="${ASYNC_PROXY_PORT}" \
 ERROR_PROXY_PORT="${ERROR_PROXY_PORT}" TIMEOUT_PROXY_PORT="${TIMEOUT_PROXY_PORT}" \
 HOT_PROXY_PORT="${HOT_PROXY_PORT}" BREAKER_PROXY_PORT="${BREAKER_PROXY_PORT}" \
 ISOLATED_PROXY_PORT="${ISOLATED_PROXY_PORT}" ISOLATED_SOCKS5_PORT="${ISOLATED_SOCKS5_PORT}" \
+ISOLATED_LISTENER_PORT="${ISOLATED_LISTENER_PORT}" \
 COMP_PORT="${COMP_PORT}" COMP_READY="${COMP_READY}" WS_PORT="${WS_PORT}" \
 TCP_LISTEN_PORT="${TCP_LISTEN_PORT}" UDP_LISTEN_PORT="${UDP_LISTEN_PORT}" \
 SOCKS5_PORT="${SOCKS5_PORT}" SOCKS5_AUTH_PORT="${SOCKS5_AUTH_PORT}" \
@@ -1151,6 +1153,101 @@ if isolated_socks:
         status, deleted = call("DELETE", f"/api/socks5/servers/{isolated_socks}")
         check(status == 200 and deleted.get("ok") is True,
               f"isolated SOCKS5 delete failed: {deleted}")
+
+# Isolated TCP listener: accept a client, reply through the daemon API, read the
+# session events, kill/restart the child and reap it on delete.
+status, created = call("POST", "/api/transport/listeners", {
+    "transport": "tcp", "name": "smoke-isolated-listener",
+    "host": "127.0.0.1", "port": int(os.environ["ISOLATED_LISTENER_PORT"]),
+    "isolated": True, "start": True,
+})
+isolated_listener = created.get("listener", "")
+check(status == 200 and bool(isolated_listener),
+      f"isolated listener create failed: {created}")
+if isolated_listener:
+    child_pid = 0
+    state = {}
+    for _ in range(100):
+        status, payload = call("GET", f"/api/transport/listeners/{isolated_listener}")
+        state = payload.get("listener", {})
+        child_pid = state.get("pid", 0)
+        if state.get("state") == "listening" and child_pid:
+            break
+        time.sleep(0.1)
+    check(state.get("state") == "listening" and child_pid > 0 and
+          state.get("isolated") is True,
+          f"isolated listener did not listen: {state}")
+    client = socket.create_connection(
+        ("127.0.0.1", int(os.environ["ISOLATED_LISTENER_PORT"])), timeout=5)
+    client.sendall(b"iso-listener")
+    session_id = ""
+    for _ in range(100):
+        status, payload = call(
+            "GET", f"/api/transport/listeners/{isolated_listener}/sessions")
+        sessions = payload.get("sessions", [])
+        if sessions:
+            session_id = sessions[0].get("id", "")
+            break
+        time.sleep(0.1)
+    check(bool(session_id), "isolated listener did not record a session")
+    if session_id:
+        status, sent = call(
+            "POST", f"/api/transport/listeners/{isolated_listener}/send",
+            {"sessionId": session_id, "payload": "listener-reply", "encoding": "text"})
+        check(status == 200 and sent.get("ok") is True,
+              f"isolated listener send failed: {sent}")
+        client.settimeout(5)
+        reply = client.recv(4096)
+        check(reply == b"listener-reply",
+              f"isolated listener reply mismatch: {reply}")
+        status, events = call(
+            "GET",
+            f"/api/transport/listeners/{isolated_listener}/sessions/{session_id}/events?after=0")
+        types = [item.get("type") for item in events.get("events", [])]
+        check("recv" in types and "send" in types,
+              f"isolated listener session events missing: {types}")
+    client.close()
+    new_pid = 0
+    if os.name == "posix" and child_pid:
+        os.kill(child_pid, signal.SIGKILL)
+        for _ in range(80):
+            time.sleep(0.1)
+            status, payload = call("GET", f"/api/transport/listeners/{isolated_listener}")
+            state = payload.get("listener", {})
+            if state.get("state") != "listening":
+                break
+        check(state.get("state") in ("error", "stopped"),
+              f"killed listener child still reports {state.get('state')}")
+        status, started = call(
+            "POST", f"/api/transport/listeners/{isolated_listener}/start")
+        check(status == 200 and started.get("ok") is True,
+              f"isolated listener restart failed: {started}")
+        for _ in range(100):
+            status, payload = call("GET", f"/api/transport/listeners/{isolated_listener}")
+            state = payload.get("listener", {})
+            new_pid = state.get("pid", 0)
+            if state.get("state") == "listening" and new_pid and new_pid != child_pid:
+                break
+            time.sleep(0.1)
+        check(new_pid and new_pid != child_pid,
+              f"isolated listener did not restart: old={child_pid} new={new_pid}")
+    status, deleted = call(
+        "DELETE", f"/api/transport/listeners/{isolated_listener}")
+    check(status == 200 and deleted.get("ok") is True,
+          f"isolated listener delete failed: {deleted}")
+    if os.name == "posix":
+        target_pid = new_pid if new_pid else child_pid
+        reaped = False
+        for _ in range(80):
+            try:
+                os.kill(target_pid, 0)
+            except ProcessLookupError:
+                reaped = True
+                break
+            except PermissionError:
+                pass
+            time.sleep(0.1)
+        check(reaped, f"isolated listener child was not reaped: {target_pid}")
 
 # Managed certificates: generate, inspect, import the same pair, delete.
 status, generated = call("POST", "/api/tls/certificates/generate", {

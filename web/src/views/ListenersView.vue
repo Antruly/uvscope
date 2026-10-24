@@ -14,6 +14,8 @@ interface ListenerInfo {
   host: string
   port: number
   autoStart?: boolean
+  isolated?: boolean
+  pid?: number
   state: 'stopped' | 'starting' | 'listening' | 'stopping' | 'error'
   error?: string
   startedAt?: string
@@ -62,6 +64,7 @@ const name = ref('')
 const host = ref('127.0.0.1')
 const port = ref(9000)
 const autoStart = ref(false)
+const isolated = ref(false)
 const startNow = ref(true)
 const creating = ref(false)
 
@@ -178,6 +181,7 @@ async function createListener() {
         port: port.value,
         autoStart: autoStart.value,
         start: startNow.value,
+        isolated: isolated.value,
       },
     )
     if (!response.ok || !response.listener) {
@@ -481,6 +485,7 @@ onBeforeUnmount(stopPolling)
       <div class="form-actions listener-create__actions">
         <label class="listener-check"><input v-model="autoStart" type="checkbox" />{{ t('listeners.create.autoStart') }}</label>
         <label class="listener-check"><input v-model="startNow" type="checkbox" />{{ t('listeners.create.startNow') }}</label>
+        <label class="listener-check"><input v-model="isolated" type="checkbox" />{{ t('listeners.create.isolated') }}</label>
         <button class="button button--primary" :disabled="creating" @click="createListener">
           <span v-if="creating" class="spinner" />
           <Icon v-else name="plus" :size="15" />
