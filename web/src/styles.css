@@ -4697,6 +4697,27 @@ button.nav-item {
 .terminal-quickbar .eyebrow {
   margin-right: 3px;
 }
+.terminal-platform {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-soft);
+}
+.terminal-platform button {
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 8px;
+  cursor: pointer;
+}
+.terminal-platform button.active {
+  background: var(--accent);
+  color: #fff;
+}
 .quick-chip {
   padding: 4px 8px;
   border: 1px solid var(--border);

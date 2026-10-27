@@ -219,7 +219,7 @@ function displayPayload(value: Record<string, unknown> | null) {
           <button :class="{ active: mode === 'tcp' }" @click="switchMode('tcp')">TCP</button>
           <button :class="{ active: mode === 'session' }" @click="switchMode('session')">{{ t('transport.mode.session') }}</button>
           <button :class="{ active: mode === 'udp' }" @click="switchMode('udp')">UDP</button>
-          <button :class="{ active: mode === 'quic' }" @click="switchMode('quic')">QUIC <em>{{ t('transport.quic.experimental') }}</em></button>
+          <button :class="{ active: mode === 'quic' }" @click="switchMode('quic')">QUIC</button>
         </div>
       </div>
     </header>

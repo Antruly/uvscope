@@ -1,6 +1,6 @@
 # uvscope 开发计划
 
-> 版本：1.0.0 发布
+> 版本：1.0.1 发布
 > 技术底座：libuvcpp 1.8.2 + Vue 3 + SQLite + libuvcpp WSDL/SOAP  
 > 目标：做一款覆盖 Web 调试、协议探测与可编程反向代理的本地瑞士军刀，并保持单机、可审计、可离线部署。
 
@@ -429,12 +429,12 @@ smoke 增加：本地 echo 服务端 + 同一连接两次发送。
 - 再开放客户端、stream/datagram 调试；
 - 未通过前发布构建继续关闭。
 
-状态（2026-10-24）：实验构建已打通并验证。SDK 安装 RUNPATH 现在包含 OpenSSL 3.6 的 lib 目录，
+状态（2026-10-24）：QUIC 构建已打通并验证。SDK 安装 RUNPATH 现在包含 OpenSSL 3.6 的 lib 目录，
 无需 `LD_LIBRARY_PATH` 即可启动；H3 结果新增 peer GOAWAY（`received` / `lastStreamId`），
 原始 QUIC 回显和公网 HTTP/3 请求均通过。QPACK/0-RTT/连接迁移事件仍未暴露，跨平台 CI 与
 发布构建开关仍未完成。
 
-新增 `QUIC experimental` workflow（`.github/workflows/quic.yml`）：在 Linux 上构建
+新增 `QUIC` workflow（`.github/workflows/quic.yml`）：在 Linux 上构建
 OpenSSL 3.6.5 与 QUIC SDK，启动本地 `scripts/h3-test-server.cpp`，再执行
 `scripts/quic-smoke-test.sh`，断言 health 能力、原始 QUIC 回显和 HTTP/3 响应。该工作流在
 每周定时、手动触发以及 QUIC 相关文件变更时运行。
@@ -839,6 +839,36 @@ CI 三端绿；`v1.0.0` release 包含 Linux x64/arm64、Windows x64、macOS arm
 
 不做：Windows arm64、HTTP/3 稳定化、原生插件 ABI、逐页浅色主题审计（列入 1.x 后续）。
 
+### S21 — 1.0.1 修复（已实现）
+
+边界：内置 TLS 的 h2 响应头、虚拟终端命令平台选择、QUIC/H3 文案、发布。
+
+内容：
+
+- h2 响应头名统一小写（`Cache-Control`、`X-Frame-Options` 等混合大小写会让 libuvcpp 的 h2
+  构建器拒收并丢流）；HTTP probe 的自定义请求头也做小写化；
+- 内置 TLS 保留 HTTP/2 + HTTP/1.1 回落，新增 `scripts/tls-smoke.sh` 并在 Linux CI/Release
+  执行；
+- 虚拟终端快捷命令增加“自动 / Linux / Windows”切换，选择与命令库共享并持久化；自动模式
+  跟随会话 Shell 与该终端最近一次提示符，SSH 到 Windows 自动切到 Windows 命令、退出后切回；
+- 移除 HTTP/3/QUIC 的“实验”标签，改为“需要 QUIC 构建（OpenSSL 3.6+）”；默认发布资产仍关闭
+  QUIC；
+- libuvcpp 的 h2 库层修复与 webapp h3 缺口分析已提交到 upstream PR（draft），本版 uvscope
+  先做应用层修复。
+
+验收：
+
+```sh
+npm --prefix web run typecheck
+npm --prefix web run build
+./scripts/build.sh
+./build/uvscope --self-check
+bash ./scripts/tls-smoke.sh ./build/uvscope 18830
+bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788
+```
+
+不做：libuvcpp webapp 的 h3 响应路径（由 upstream PR 跟进）、Windows arm64、原生插件 ABI。
+
 ---
 
 ### 风险与回退（本迭代）
@@ -870,24 +900,24 @@ CI 三端绿；`v1.0.0` release 包含 Linux x64/arm64、Windows x64、macOS arm
   逐帧、HTTP 流式响应与 h2/h3 事件，是 0.4 协议深度切片的上游基础。
 - 0.3.0 发布构建默认关闭 libuvcpp 的 QUIC、HTTP/3 选项；0.4.0 起 HTTP/2 默认启用
   （`UVCPP_ENABLE_NGHTTP2=OFF` 可构建精简版），QUIC/HTTP/3 继续关闭。
-- 本地开发可以打开这些选项做实验，但不应把它们写进稳定版发行说明。
+- 本地开发可以打开这些选项构建 QUIC 版本，但默认发布资产仍关闭 QUIC。
 - Windows 使用 MinGW-w64，不使用 MSVC 作为默认工具链。
 
 ### 发布产物
 
 ```text
-uvscope-1.0.0-linux-x64.tar.gz
-uvscope-1.0.0-linux-arm64.tar.gz
-uvscope_1.0.0_amd64.deb
-uvscope_1.0.0_arm64.deb
-uvscope-1.0.0-1.x86_64.rpm
-uvscope-1.0.0-1.aarch64.rpm
-uvscope-1.0.0-mingw-x64.zip
-uvscope-1.0.0-setup.exe
-uvscope-1.0.0-macos-arm64.tar.gz
+uvscope-1.0.1-linux-x64.tar.gz
+uvscope-1.0.1-linux-arm64.tar.gz
+uvscope_1.0.1_amd64.deb
+uvscope_1.0.1_arm64.deb
+uvscope-1.0.1-1.x86_64.rpm
+uvscope-1.0.1-1.aarch64.rpm
+uvscope-1.0.1-mingw-x64.zip
+uvscope-1.0.1-setup.exe
+uvscope-1.0.1-macos-arm64.tar.gz
 SHA256SUMS
 SHA256SUMS.sigstore.json
-uvscope-v1.0.0-sbom.spdx.json
+uvscope-v1.0.1-sbom.spdx.json
 ```
 
 ---
@@ -934,7 +964,7 @@ uvscope-v1.0.0-sbom.spdx.json
 
 ## 9. 0.1.1 建议立即处理
 
-1. 将 HTTP/2 / HTTP/3 按钮标注为“实验”，或在稳定版构建中从 UI 隐藏。
+1. HTTP/2 默认可用；HTTP/3 在启用 QUIC 的构建中显示并可用。
 2. 修复 HTTP 历史记录在 `bodySize` 对 TCP/TLS 的字段映射。
 3. 为反向代理增加上游超时配置与 WebSocket Upgrade 检测。
 4. 增加 `scripts/smoke-test.sh`，在 CI 中真实启动服务并断言 setup/login/proxy。

@@ -101,7 +101,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 the result rather than as an API error.
 
 `GET /api/health` reports the build's `capabilities` (`http2`, `http3`, `quic`, `brotli`). Release
-builds keep `http3` and `quic` false; the experimental QUIC SDK build sets both true.
+builds keep `http3` and `quic` false; a QUIC-enabled SDK build sets both true.
 
 `/api/http/send` results include `streamId` and `retryable` (0 / false on HTTP/1.1). A request
 without an explicit `user-agent` is sent with a current browser UA plus a `uvscope/<version>`
@@ -197,7 +197,7 @@ starts at 1 and increments on each resume. Jobs belong to their creator (admins 
 capped at 512 MiB, can be cancelled with `DELETE /api/http/download/:id`, and are pruned
 10 minutes after they finish. Staged files and resumable jobs do not survive a daemon restart.
 
-### QUIC (experimental)
+### QUIC
 
 `POST /api/quic/probe` takes `{host, port, alpn, payload, encoding, timeoutMs, verify}` and
 returns `{ok, streamId, negotiatedAlpn, replyText | replyBase64, replySize, timing}`. The client
