@@ -46,7 +46,7 @@ extern "C" void handle_stop_signal(int) { g_signal_stop = 1;  }
 
 void send_json(uvcpp::uvcpp_web_response& resp, int status, const nlohmann::json& body) {
   std::string text = body.dump();
-  resp.status(status).set_header("Cache-Control", "no-store").json_str(std::move(text));
+  resp.status(status).set_header("cache-control", "no-store").json_str(std::move(text));
   resp.end();
 }
 
@@ -821,11 +821,11 @@ int Application::run() {
 void Application::register_middleware() {
   app_.use([](uvcpp::uvcpp_web_request&, uvcpp::uvcpp_web_response& resp,
               uvcpp::uvcpp_web_next next) {
-    resp.set_header("X-Content-Type-Options", "nosniff");
-    resp.set_header("X-Frame-Options", "DENY");
-    resp.set_header("Referrer-Policy", "no-referrer");
-    resp.set_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-    resp.set_header("Content-Security-Policy",
+    resp.set_header("x-content-type-options", "nosniff");
+    resp.set_header("x-frame-options", "DENY");
+    resp.set_header("referrer-policy", "no-referrer");
+    resp.set_header("permissions-policy", "camera=(), microphone=(), geolocation=()");
+    resp.set_header("content-security-policy",
                     // User-authored pre/post-request scripts run through new Function(), so the
     // SPA needs 'unsafe-eval'. Everything else stays same-origin only.
     "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; "
@@ -1920,10 +1920,10 @@ void Application::register_debug_routes() {
     const std::string* id = req.param("id");
     const auto document = id ? previews_.get(*id) : std::nullopt;
     const char* csp = document && document->mode == "scripts" ? kScriptsCsp : kSafeCsp;
-    resp.set_header("Content-Security-Policy", csp)
-        .set_header("X-Frame-Options", "SAMEORIGIN")
-        .set_header("Cache-Control", "no-store")
-        .set_header("Referrer-Policy", "no-referrer");
+    resp.set_header("content-security-policy", csp)
+        .set_header("x-frame-options", "SAMEORIGIN")
+        .set_header("cache-control", "no-store")
+        .set_header("referrer-policy", "no-referrer");
     if (!document) {
       resp.status(404).body("preview not found or expired", "text/plain; charset=utf-8");
       resp.end();
@@ -3015,9 +3015,9 @@ void Application::register_certificate_routes() {
                return;
              }
              resp.status(200)
-                 .set_header("Cache-Control", "no-store")
-                 .set_header("Content-Type", "application/x-pem-file")
-                 .set_header("Content-Disposition",
+                 .set_header("cache-control", "no-store")
+                 .set_header("content-type", "application/x-pem-file")
+                 .set_header("content-disposition",
                              "attachment; filename=\"uvscope-local-ca.pem\"")
                  .body(pem);
              resp.end();
@@ -3120,9 +3120,9 @@ void Application::register_certificate_routes() {
                return;
              }
              resp.status(200)
-                 .set_header("Cache-Control", "no-store")
-                 .set_header("Content-Type", "application/x-pem-file")
-                 .set_header("Content-Disposition",
+                 .set_header("cache-control", "no-store")
+                 .set_header("content-type", "application/x-pem-file")
+                 .set_header("content-disposition",
                              "attachment; filename=\"" + (id ? *id : std::string("cert")) +
                                  "-cert.pem\"")
                  .body(pem);
@@ -4002,7 +4002,7 @@ void Application::post_job(std::function<JobResult()> work, uvcpp::uvcpp_web_res
         }
         if (after) after(*done);
         std::string text = done->body.dump();
-        resp->status(done->status).set_header("Cache-Control", "no-store").json_str(std::move(text));
+        resp->status(done->status).set_header("cache-control", "no-store").json_str(std::move(text));
         resp->end();
         next();
         delete done;

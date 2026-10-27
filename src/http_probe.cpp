@@ -301,7 +301,7 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
     if (name == "host") has_host = true;
     if (name == "user-agent") has_user_agent = true;
     if (name == "accept-encoding") has_accept_encoding = true;
-    req.set_header(header.name, header.value);
+    req.set_header(name, header.value);
   }
   if (!has_host) req.set_header("host", url.port == (tls ? 443 : 80) ? url.host : url.host + ":" + std::to_string(url.port));
   if (!has_user_agent) {

@@ -353,6 +353,11 @@ experimental HTTP/3 build are outside the 1.x release matrix.
 - The supervisor retries a desired service indefinitely with a 60 s backoff cap; there is no
   restart budget or circuit breaker for a permanently broken child. Terminal sessions do not
   survive a daemon restart.
+- The embedded TLS listener serves HTTP/2 and HTTP/1.1. Response header names are normalized to
+  lowercase for the h2 path. HTTP/3 is not served by the embedded webapp yet: libuvcpp implements
+  h3 below the webapp, and the webapp's response path is still TCP-bound, so h3 responses are
+  dropped. The HTTP/3 probe remains a supported client feature; terminate h3 at nginx 1.25+ or
+  Cloudflare until the webapp h3 path is fixed upstream.
 - Windows arm64 is not built in 1.x, and there is no native plugin ABI: the stable extension
   boundary is the HTTP API plus request scripts.
 - The light theme has not had a page-by-page visual audit; both themes are functional, but a

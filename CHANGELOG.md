@@ -4,6 +4,20 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- HTTP/2 responses from the built-in TLS listener no longer hang. HTTP/2 requires lowercase
+  header field names; uvscope's mixed-case `Cache-Control`, `X-Frame-Options` and similar headers
+  made libuvcpp drop the response stream, so browsers waited forever. All response header names
+  are now lowercase, and the built-in listener serves HTTP/2 with an HTTP/1.1 fallback.
+  `scripts/tls-smoke.sh` and a Linux CI/release step cover both paths.
+- HTTP/3 is still not served by the embedded webapp: libuvcpp's h3 transport works below the
+  webapp, but the webapp's response path is TCP-bound and drops h3 responses. Use an h3-capable
+  edge (nginx 1.25+ / Cloudflare) or the HTTP/3 probe client until the upstream webapp path is
+  fixed.
+
 ## [1.0.0] - 2026-10-25
 
 First stable release. No protocol behavior changed since 0.11.0; 1.0 adds the release

@@ -46,7 +46,7 @@ Most tools stop at request/response. uvscope is built around the whole handshake
 | Large-response streaming download with progress, cancel and Range resume | Stable |
 | Response preview: sandboxed HTML, images, audio, video and PDF | Stable (scripts opt-in) |
 | SOAP 1.1 + WSDL operation discovery | Stable |
-| HTTP/3 and raw QUIC probes | Experimental — not in release builds |
+| HTTP/3 and raw QUIC probes | Experimental — client-side; browser h3 needs an h3-capable edge |
 
 ### Realtime and transports
 

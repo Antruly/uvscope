@@ -62,6 +62,8 @@ jobs:
         run: cmake --build build -j"$(nproc)"
       - name: Unit checks
         run: ctest --test-dir build --output-on-failure
+      - name: TLS ALPN smoke
+        run: bash ./scripts/tls-smoke.sh ./build/uvscope 18830
       - name: End-to-end smoke test
         run: bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788
 
