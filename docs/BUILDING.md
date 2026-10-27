@@ -198,6 +198,7 @@ not part of the 1.x matrix; MSYS2 CLANGARM64 is still preview.
 ./build/uvscope --self-check                 # offline crypto/IPC/CA/server checks
 bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788
 bash ./scripts/h2-smoke.sh ./build/uvscope 18820 18821
+bash ./scripts/tls-smoke.sh ./build/uvscope 18830
 ./scripts/bench.sh ./build/uvscope --requests 500
 npm --prefix web run check:i18n
 ```
@@ -205,13 +206,15 @@ npm --prefix web run check:i18n
 `h2-smoke.sh` starts a throwaway daemon and a local Node.js HTTP/2 server, then verifies a real
 ALPN `h2` probe (version, stream id, frame summary). It requires `curl`, `openssl`, `node` and
 `python3` (or `python`); set `OPENSSL_BIN` when Homebrew's keg-only OpenSSL is needed.
+`tls-smoke.sh` starts the daemon with a self-signed certificate and checks that the embedded TLS
+listener serves HTTP/2 and still answers an HTTP/1.1-only client.
 
 ## CI
 
 - `.github/workflows/ci.yml` builds the frontend and the daemon on Linux x64, Windows x64
-  (MinGW) and macOS arm64. Linux runs ctest and the full smoke suite; Windows runs `--self-check`,
-  a ConPTY terminal smoke and the HTTP/2 runtime smoke; macOS runs `--self-check` and the HTTP/2
-  runtime smoke.
+  (MinGW) and macOS arm64. Linux runs ctest, the TLS ALPN smoke and the full smoke suite; Windows
+  runs `--self-check`, a ConPTY terminal smoke and the HTTP/2 runtime smoke; macOS runs
+  `--self-check` and the HTTP/2 runtime smoke.
 - `.github/workflows/docs.yml` builds the MkDocs site and deploys it to GitHub Pages from `main`.
 - `.github/workflows/release.yml` runs on tags `v*` and publishes:
   - Linux x64 / arm64 tar.gz and deb/rpm where supported;

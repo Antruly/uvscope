@@ -54,6 +54,9 @@ The detailed history and per-slice acceptance notes are in
 
 ### Protocol depth
 
+- [x] Native HTTP/2 on the embedded TLS listener (fixed in 1.0.1; HTTP/1.1 fallback retained)
+- [ ] Native HTTP/3 on the embedded TLS listener (libuvcpp's webapp h3 response path is still
+      TCP-bound; h3 currently terminates at nginx 1.25+ or Cloudflare)
 - [ ] HTTP/3/QUIC: QPACK summaries, 0-RTT and connection-migration events; stabilize once the
       OpenSSL 3.6+ requirement fits the default toolchain
 - [ ] Dedicated WebSocket relay / pass-through listener mode

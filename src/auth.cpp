@@ -63,7 +63,7 @@ void Auth::clear_cookie(uvcpp::uvcpp_web_response& resp) {
 void Auth::deny(uvcpp::uvcpp_web_response& resp, int status, const std::string& error,
                 const std::string& code) {
   nlohmann::json body = {{"ok", false}, {"error", error}, {"code", code}};
-  resp.status(status).set_header("Cache-Control", "no-store").json_str(body.dump());
+  resp.status(status).set_header("cache-control", "no-store").json_str(body.dump());
   resp.end();
 }
 

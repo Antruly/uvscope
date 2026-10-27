@@ -62,6 +62,7 @@ jobs:
             -DUVCPP_ROOT="$PWD/.deps/libuvcpp"
           cmake --build build -j"$(nproc)"
           ./build/uvscope --self-check
+          bash ./scripts/tls-smoke.sh ./build/uvscope 18830
           bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788
       - name: Resolve version
         id: version

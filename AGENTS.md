@@ -11,6 +11,7 @@ This repository is designed for incremental, verifiable agent work. Read
   - `./build/uvscope --self-check`
   - `bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788`
   - `bash ./scripts/h2-smoke.sh ./build/uvscope 18820 18821`
+  - `bash ./scripts/tls-smoke.sh ./build/uvscope 18830`
   - `npm --prefix web run build`
   - `mkdocs build`
 - No second networking stack. All target I/O goes through libuvcpp.
@@ -48,13 +49,14 @@ patches retired with libuvcpp 1.8.2 in `docs/LIBUVCPP_UPSTREAM.zh-CN.md` are the
 3. `./build/uvscope --self-check`
 4. `bash ./scripts/smoke-test.sh ./build/uvscope 18787 18788`
 5. `bash ./scripts/h2-smoke.sh ./build/uvscope 18820 18821`
-6. `mkdocs build` and `./scripts/bench.sh ./build/uvscope` (record the reference run)
-7. CI green on Linux x64, Windows x64 MinGW and macOS arm64
-8. Update the version in `CMakeLists.txt`, `web/package.json`, `web/package-lock.json`,
+6. `bash ./scripts/tls-smoke.sh ./build/uvscope 18830`
+7. `mkdocs build` and `./scripts/bench.sh ./build/uvscope` (record the reference run)
+8. CI green on Linux x64, Windows x64 MinGW and macOS arm64
+9. Update the version in `CMakeLists.txt`, `web/package.json`, `web/package-lock.json`,
    `web/src/stores/auth.ts`, `packaging/windows/uvscope.iss` and the docs
-9. Update `CHANGELOG.md` and tag `v<version>`
-10. Verify release assets: Linux x64/arm64 tar/deb/rpm, Windows zip/setup.exe, macOS tar.gz,
+10. Update `CHANGELOG.md` and tag `v<version>`
+11. Verify release assets: Linux x64/arm64 tar/deb/rpm, Windows zip/setup.exe, macOS tar.gz,
     `SHA256SUMS`, `SHA256SUMS.sigstore.json` and the SPDX SBOM
-11. Verify the published Linux artifact with `--version` and `--self-check`
+12. Verify the published Linux artifact with `--version` and `--self-check`
 
 Windows arm64, HTTP/3 and native plugin loading are not part of the 1.x release matrix.

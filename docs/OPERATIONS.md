@@ -84,6 +84,62 @@ must be applied by the operator.
 and the event history. Terminal sessions do not survive a daemon restart; proxies, listeners and
 SOCKS5 servers with `autoStart` are restored from SQLite.
 
+## TLS, HTTP/2 and HTTP/3
+
+The built-in TLS listener (`--tls-cert` / `--tls-key`) serves **HTTP/2 and HTTP/1.1**. Response
+header names are normalized to lowercase because HTTP/2 rejects uppercase field names; a
+mixed-case header used to make the h2 stream hang. `scripts/tls-smoke.sh` verifies both the h2
+path and the HTTP/1.1 fallback.
+
+HTTP/3 is **not served by the embedded webapp yet**: libuvcpp's h3 transport is implemented below
+the webapp, and the webapp still tries to send the response through a TCP connection, so h3
+responses are dropped after the request is routed. The HTTP/3 **probe client**
+(`protocol: "http3"` in `/api/http/send`) works against h3-capable endpoints and is useful for
+testing. For h3 to a browser, terminate at an h3-capable edge: nginx 1.25+ built with
+`--with-http_v3_module` (plus UDP port forwarding), or a Cloudflare proxy/tunnel.
+
+The nginx example below is optional; it is useful for HTTP/3 or when you prefer an edge proxy. In
+that mode nginx terminates TLS and proxies HTTP/1.1 to uvscope on loopback:
+
+```nginx
+# In the http {} block:
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 8788 ssl http2;
+    server_name example.com;
+
+    ssl_certificate     /etc/nginx/certs/uvscope.crt;
+    ssl_certificate_key /etc/nginx/certs/uvscope.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
+
+`listen ... ssl http2` gives browsers HTTP/2 to nginx while nginx proxies HTTP/1.1 to uvscope.
+HTTP/3 needs a QUIC-capable edge: nginx 1.25+ built with `--with-http_v3_module` (and UDP port
+forwarding), or a Cloudflare proxy/tunnel. The embedded uvscope listener does not expose HTTP/3
+until the webapp h3 response path is fixed upstream.
+
+The certificate must be trusted by the client. A public CA (for example Let's Encrypt via
+DNS-01) is the right choice for a public hostname. A Cloudflare Origin CA certificate is trusted
+only when Cloudflare proxies the hostname; for direct access, install the Cloudflare Origin CA
+root on each client or use a publicly trusted certificate.
+
 ## Logs
 
 uvscope logs to stderr. Run it under your service manager to capture output:
