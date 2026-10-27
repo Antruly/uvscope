@@ -13,7 +13,7 @@ jobs:
     name: Frontend bundle
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -41,7 +41,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
@@ -94,7 +94,7 @@ jobs:
     runs-on: windows-latest
     needs: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
@@ -180,7 +180,7 @@ jobs:
     runs-on: macos-14
     needs: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           name: web-dist
@@ -240,7 +240,7 @@ jobs:
     # the supply-chain pipeline before tagging.
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Download only the platform packages. `web-dist` is a build input for the
       # platform jobs, not a release asset; downloading every artifact used to
       # leak its JS/CSS into the release.
