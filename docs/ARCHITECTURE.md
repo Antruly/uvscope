@@ -318,15 +318,15 @@ not an HTTP 500 for the API; it is a successful probe request whose `ok` is fals
 
 Every release asset is published with `SHA256SUMS`, a Sigstore keyless signature over the
 checksums (`SHA256SUMS.sigstore.json`) and a generated SPDX SBOM. Windows arm64 and the
-experimental HTTP/3 build are outside the 1.x release matrix.
+HTTP/3 build with QUIC are outside the 1.x release matrix.
 
 ## Known architectural gaps
 
 - HTTP/2 works over TLS (ALPN `h2`, stream IDs, GOAWAY and frame summaries) and is validated at
-  runtime on Linux, Windows MinGW and macOS arm64. HTTP/3/QUIC remain experimental and closed in
-  release builds. The QUIC SDK build reports H3 ALPN, stream IDs and peer GOAWAY; it does not
+  runtime on Linux, Windows MinGW and macOS arm64. HTTP/3/QUIC need a QUIC-enabled SDK
+  (OpenSSL 3.6+); the default release build keeps them off. The QUIC SDK build reports H3 ALPN, stream IDs and peer GOAWAY; it does not
   expose an H3 error code, QPACK summaries, 0-RTT or migration events. On Unix the SDK install
-  carries the custom OpenSSL lib directory in `libuvcpp.so`'s RUNPATH so the experimental daemon
+  carries the custom OpenSSL lib directory in `libuvcpp.so`'s RUNPATH so a QUIC-enabled daemon
   starts without `LD_LIBRARY_PATH`.
 - Preview and probes still cap bodies at 4 MiB; larger responses can be streamed to a staging
   file and downloaded (512 MiB cap, HTTP/1.1, attachment-only). A failed transfer keeps its

@@ -32,12 +32,12 @@ pin another release, `UVCPP_ENABLE_NGHTTP2=OFF` to build without HTTP/2, or
 `UVCPP_ENABLE_BROTLI=OFF` to build without brotli (the daemon then advertises and decodes only
 gzip/deflate; the smoke test skips its brotli assertion).
 
-### Experimental HTTP/3 and QUIC
+### HTTP/3 and QUIC builds
 
 libuvcpp's QUIC and HTTP/3 modules need an OpenSSL with `SSL_set_quic_tls_cbs`; that API is
 only in OpenSSL **3.6+**. The OpenSSL shipped by Ubuntu 22.04/24.04 (3.0.x), mainline 3.4/3.5
 and quictls do not have it, and the bundled ngtcp2 1.25 backend rejects them. Release builds
-therefore keep `UVCPP_ENABLE_QUIC=OFF`. To build an experimental SDK, compile OpenSSL 3.6+ into
+therefore keep `UVCPP_ENABLE_QUIC=OFF`. To build a QUIC-enabled SDK, compile OpenSSL 3.6+ into
 a prefix and point both the SDK and uvscope at it:
 
 ```sh
@@ -61,7 +61,7 @@ The resulting daemon reports `http3: true` / `quic: true` from `/api/health`; pa
 way must ship or require that OpenSSL. Do not mix a custom OpenSSL with the system one in release
 artifacts.
 
-The experimental end-to-end check uses a local HTTP/3 origin, so it does not depend on a public
+The QUIC end-to-end check uses a local HTTP/3 origin, so it does not depend on a public
 endpoint:
 
 ```sh
@@ -74,7 +74,7 @@ g++ -std=c++17 -O2 -pthread scripts/h3-test-server.cpp \
 bash ./scripts/quic-smoke-test.sh ./build-quic/uvscope ./build-quic/h3-test-server
 ```
 
-The `QUIC experimental` workflow (`.github/workflows/quic.yml`) runs the same check on Linux,
+The `QUIC` workflow (`.github/workflows/quic.yml`) runs the same check on Linux,
 weekly, on demand, and when QUIC-related files change. It builds OpenSSL 3.6.5 from source and
 caches the prefix between runs.
 

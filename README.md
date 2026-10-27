@@ -46,7 +46,7 @@ Most tools stop at request/response. uvscope is built around the whole handshake
 | Large-response streaming download with progress, cancel and Range resume | Stable |
 | Response preview: sandboxed HTML, images, audio, video and PDF | Stable (scripts opt-in) |
 | SOAP 1.1 + WSDL operation discovery | Stable |
-| HTTP/3 and raw QUIC probes | Experimental — client-side; browser h3 needs an h3-capable edge |
+| HTTP/3 and raw QUIC probes | Supported in QUIC-enabled builds; browser h3 needs an h3-capable edge |
 
 ### Realtime and transports
 
@@ -88,12 +88,12 @@ Most tools stop at request/response. uvscope is built around the whole handshake
 
 ## Download
 
-Prebuilt **v1.0.0** assets are on the
-[Releases page](https://github.com/Antruly/uvscope/releases/tag/v1.0.0). The release ships with
+Prebuilt **v1.0.1** assets are on the
+[Releases page](https://github.com/Antruly/uvscope/releases/tag/v1.0.1). The release ships with
 `SHA256SUMS`, a Sigstore keyless signature covering the checksums and a generated SPDX SBOM.
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-1.0.0-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-1.0.1-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 Verify a download with `sha256sum -c SHA256SUMS` and
@@ -216,7 +216,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the data model and request 
 | Windows x64 (MinGW) | zip, setup.exe | CI build, self-check and ConPTY smoke |
 | macOS arm64 | tar.gz | CI build, self-check and HTTP/2 runtime check |
 | Windows arm64 | — | Post-1.0 (MSYS2 CLANGARM64 is still preview) |
-| HTTP/3 / QUIC | Experimental | Requires an OpenSSL 3.2+ SDK build; closed in release builds |
+| HTTP/3 / QUIC | QUIC-enabled builds | Requires an OpenSSL 3.6+ SDK build; default release assets keep QUIC off |
 
 ## Security model
 

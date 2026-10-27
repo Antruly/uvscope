@@ -62,7 +62,62 @@ const quickCommands = ref<Array<{
   descriptionZh: string
   category: string
 }>>([])
-const hostPlatform = /Windows/i.test(navigator.userAgent) ? 'windows' : 'linux'
+type CommandPlatform = 'linux' | 'windows'
+type PlatformMode = 'auto' | CommandPlatform
+const platformModes: PlatformMode[] = ['auto', 'linux', 'windows']
+const storedPlatformMode = localStorage.getItem('uvscope-terminal-command-platform')
+const platformMode = ref<PlatformMode>(
+  storedPlatformMode === 'linux' || storedPlatformMode === 'windows' ? storedPlatformMode : 'auto',
+)
+// Per-session prompt hint. Auto mode follows the session shell first and the
+// last prompt seen in that terminal second, so an SSH session into another OS
+// switches the quick commands without changing the global preference.
+const promptPlatforms = ref<Record<string, CommandPlatform>>({})
+const promptTails = new Map<string, string>()
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g
+
+function setPlatformMode(mode: PlatformMode) {
+  platformMode.value = mode
+  localStorage.setItem('uvscope-terminal-command-platform', mode)
+}
+
+function resetPromptHint(id: string) {
+  promptTails.delete(id)
+  if (promptPlatforms.value[id]) {
+    const next = { ...promptPlatforms.value }
+    delete next[id]
+    promptPlatforms.value = next
+  }
+}
+
+function notePrompt(id: string, text: string) {
+  if (!text) return
+  let tail = (promptTails.get(id) || '') + text.replace(ANSI_RE, '')
+  if (tail.length > 2048) tail = tail.slice(-2048)
+  promptTails.set(id, tail)
+  const clean = tail.replace(/\r/g, '')
+  let detected: CommandPlatform | '' = ''
+  if (
+    /(^|\n)PS [A-Za-z]:\\[^\n]*>\s*$/.test(clean) ||
+    /Microsoft Windows \[Version[^\n]*\n[^\n]*>\s*$/.test(clean) ||
+    /(^|\n)[A-Za-z]:\\[^\n>]*>\s*$/.test(clean)
+  ) {
+    detected = 'windows'
+  } else if (/(^|\n)[^\n@]*@[^\n:]+:[^\n]*[#$]\s*$/.test(clean)) {
+    detected = 'linux'
+  }
+  if (detected && promptPlatforms.value[id] !== detected) {
+    promptPlatforms.value = { ...promptPlatforms.value, [id]: detected }
+  }
+}
+
+const commandPlatform = computed<CommandPlatform>(() => {
+  if (platformMode.value !== 'auto') return platformMode.value
+  const hint = promptPlatforms.value[activeId.value]
+  if (hint) return hint
+  const shell = (activeSession.value?.shell || '').toLowerCase()
+  return /(powershell|pwsh|cmd\.exe|\.exe\b|[a-z]:\\)/.test(shell) ? 'windows' : 'linux'
+})
 const pendingInput = new Map<string, string>()
 
 const terminals = new Map<string, Terminal>()
@@ -289,14 +344,17 @@ function connect(id: string) {
       try {
         message = JSON.parse(event.data)
       } catch {
+        notePrompt(id, event.data)
         term.write(event.data)
         return
       }
       if (message.type === 'attached') {
         term.reset()
+        resetPromptHint(id)
         setWsState(id, 'connected')
       } else if (message.type === 'reset') {
         term.reset()
+        resetPromptHint(id)
       } else if (message.type === 'exit') {
         const code = Number(message.code ?? -1)
         setWsState(id, 'disconnected')
@@ -306,7 +364,9 @@ function connect(id: string) {
         term.write(`\r\n\x1b[31m${String(message.error || '')}\x1b[0m\r\n`)
       }
     } else if (event.data instanceof ArrayBuffer) {
-      term.write(new Uint8Array(event.data))
+      const bytes = new Uint8Array(event.data)
+      notePrompt(id, new TextDecoder().decode(bytes))
+      term.write(bytes)
     }
   }
   socket.onclose = (event) => {
@@ -487,7 +547,7 @@ function reconnect(id: string) {
 async function loadQuickCommands() {
   try {
     const response = await get<{ ok: boolean; commands: Array<Record<string, unknown>> }>(
-      `/api/terminal/commands?platform=${hostPlatform}`,
+      `/api/terminal/commands?platform=${commandPlatform.value}`,
     )
     if (!response.ok) return
     quickCommands.value = response.commands
@@ -580,6 +640,10 @@ onMounted(() => {
   pollTimer = window.setInterval(() => void loadSessions(), 1800)
 })
 onActivated(() => {
+  const stored = localStorage.getItem('uvscope-terminal-command-platform')
+  if (stored === 'auto' || stored === 'linux' || stored === 'windows') {
+    platformMode.value = stored
+  }
   void loadQuickCommands()
   void loadSessions().then(() => {
     for (const id of openIds.value) {
@@ -610,6 +674,8 @@ watch(activeId, (id) => {
     sendResize(id)
   })
 })
+
+watch(commandPlatform, () => void loadQuickCommands())
 </script>
 
 <template>
@@ -702,6 +768,14 @@ watch(activeId, (id) => {
 
         <div class="terminal-quickbar">
           <span class="eyebrow">{{ t('terminal.quick.title') }}</span>
+          <span class="terminal-platform" role="group" :aria-label="t('terminal.quick.platform')" :title="t('terminal.quick.platformHint')">
+            <button
+              v-for="mode in platformModes"
+              :key="mode"
+              :class="{ active: platformMode === mode }"
+              @click="setPlatformMode(mode)"
+            >{{ t(`terminal.quick.${mode}`) }}</button>
+          </span>
           <button
             v-for="command in quickCommands"
             :key="command.id"

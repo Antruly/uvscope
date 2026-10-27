@@ -4,7 +4,21 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.1] - 2026-10-27
+
+### Added
+
+- The virtual terminal quick-command bar has an **Auto / Linux / Windows** selector, shared with
+  the command library and persisted per browser. Auto follows the active session's shell and the
+  last prompt seen in that terminal: a Windows browser connected to a Linux host shows Linux
+  commands, an SSH session into Windows switches to Windows commands, and leaving that session
+  switches back. The command library platform filter no longer follows the browser UA.
+
+### Changed
+
+- Removed the “experimental” label from the HTTP/3 and QUIC UI, docs and workflow. H3/QUIC are
+  described as requiring a QUIC-enabled SDK (OpenSSL 3.6+); the default release assets still keep
+  QUIC off.
 
 ### Fixed
 

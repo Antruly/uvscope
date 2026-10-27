@@ -85,7 +85,7 @@ const en: Record<string, string> = {
   'help.tls.textAfter': ' only while testing.',
   'help.http2.title': 'HTTP/2 or HTTP/3 errors',
   'help.http2.text':
-    'Selecting H2 negotiates HTTP/2 over TLS (ALPN h2) and lists the received frame summary in the timing tab. H3 remains experimental and is disabled in release builds. Builds without nghttp2 reject H2 explicitly; use HTTP/1.1 there.',
+    'Selecting H2 negotiates HTTP/2 over TLS (ALPN h2) and lists the received frame summary in the timing tab. H3 needs a QUIC-enabled SDK (OpenSSL 3.6+) and is available when this build includes QUIC. Builds without nghttp2 reject H2 explicitly; use HTTP/1.1 there.',
   'help.proxy.title': 'A proxy port will not bind',
   'help.proxy.text':
     'Another process owns the port, or the listener is already running. Stop the old proxy, choose another port, and check the listener host.',
@@ -185,7 +185,7 @@ const zh: Record<string, string> = {
   'help.tls.textAfter': '。',
   'help.http2.title': 'HTTP/2 或 HTTP/3 错误',
   'help.http2.text':
-    '选择 H2 会通过 TLS 协商 HTTP/2（ALPN h2），并在耗时标签中列出收到的帧摘要。H3 仍是实验性功能，发布构建默认关闭。未启用 nghttp2 的构建会明确拒绝 H2，请改用 HTTP/1.1。',
+    '选择 H2 会通过 TLS 协商 HTTP/2（ALPN h2），并在耗时标签中列出收到的帧摘要。H3 需要启用 QUIC 的 SDK（OpenSSL 3.6+），仅在构建包含 QUIC 时可用。未启用 nghttp2 的构建会明确拒绝 H2，请改用 HTTP/1.1。',
   'help.proxy.title': '代理端口无法绑定',
   'help.proxy.text':
     '端口被其他进程占用，或监听器已在运行。停止旧代理，换一个端口，并检查监听地址。',

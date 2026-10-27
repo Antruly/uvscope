@@ -1,4 +1,4 @@
-name: QUIC experimental
+name: QUIC
 
 on:
   workflow_dispatch:

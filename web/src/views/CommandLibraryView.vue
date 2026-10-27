@@ -35,8 +35,9 @@ const i18n = useI18nStore()
 const t = i18n.t
 const router = useRouter()
 
-const detectedPlatform = /Windows/i.test(navigator.userAgent) ? 'windows' : 'linux'
-const platform = ref<'linux' | 'windows' | ''>(detectedPlatform)
+const storedCommandPlatform = localStorage.getItem('uvscope-terminal-command-platform')
+const preferredPlatform: 'linux' | 'windows' = storedCommandPlatform === 'windows' ? 'windows' : 'linux'
+const platform = ref<'linux' | 'windows' | ''>(preferredPlatform)
 const category = ref('')
 const search = ref('')
 const commands = ref<CommandEntry[]>([])
@@ -49,7 +50,7 @@ const form = ref({
   name: '',
   command: '',
   category: 'custom',
-  platform: detectedPlatform as 'linux' | 'windows' | 'both',
+  platform: preferredPlatform as 'linux' | 'windows' | 'both',
   description: '',
   quick: false,
 })
@@ -100,7 +101,7 @@ function openCreate() {
     name: '',
     command: '',
     category: 'custom',
-    platform: detectedPlatform as 'linux' | 'windows',
+    platform: (platform.value || preferredPlatform) as 'linux' | 'windows',
     description: '',
     quick: false,
   }
@@ -224,6 +225,9 @@ async function restoreDefaults() {
 }
 
 watch([platform, category], () => void load())
+watch(platform, (value) => {
+  if (value) localStorage.setItem('uvscope-terminal-command-platform', value)
+})
 watch(search, () => {
   window.clearTimeout(searchTimer)
   searchTimer = window.setTimeout(() => void load(), 250)
@@ -252,9 +256,8 @@ onMounted(() => void load())
 
     <section class="card command-library-toolbar">
       <div class="segmented">
-        <button :class="{ active: platform === detectedPlatform }" @click="platform = detectedPlatform">
-          {{ detectedPlatform === 'windows' ? 'Windows' : 'Linux / Unix' }}
-        </button>
+        <button :class="{ active: platform === 'linux' }" @click="platform = 'linux'">Linux / Unix</button>
+        <button :class="{ active: platform === 'windows' }" @click="platform = 'windows'">Windows</button>
         <button :class="{ active: platform === '' }" @click="platform = ''">{{ t('terminal.commands.allPlatforms') }}</button>
       </div>
       <label class="field field--grow command-search">

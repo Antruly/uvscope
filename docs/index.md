@@ -56,16 +56,17 @@ All four kinds register with the same supervisor:
 
 ## Release
 
-v1.0.0 is the first stable release. Assets, `SHA256SUMS`, the Sigstore signature and the SPDX
-SBOM are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v1.0.0).
+v1.0.1 is the current stable release. Assets, `SHA256SUMS`, the Sigstore signature and the SPDX
+SBOM are on the [Releases page](https://github.com/Antruly/uvscope/releases/tag/v1.0.1).
 
 | Platform | Assets |
 | --- | --- |
 | Linux x64 / arm64 | `.tar.gz`, `.deb`, `.rpm` |
-| Windows x64 (MinGW) | `.zip`, `uvscope-1.0.0-setup.exe` |
+| Windows x64 (MinGW) | `.zip`, `uvscope-1.0.1-setup.exe` |
 | macOS arm64 | `.tar.gz` (Homebrew `libuv` and `openssl@3`) |
 
-HTTP/3 and raw QUIC remain experimental and are closed in release builds. Windows arm64 is
+HTTP/3 and raw QUIC are available in QUIC-enabled builds; the default release assets keep QUIC
+off. Windows arm64 is
 planned for a post-1.0 release.
 
 ## Project links

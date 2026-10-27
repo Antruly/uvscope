@@ -1417,7 +1417,7 @@ onBeforeUnmount(() => {
                 :disabled="!capabilities.http3"
                 :title="capabilities.http3 ? t('http.protocol.http3Title') : t('http.protocol.http3Unavailable')"
                 @click="protocol = 'http3'"
-              >H3 <em>{{ t('http.protocol.experimental') }}</em></button>
+              >H3</button>
             </div>
             <div class="request-toolbar__right">
               <button class="ghost-toggle" :class="{ active: advancedOpen }" @click="advancedOpen = !advancedOpen">
