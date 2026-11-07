@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command developer build: libuvcpp 1.8.2 SDK + Vue frontend + uvscope.
+# One-command developer build: libuvcpp 1.9.1 SDK + Vue frontend + uvscope.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,7 +21,7 @@ sdk_is_current() {
   patch="$(awk '/^#define UVCPP_VERSION_PATCH /{print $3; exit}' "${header}")"
   [[ "${major}" =~ ^[0-9]+$ && "${minor}" =~ ^[0-9]+$ && "${patch}" =~ ^[0-9]+$ ]] || return 1
   (( major > 1 || (major == 1 && (minor > 8 || (minor == 8 && patch >= 2))) )) || return 1
-  # The managed SDK enables HTTP/2 and brotli by default; a cached 1.8.2 tree built
+  # The managed SDK enables HTTP/2 and brotli by default; a cached 1.9.1 tree built
   # without them must be rebuilt rather than silently dropping the features.
   if [[ "${UVCPP_ENABLE_NGHTTP2:-ON}" == "ON" ]]; then
     grep -q '^#  define UVCPP_NGHTTP2_ENABLE 1$' "${prefix}/include/uvcpp/uvcpp_config.h" || return 1

@@ -46,12 +46,13 @@ include a screenshot at 1600×1000 (and a narrow viewport if relevant). Follow t
 
 ## libuvcpp changes
 
-uvscope builds against the libuvcpp **v1.8.2** release SDK. One patch is currently carried on top
+uvscope builds against the libuvcpp **v1.9.1** release SDK. One patch is currently carried on top
 of that tag: `patches/upstream/0005-ws-client-handshake-headers.patch`, which adds
 `uvcpp_ws_client::set_handshake_header()` so the backend WebSocket debugger can send
 `Authorization`, `Origin`, `Cookie` and `Sec-WebSocket-Protocol` during the Upgrade request. The
 earlier SNI, POSIX timeout, install-completeness and SOCKS5 stage patches were retired in
-1.8.1/1.8.2; see [docs/LIBUVCPP_UPSTREAM.zh-CN.md](docs/LIBUVCPP_UPSTREAM.zh-CN.md).
+1.8.1/1.8.2; v1.9.1 is required for `uvcpp_web_app::websocket_connect()` (HTTP/2 and HTTP/3
+WebSockets). See [docs/LIBUVCPP_UPSTREAM.zh-CN.md](docs/LIBUVCPP_UPSTREAM.zh-CN.md).
 
 If a new patch is needed, it must include:
 
