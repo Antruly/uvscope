@@ -12,10 +12,11 @@ Node.js 20+ is required for the frontend.
 
 ## The libuvcpp SDK
 
-uvscope requires the libuvcpp **1.8.2** release SDK. Earlier releases lack the fixes uvscope used
+uvscope requires the libuvcpp **1.9.1** release SDK. Earlier releases lack the fixes uvscope used
 to carry as local patches (TLS SNI, POSIX blocking-I/O timeouts, a complete `cmake --install`
-tree and the SOCKS5 proxy failure stage); those are all part of 1.8.1/1.8.2. Configure fails
-early when the detected SDK is older than 1.8.2.
+tree and the SOCKS5 proxy failure stage); those are all part of 1.8.1/1.8.2. 1.9.1 is also
+required for `uvcpp_web_app::websocket_connect()` (HTTP/2 and HTTP/3 WebSockets). Configure
+fails early when the detected SDK is older than 1.9.1.
 
 Build the SDK from the release tag:
 
@@ -23,7 +24,7 @@ Build the SDK from the release tag:
 ./scripts/build-libuvcpp.sh
 ```
 
-This clones `v1.8.2` into `.deps/libuvcpp-src`, applies the patches in
+This clones `v1.9.1` into `.deps/libuvcpp-src`, applies the patches in
 [`patches/upstream/`](../patches/upstream/) (currently the WebSocket handshake-header patch),
 builds a lean runtime (HTTP/1.1 + HTTP/2, WebSocket, webapp, SSL, SQLite, WSDL, brotli) and
 installs it to `.deps/libuvcpp`. A cached source

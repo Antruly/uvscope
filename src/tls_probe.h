@@ -13,7 +13,7 @@ struct TlsProbeInput {
 };
 
 // Connects to an https:// URL and returns the peer certificate chain plus
-// verification details. Requires libuvcpp 1.8.2 (peer_cert_chain_der); older
+// verification details. Requires libuvcpp 1.9.1 (peer_cert_chain_der); older
 // SDKs return a structured "unsupported" result.
 nlohmann::json run_tls_probe(const TlsProbeInput& input);
 

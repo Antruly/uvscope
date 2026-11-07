@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the libuvcpp release runtime used by uvscope.
 #
-# uvscope requires libuvcpp 1.8.2 or newer; the fixes uvscope used to carry as
+# uvscope requires libuvcpp 1.9.1 or newer; the fixes uvscope used to carry as
 # local patches (TLS SNI, POSIX blocking-I/O timeouts, complete install tree,
 # SOCKS5 proxy stage) are part of the released SDK. See
 # docs/LIBUVCPP_UPSTREAM.zh-CN.md for the history.
@@ -11,7 +11,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_DIR="${1:-${ROOT_DIR}/.deps/libuvcpp-src}"
 PREFIX="${2:-${ROOT_DIR}/.deps/libuvcpp}"
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
-LIBUVCPP_TAG="${LIBUVCPP_TAG:-v1.8.2}"
+LIBUVCPP_TAG="${LIBUVCPP_TAG:-v1.9.1}"
 
 mkdir -p "$(dirname "${PREFIX}")"
 PREFIX="$(cd "$(dirname "${PREFIX}")" && pwd)/$(basename "${PREFIX}")"

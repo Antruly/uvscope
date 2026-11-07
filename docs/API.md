@@ -316,14 +316,14 @@ at the top level) plus `live`:
 - The chain is returned even when verification fails (self-signed, expired, wrong host), so the
   UI can inspect the certificate; `verified` is false and `verifyError` carries the OpenSSL text.
 - `insecure: true` disables verification for the handshake itself.
-- The build requires libuvcpp 1.8.2, which provides `peer_cert_chain_der`.
+- The build requires libuvcpp 1.9.1, which provides `peer_cert_chain_der`.
 - HTTP/3 is not supported by this probe; ALPN is reported when the build enables HTTP/2.
 
 `POST /api/socks5/servers` binds a local SOCKS5 port. Leaving `username` and `password` empty
 enables no-auth; providing both enables RFC 1929 username/password authentication. The password is
 stored as a PBKDF2 hash and is never returned. SOCKS5 servers default to `127.0.0.1` and must be
 moved to a LAN address explicitly. Sessions report the requested command, target, peer, status and
-error. The libuvcpp 1.8.2 session-end callback adds `bytesClientToTarget`,
+error. The libuvcpp 1.9.1 session-end callback adds `bytesClientToTarget`,
 `bytesTargetToClient`, `udpDatagrams`, `udpBytes`, `durationMs`, `endedAt` and `endStatus`.
 
 With `isolated: true` the server runs in a `--socks5-child` process. Its snapshot includes

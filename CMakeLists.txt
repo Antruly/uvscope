@@ -25,7 +25,7 @@ option(UVSCOPE_PACKAGE_RUNTIME "Install the libuvcpp runtime beside uvscope" ON)
 # https://github.com/Antruly/libuvcpp/releases). No package manager or
 # additional networking library is required.
 # ---------------------------------------------------------------------------
-set(UVCPP_ROOT "" CACHE PATH "Path to an extracted libuvcpp 1.8.2 SDK")
+set(UVCPP_ROOT "" CACHE PATH "Path to an extracted libuvcpp 1.9.1 SDK")
 set(_uvcpp_hints "")
 if(UVCPP_ROOT)
   list(APPEND _uvcpp_hints "${UVCPP_ROOT}")
@@ -46,21 +46,21 @@ find_library(UVCPP_LIBRARY
   DOC "libuvcpp library")
 if(NOT UVCPP_INCLUDE_DIR OR NOT UVCPP_LIBRARY)
   message(FATAL_ERROR
-    "libuvcpp 1.8.2 was not found.\n"
-    "Download a release SDK and configure with -DUVCPP_ROOT=/path/to/libuvcpp-1.8.2-<platform>,\n"
+    "libuvcpp 1.9.1 was not found.\n"
+    "Download a release SDK and configure with -DUVCPP_ROOT=/path/to/libuvcpp-1.9.1-<platform>,\n"
     "or set the UVCPP_ROOT environment variable. See docs/BUILDING.md.")
 endif()
 get_filename_component(UVCPP_LIBRARY_DIR "${UVCPP_LIBRARY}" DIRECTORY)
 message(STATUS "libuvcpp headers: ${UVCPP_INCLUDE_DIR}")
 message(STATUS "libuvcpp library: ${UVCPP_LIBRARY}")
 
-# uvscope requires the 1.8.2 SDK: TLS peer chains, SOCKS5 session statistics,
+# uvscope requires the 1.9.1 SDK: TLS peer chains, SOCKS5 session statistics,
 # AF_UNSPEC resolution and the blocking-I/O deadline are all part of it. Fail
 # here instead of silently building a runtime that is missing those paths.
 set(_uvcpp_version_header "${UVCPP_INCLUDE_DIR}/uvcpp/uvcpp_version.h")
 if(NOT EXISTS "${_uvcpp_version_header}")
   message(FATAL_ERROR
-    "libuvcpp version header missing from ${UVCPP_INCLUDE_DIR}; use a 1.8.2 release SDK.")
+    "libuvcpp version header missing from ${UVCPP_INCLUDE_DIR}; use a 1.9.1 release SDK.")
 endif()
 file(STRINGS "${_uvcpp_version_header}" _uvcpp_version_major
   REGEX "^#define UVCPP_VERSION_MAJOR ([0-9]+)$")
@@ -79,10 +79,10 @@ endif()
 set(UVCPP_DETECTED_VERSION
   "${UVCPP_VERSION_MAJOR}.${UVCPP_VERSION_MINOR}.${UVCPP_VERSION_PATCH}")
 message(STATUS "libuvcpp version: ${UVCPP_DETECTED_VERSION}")
-if(UVCPP_DETECTED_VERSION VERSION_LESS "1.8.2")
+if(UVCPP_DETECTED_VERSION VERSION_LESS "1.9.1")
   message(FATAL_ERROR
-    "libuvcpp ${UVCPP_DETECTED_VERSION} is too old; uvscope requires 1.8.2 or newer.\n"
-    "Rebuild the SDK with ./scripts/build-libuvcpp.sh or point UVCPP_ROOT at a 1.8.2 release.")
+    "libuvcpp ${UVCPP_DETECTED_VERSION} is too old; uvscope requires 1.9.1 or newer.\n"
+    "Rebuild the SDK with ./scripts/build-libuvcpp.sh or point UVCPP_ROOT at a 1.9.1 release.")
 endif()
 
 # libuvcpp.dll is required next to the executable on Windows. The archive's

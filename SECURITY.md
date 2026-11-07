@@ -63,7 +63,7 @@ Treat access to uvscope as equivalent to code execution with the daemon user's n
 
 ## Dependency vulnerabilities
 
-uvscope pins libuvcpp 1.8.2 (release SDK, plus the minimal WebSocket handshake-header patch kept
+uvscope pins libuvcpp 1.9.1 (release SDK, plus the minimal WebSocket handshake-header patch kept
 in [`patches/upstream/`](patches/upstream/)). The release also publishes an SPDX SBOM, a
 `SHA256SUMS` file and a Sigstore keyless signature over the checksums so consumers can audit and
 verify what they run. If a dependency advisory applies, open a normal issue for non-sensitive

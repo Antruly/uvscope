@@ -14,6 +14,12 @@ All notable changes to uvscope are documented here. The format is based on
   `cancelled` result immediately instead of waiting for the configured timeout, and is not written
   to history.
 
+### Changed
+
+- Build against **libuvcpp 1.9.1**. The HTTP/2 terminal route uses
+  `uvcpp_web_app::websocket_connect()`, which is newer than the previous 1.8.2
+  SDK; configure now requires 1.9.1.
+
 ### Fixed
 
 - **Terminal WebSocket over HTTP/2.** Chrome and Edge use RFC 8441 extended CONNECT when the
