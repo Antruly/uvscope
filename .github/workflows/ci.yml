@@ -27,7 +27,7 @@ jobs:
       - run: npm ci --prefix web --no-audit --no-fund
       - run: npm --prefix web run check:i18n
       - run: npm --prefix web run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: web/dist
