@@ -88,12 +88,12 @@ Most tools stop at request/response. uvscope is built around the whole handshake
 
 ## Download
 
-Prebuilt **v1.0.1** assets are on the
-[Releases page](https://github.com/Antruly/uvscope/releases/tag/v1.0.1). The release ships with
+Prebuilt **v1.0.2** assets are on the
+[Releases page](https://github.com/Antruly/uvscope/releases/tag/v1.0.2). The release ships with
 `SHA256SUMS`, a Sigstore keyless signature covering the checksums and a generated SPDX SBOM.
 
 - Linux x64 / arm64: `.tar.gz`, `.deb`, `.rpm`
-- Windows x64 (MinGW): `.zip` and `uvscope-1.0.1-setup.exe`
+- Windows x64 (MinGW): `.zip` and `uvscope-1.0.2-setup.exe`
 - macOS arm64: `.tar.gz` (Homebrew `libuv` and `openssl@3` are required)
 
 Verify a download with `sha256sum -c SHA256SUMS` and

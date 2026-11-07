@@ -4,6 +4,23 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-11-08
+
+### Added
+
+- **Cancel in-flight HTTP requests.** The request console shows a **Cancel** button while a probe
+  is running. `/api/http/cancel` stops the probe by request id; HTTP/1.1 probes shut down the
+  connected socket, HTTP/2 and HTTP/3 probes stop their wait loop. A cancelled request returns a
+  `cancelled` result immediately instead of waiting for the configured timeout, and is not written
+  to history.
+
+### Fixed
+
+- **Terminal WebSocket over HTTP/2.** Chrome and Edge use RFC 8441 extended CONNECT when the
+  server advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL`. The terminal route is now registered for
+  both the HTTP/1.1 `Upgrade` table and the HTTP/2/HTTP/3 extended CONNECT table, so the terminal
+  no longer fails with `501 Not Implemented` in the browser.
+
 ## [1.0.1] - 2026-10-27
 
 ### Added
