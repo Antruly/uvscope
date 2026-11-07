@@ -12,6 +12,7 @@
 #include <regex>
 #include <sstream>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include <uv.h>
@@ -140,30 +141,33 @@ Socks5Proxy proxy_field(const nlohmann::json& body) {
 }
 
 
+template <typename WsConnection>
 struct TerminalWsAttachment {
   TerminalManager* manager = nullptr;
   std::string id;
-  uvcpp::uvcpp_ws_connection* conn = nullptr;
+  WsConnection* conn = nullptr;
   uv_timer_t* timer = nullptr;
   std::uint64_t last_seq = 0;
   bool exit_sent = false;
   bool closing = false;
 };
 
+template <typename WsConnection>
 void terminal_ws_cleanup(uv_timer_t* timer) {
-  auto* att = static_cast<TerminalWsAttachment*>(timer->data);
+  auto* att = static_cast<TerminalWsAttachment<WsConnection>*>(timer->data);
   if (att == nullptr) return;
   if (att->closing) return;
   att->closing = true;
   att->conn = nullptr;
   uv_timer_stop(timer);
   uv_close(reinterpret_cast<uv_handle_t*>(timer), [](uv_handle_t* handle) {
-    delete static_cast<TerminalWsAttachment*>(handle->data);
+    delete static_cast<TerminalWsAttachment<WsConnection>*>(handle->data);
   });
 }
 
+template <typename WsConnection>
 void terminal_ws_tick(uv_timer_t* timer) {
-  auto* att = static_cast<TerminalWsAttachment*>(timer->data);
+  auto* att = static_cast<TerminalWsAttachment<WsConnection>*>(timer->data);
   if (att == nullptr || att->conn == nullptr || att->manager == nullptr) {
     uv_timer_stop(timer);
     return;
@@ -195,7 +199,7 @@ void terminal_ws_tick(uv_timer_t* timer) {
     // A supervised isolated child came back with a fresh shell. The output
     // poll already reset the client because its sequence numbers restarted.
     att->exit_sent = false;
-    uv_timer_start(timer, terminal_ws_tick, 25, 25);
+    uv_timer_start(timer, terminal_ws_tick<WsConnection>, 25, 25);
   }
   if (!att->exit_sent && (state == "exited" || state == "error") &&
       att->last_seq >= next_seq) {
@@ -207,7 +211,7 @@ void terminal_ws_tick(uv_timer_t* timer) {
     att->exit_sent = true;
     if (isolated) {
       // Keep watching at a low rate so a supervisor restart can reattach.
-      uv_timer_start(timer, terminal_ws_tick, 500, 500);
+      uv_timer_start(timer, terminal_ws_tick<WsConnection>, 500, 500);
     } else {
       uv_timer_stop(timer);
     }
@@ -2398,9 +2402,8 @@ void Application::register_terminal_routes() {
               send_json(resp, 200, {{"ok", true}});
             });
 
-  app_.websocket("/api/terminal/ws/:id",
-                 [this](uvcpp::uvcpp_web_ws_request& ws) {
-                   auto* conn = ws.connection();
+  auto attach_terminal_ws = [this](uvcpp::uvcpp_web_ws_request& ws, auto* conn) {
+                   using WsConnection = std::remove_pointer_t<decltype(conn)>;
                    if (conn == nullptr) return;
                    auto principal = auth_.current(ws.request());
                    if (!principal || !role_can(principal->user.role, "terminal") ||
@@ -2442,7 +2445,7 @@ void Application::register_terminal_routes() {
                      }
                    }
 
-                   auto* attachment = new TerminalWsAttachment();
+                   auto* attachment = new TerminalWsAttachment<WsConnection>();
                    attachment->manager = terminal_.get();
                    attachment->id = *id;
                    attachment->conn = conn;
@@ -2505,20 +2508,31 @@ void Application::register_terminal_routes() {
                    });
                    auto cleanup = [attachment](uvcpp::ws_close_code, const std::string&) {
                      if (attachment->timer != nullptr) {
-                       terminal_ws_cleanup(attachment->timer);
+                       terminal_ws_cleanup<WsConnection>(attachment->timer);
                      }
                    };
                    conn->on_close(cleanup);
                    conn->on_error([attachment](int, const std::string&) {
                      if (attachment->timer != nullptr) {
-                       terminal_ws_cleanup(attachment->timer);
+                       terminal_ws_cleanup<WsConnection>(attachment->timer);
                      }
                    });
-                   uv_timer_start(timer, terminal_ws_tick, 25, 25);
+                   uv_timer_start(timer, terminal_ws_tick<WsConnection>, 25, 25);
                    terminal_->redraw(*id, nullptr);
                    const std::string hello = R"({"type":"attached","id":")" + *id + "\"}";
                    conn->send_text(hello.data(), hello.size());
+                 };
+
+  app_.websocket("/api/terminal/ws/:id",
+                 [attach_terminal_ws](uvcpp::uvcpp_web_ws_request& ws) {
+                   attach_terminal_ws(ws, ws.connection());
                  });
+  app_.websocket_connect(
+      "/api/terminal/ws/:id",
+      [attach_terminal_ws](uvcpp::uvcpp_web_ws_request& ws,
+                           uvcpp::uvcpp_web_ws_session& session) {
+        attach_terminal_ws(ws, &session);
+      });
 }
 
 // ---------------------------------------------------------------------------
