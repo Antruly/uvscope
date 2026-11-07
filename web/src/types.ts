@@ -212,6 +212,7 @@ export interface HttpDownload {
 export interface HttpResult {
   ok: boolean
   error?: string
+  cancelled?: boolean
   proxy?: Socks5ProxyInfo | null
   request?: {
     method: string

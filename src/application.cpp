@@ -1202,6 +1202,17 @@ void Application::register_debug_routes() {
     if (!principal) return;
     const auto body = parse_json(req, resp);
     if (!body) return;
+    const std::string client_request_id = string_field(*body, "clientRequestId");
+    if (!client_request_id.empty() &&
+        (client_request_id.size() > 80 ||
+         !std::all_of(client_request_id.begin(), client_request_id.end(),
+                      [](unsigned char c) {
+                        return std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.';
+                      }))) {
+      send_error(resp, 400, "invalid clientRequestId", "bad_request");
+      return;
+    }
+
     HttpProbeInput input = http_input_field(*body);
     if (input.url.empty()) {
       send_error(resp, 400, "url is required", "bad_request");
@@ -1212,9 +1223,35 @@ void Application::register_debug_routes() {
       send_error(resp, 400, body_error, "bad_request");
       return;
     }
-    post_job(
+
+    std::string probe_key;
+    if (!client_request_id.empty()) {
+      probe_key = std::to_string(principal->user.id) + ":" + client_request_id;
+      auto cancellation = std::make_shared<HttpProbeCancellation>();
+      input.cancellation = cancellation;
+      bool duplicate = false;
+      {
+        std::lock_guard<std::mutex> lock(http_probes_mutex_);
+        duplicate = http_probes_.find(probe_key) != http_probes_.end();
+        if (!duplicate) {
+          http_probes_.emplace(probe_key,
+                               ActiveHttpProbe{principal->user.id, cancellation});
+        }
+      }
+      if (duplicate) {
+        send_error(resp, 409, "request id is already in use", "conflict");
+        return;
+      }
+    }
+
+    const bool queued = post_job(
         [input] { return JobResult{200, run_http_probe(input)}; }, &resp, next,
-        [this, user = principal->user](JobResult& result) {
+        [this, user = principal->user, probe_key](JobResult& result) {
+          if (!probe_key.empty()) {
+            std::lock_guard<std::mutex> lock(http_probes_mutex_);
+            http_probes_.erase(probe_key);
+          }
+          if (result.body.value("cancelled", false)) return;
           const bool ok = result.body.value("ok", false);
           if (ok) {
             metrics_.http_requests.fetch_add(1);
@@ -1228,6 +1265,37 @@ void Application::register_debug_routes() {
           owner.user = user;
           add_history(owner, "http", summary, result.body);
         });
+    if (!queued && !probe_key.empty()) {
+      std::lock_guard<std::mutex> lock(http_probes_mutex_);
+      http_probes_.erase(probe_key);
+    }
+  });
+
+  app_.post("/api/http/cancel", [this](uvcpp::uvcpp_web_request& req,
+                                       uvcpp::uvcpp_web_response& resp,
+                                       uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "http", "debug");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const std::string request_id = string_field(*body, "requestId");
+    if (request_id.empty() || request_id.size() > 80 ||
+        !std::all_of(request_id.begin(), request_id.end(),
+                     [](unsigned char c) {
+                       return std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.';
+                     })) {
+      send_error(resp, 400, "invalid requestId", "bad_request");
+      return;
+    }
+    const std::string key = std::to_string(principal->user.id) + ":" + request_id;
+    std::shared_ptr<HttpProbeCancellation> cancellation;
+    {
+      std::lock_guard<std::mutex> lock(http_probes_mutex_);
+      auto it = http_probes_.find(key);
+      if (it != http_probes_.end()) cancellation = it->second.cancellation;
+    }
+    if (cancellation) cancellation->cancel();
+    send_json(resp, 200, {{"ok", true}, {"cancelled", cancellation != nullptr}});
   });
 
   app_.get("/api/http/workspace", [this](uvcpp::uvcpp_web_request& req,
@@ -3985,7 +4053,7 @@ void Application::register_update_routes() {
 // ---------------------------------------------------------------------------
 // Jobs and history
 // ---------------------------------------------------------------------------
-void Application::post_job(std::function<JobResult()> work, uvcpp::uvcpp_web_response* resp,
+bool Application::post_job(std::function<JobResult()> work, uvcpp::uvcpp_web_response* resp,
                            uvcpp::uvcpp_web_next next,
                            std::function<void(JobResult&)> after) {
   auto* done = new JobResult();
@@ -3994,7 +4062,7 @@ void Application::post_job(std::function<JobResult()> work, uvcpp::uvcpp_web_res
     delete req;
     delete done;
     send_error(*resp, 500, "could not initialize background work", "internal_error");
-    return;
+    return false;
   }
   const int rc = req->queue_work(
       app_.loop(), [job = std::move(work), done](uvcpp::uvcpp_work*) {
@@ -4026,7 +4094,9 @@ void Application::post_job(std::function<JobResult()> work, uvcpp::uvcpp_web_res
     delete req;
     delete done;
     send_error(*resp, 503, "could not queue background work", "work_queue_full");
+    return false;
   }
+  return true;
 }
 
 void Application::add_history(const Principal& principal, const std::string& kind,
