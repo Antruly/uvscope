@@ -261,7 +261,7 @@ jobs:
 
   macos:
     name: macOS arm64
-    runs-on: macos-14
+    runs-on: macos-15
     needs: frontend
     steps:
       - uses: actions/checkout@v4
