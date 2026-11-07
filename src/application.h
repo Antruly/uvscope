@@ -2,8 +2,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,6 +28,8 @@
 #include "ws_manager.h"
 
 namespace uvscope {
+
+struct HttpProbeCancellation;
 
 struct AppOptions {
   std::string host = "127.0.0.1";
@@ -80,7 +84,7 @@ class Application {
   void register_update_routes();
   void install_static();
 
-  void post_job(std::function<JobResult()> work, uvcpp::uvcpp_web_response* resp,
+  bool post_job(std::function<JobResult()> work, uvcpp::uvcpp_web_response* resp,
                 uvcpp::uvcpp_web_next next, std::function<void(JobResult&)> after = {});
   void add_history(const Principal& principal, const std::string& kind,
                    const std::string& summary, const nlohmann::json& result);
@@ -120,6 +124,13 @@ class Application {
   std::int64_t update_checked_at_ = 0;
   nlohmann::json repo_cache_ = nlohmann::json::object();
   std::thread update_thread_;
+
+  struct ActiveHttpProbe {
+    std::int64_t user_id = 0;
+    std::shared_ptr<HttpProbeCancellation> cancellation;
+  };
+  std::mutex http_probes_mutex_;
+  std::map<std::string, ActiveHttpProbe> http_probes_;
 };
 
 }  // namespace uvscope

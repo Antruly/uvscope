@@ -86,6 +86,15 @@ const downloadState = ref<HttpDownload | null>(null)
 let downloadTimer: number | undefined
 const proxy = ref({ enabled: false, host: '127.0.0.1', port: 1080, username: '', password: '' })
 const sending = ref(false)
+const cancelling = ref(false)
+const activeRequestId = ref('')
+
+function newRequestId(): string {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
 const result = ref<HttpResult | null>(null)
 const responseTab = ref<'body' | 'preview' | 'headers' | 'timing'>('body')
 const allowRemotePreview = ref(false)
@@ -1113,6 +1122,7 @@ async function buildPayload() {
     timeoutMs: timeoutMs.value,
     insecure: insecure.value,
     decompress: decompress.value,
+    clientRequestId: activeRequestId.value,
     proxy: proxy.value.enabled
       ? {
           host: proxy.value.host.trim(),
@@ -1131,6 +1141,8 @@ async function send() {
   }
   if (sending.value) return
   sending.value = true
+  cancelling.value = false
+  activeRequestId.value = newRequestId()
   result.value = null
   startedAt.value = performance.now()
   elapsed.value = 0
@@ -1142,18 +1154,36 @@ async function send() {
       sending.value = false
       return
     }
-    result.value = await post<HttpResult>('/api/http/send', await buildPayload())
-    await runPostScript(result.value)
+    const res = await post<HttpResult>('/api/http/send', await buildPayload())
+    if (res.cancelled) {
+      result.value = null
+      ui.notify('info', t('http.requestCancelled'))
+      return
+    }
+    result.value = res
+    await runPostScript(res)
     responseTab.value = 'body'
     await loadHistory()
-    if (!result.value.ok) ui.notify('error', t('http.requestFailed'), result.value.error)
+    if (!res.ok) ui.notify('error', t('http.requestFailed'), res.error)
   } catch (err) {
     result.value = { ok: false, error: errorMessage(err) }
     ui.toastError(err, t('http.requestFailed'))
   } finally {
     sending.value = false
+    cancelling.value = false
+    activeRequestId.value = ''
     if (ticker) window.clearInterval(ticker)
     elapsed.value = Math.round(performance.now() - startedAt.value)
+  }
+}
+
+async function cancelRequest() {
+  if (!sending.value || !activeRequestId.value || cancelling.value) return
+  cancelling.value = true
+  try {
+    await post('/api/http/cancel', { requestId: activeRequestId.value })
+  } catch {
+    // Best effort: the in-flight request will still return when it times out.
   }
 }
 
@@ -1400,6 +1430,14 @@ onBeforeUnmount(() => {
               <span v-if="sending" class="spinner" />
               <Icon v-else name="send" :size="16" />
               {{ sending ? t('http.sending') : t('http.send') }}
+            </button>
+            <button
+              v-if="sending"
+              class="button button--danger send-button"
+              :disabled="cancelling"
+              @click="cancelRequest"
+            >
+              {{ cancelling ? t('http.cancelling') : t('http.cancelRequest') }}
             </button>
           </div>
 

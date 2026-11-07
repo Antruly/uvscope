@@ -7,6 +7,7 @@
 
 #include <uv.h>
 #include <uvcpp/uvcpp_config.h>
+#include <handle/uvcpp_handle.h>
 #include <ssl/uvcpp_ssl_context.h>
 #include <web/uvcpp_http_client.h>
 #include <web/uvcpp_http_common.h>
@@ -253,10 +254,54 @@ nlohmann::json base_result(const HttpProbeInput& input, const ParsedUrl& url,
 
 }  // namespace
 
+void HttpProbeCancellation::cancel() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  cancelled_.store(true, std::memory_order_relaxed);
+  if (socket_handle_ >= 0) {
+#ifdef _WIN32
+    ::shutdown(static_cast<SOCKET>(socket_handle_), SD_BOTH);
+#else
+    ::shutdown(static_cast<int>(socket_handle_), SHUT_RDWR);
+#endif
+  }
+}
+
+void HttpProbeCancellation::set_socket(std::intptr_t handle) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  socket_handle_ = handle;
+  if (handle >= 0 && cancelled_.load(std::memory_order_relaxed)) {
+#ifdef _WIN32
+    ::shutdown(static_cast<SOCKET>(handle), SD_BOTH);
+#else
+    ::shutdown(static_cast<int>(handle), SHUT_RDWR);
+#endif
+  }
+}
+
+void HttpProbeCancellation::clear_socket() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  socket_handle_ = -1;
+}
+
 nlohmann::json run_http_probe(const HttpProbeInput& input) {
   const auto started = std::chrono::steady_clock::now();
   ParsedUrl url = parse_url(input.url);
   nlohmann::json result = base_result(input, url, started);
+  const auto elapsed_ms = [&started]() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - started)
+        .count();
+  };
+  const auto cancelled_result = [&]() {
+    result["ok"] = false;
+    result["cancelled"] = true;
+    result["error"] = "request cancelled";
+    result["timing"] = {{"connectMs", 0}, {"totalMs", elapsed_ms()}};
+    return result;
+  };
+  if (input.cancellation && input.cancellation->cancelled()) {
+    return cancelled_result();
+  }
   if (!url.valid) {
     result["error"] = url.error.empty() ? "invalid URL" : url.error;
     result["timing"] = {{"totalMs", 0}, {"connectMs", 0}};
@@ -377,6 +422,9 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
   uvcpp::uvcpp_http_response response;
   std::string alpn;
   const bool async_protocol = protocol == "http2" || protocol == "http3";
+  if (input.cancellation && input.cancellation->cancelled()) {
+    return cancelled_result();
+  }
 
   const auto connect_started = std::chrono::steady_clock::now();
   if (!async_protocol) {
@@ -386,6 +434,9 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
                                 connect_finished - connect_started)
                                 .count();
     if (rc != 0) {
+      if (input.cancellation && input.cancellation->cancelled()) {
+        return cancelled_result();
+      }
       if (input.proxy.enabled()) {
         const std::string detail = client.socks5_last_error();
         result["proxy"] = socks5_failure_json(input.proxy, rc, detail,
@@ -397,8 +448,22 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
       result["timing"] = {{"totalMs", connect_ms}, {"connectMs", connect_ms}};
       return result;
     }
+    if (input.cancellation) {
+      if (input.cancellation->cancelled()) return cancelled_result();
+      uv_os_sock_t sock = static_cast<uv_os_sock_t>(-1);
+      auto* tcp_client = client.get_tcp_client();
+      if (tcp_client != nullptr && tcp_client->get_tcp() != nullptr &&
+          uvcpp::uvcpp_handle::fileno(tcp_client->get_tcp(), sock) == 0 &&
+          sock != static_cast<uv_os_sock_t>(-1)) {
+        input.cancellation->set_socket(static_cast<std::intptr_t>(sock));
+      }
+    }
     rc = ssl ? client.send_wait_ssl(req, response, timeout_ms)
              : client.send_wait_plain(req, response, timeout_ms);
+    if (input.cancellation) {
+      input.cancellation->clear_socket();
+      if (input.cancellation->cancelled()) return cancelled_result();
+    }
     if (rc != 0) {
       result["error"] = "request failed: " + uv_error(rc);
       result["timing"] = {{"totalMs", connect_ms}, {"connectMs", connect_ms}};
@@ -470,9 +535,24 @@ nlohmann::json run_http_probe(const HttpProbeInput& input) {
       return result;
     }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    bool cancelled = false;
     while (!state.done && std::chrono::steady_clock::now() < deadline) {
+      if (input.cancellation && input.cancellation->cancelled()) {
+        cancelled = true;
+        client.stop();
+        break;
+      }
       client.run(UV_RUN_NOWAIT);
       if (!state.done) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (cancelled) {
+      attach_h2_frames(result, state);
+      return cancelled_result();
+    }
+    if (input.cancellation && input.cancellation->cancelled()) {
+      client.stop();
+      attach_h2_frames(result, state);
+      return cancelled_result();
     }
     if (!state.done) {
       client.stop();
