@@ -41,7 +41,7 @@ std::string bio_to_string(BIO* bio) {
   return std::string(data, static_cast<std::size_t>(len));
 }
 
-std::string print_name(X509_NAME* name) {
+std::string print_name(const X509_NAME* name) {
   if (name == nullptr) return {};
   BioPtr bio(BIO_new(BIO_s_mem()), &BIO_free);
   if (!bio) return {};
