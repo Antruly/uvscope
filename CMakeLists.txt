@@ -152,6 +152,7 @@ set(UVSCOPE_SOURCES
   src/command_seed.cpp
   src/crypto.cpp
   src/download_manager.cpp
+  src/firewall.cpp
   src/http_probe.cpp
   src/ipc.cpp
   src/listener_child.cpp

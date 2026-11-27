@@ -26,6 +26,9 @@ namespace {
 using BioPtr = std::unique_ptr<BIO, decltype(&BIO_free)>;
 using X509Ptr = std::unique_ptr<X509, decltype(&X509_free)>;
 using PkeyPtr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
+// Use the struct tag, not the X509_NAME typedef: <wincred.h> (pulled in by uv.h)
+// defines X509_NAME as a credential type on Windows.
+using NamePtr = std::unique_ptr<struct X509_name_st, decltype(&X509_NAME_free)>;
 
 std::string bio_string(BIO* bio) {
   if (bio == nullptr) return {};
@@ -247,17 +250,20 @@ bool build_leaf(const NormalizedInput& input, int days, X509* issuer,
   X509_set_pubkey(cert.get(), key.get());
   // <wincred.h> (pulled in by uv.h) defines X509_NAME as a credential type,
   // so the typedef is unusable after that include. Use the struct tag directly.
-  struct X509_name_st* cert_name = X509_get_subject_name(cert.get());
-  if (cert_name == nullptr ||
+  // OpenSSL 4 makes X509_get_subject_name() const, so build a fresh name and
+  // install it instead of mutating the certificate's internal one.
+  NamePtr cert_name(X509_NAME_new(), &X509_NAME_free);
+  if (!cert_name ||
       X509_NAME_add_entry_by_txt(
-          cert_name, "CN", MBSTRING_ASC,
+          cert_name.get(), "CN", MBSTRING_ASC,
           reinterpret_cast<const unsigned char*>(input.common_name.c_str()), -1, -1,
-          0) != 1) {
+          0) != 1 ||
+      X509_set_subject_name(cert.get(), cert_name.get()) != 1) {
     if (error) *error = "could not set the certificate subject";
     return false;
   }
   X509_set_issuer_name(cert.get(), issuer != nullptr ? X509_get_subject_name(issuer)
-                                                     : cert_name);
+                                                     : cert_name.get());
 
   X509V3_CTX ctx;
   X509V3_set_ctx_nodb(&ctx);
@@ -307,15 +313,16 @@ bool build_ca(const std::string& common_name, int days, CertificateMaterial* out
   X509_gmtime_adj(X509_getm_notAfter(cert.get()),
                   static_cast<long>(days) * 24 * 60 * 60);
   X509_set_pubkey(cert.get(), key.get());
-  struct X509_name_st* name = X509_get_subject_name(cert.get());
-  if (name == nullptr ||
-      X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+  NamePtr name(X509_NAME_new(), &X509_NAME_free);
+  if (!name ||
+      X509_NAME_add_entry_by_txt(name.get(), "CN", MBSTRING_ASC,
                                  reinterpret_cast<const unsigned char*>(common_name.c_str()),
-                                 -1, -1, 0) != 1) {
+                                 -1, -1, 0) != 1 ||
+      X509_set_subject_name(cert.get(), name.get()) != 1 ||
+      X509_set_issuer_name(cert.get(), name.get()) != 1) {
     if (error) *error = "could not set the CA subject";
     return false;
   }
-  X509_set_issuer_name(cert.get(), name);
 
   X509V3_CTX ctx;
   X509V3_set_ctx_nodb(&ctx);
@@ -339,10 +346,10 @@ std::string certificate_common_name(X509* cert) {
   if (cert == nullptr) return {};
   // <wincred.h> (pulled in by uv.h) defines X509_NAME as a credential type,
   // so the typedef is unusable after that include. Use the struct tag directly.
-  struct X509_name_st* name = X509_get_subject_name(cert);
+  const struct X509_name_st* name = X509_get_subject_name(cert);
   const int index = X509_NAME_get_index_by_NID(name, NID_commonName, -1);
   if (index < 0) return {};
-  ASN1_STRING* data = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(name, index));
+  const ASN1_STRING* data = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(name, index));
   if (data == nullptr) return {};
   unsigned char* utf8 = nullptr;
   const int len = ASN1_STRING_to_UTF8(&utf8, data);

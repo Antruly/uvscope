@@ -4,6 +4,19 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Guided TLS for reverse proxies.** The proxy editor can import a certificate/key pair without
+  leaving the gateway, reuse the workbench's own `--tls-cert` / `--tls-key` with one click, and
+  still select any certificate from the managed vault. `GET /api/tls/workbench` exposes only the
+  local paths and public certificate metadata; key material is never returned.
+- **Host firewall helper.** `GET /api/firewall` detects ufw or firewalld, and
+  `POST /api/firewall/allow` adds a TCP allow rule for a listener port. Without non-interactive
+  sudo the response includes the exact command for the operator to run; no shell is used and
+  every attempt is audited.
+
 ## [1.0.2] - 2026-11-08
 
 ### Added

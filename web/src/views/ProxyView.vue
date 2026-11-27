@@ -2,7 +2,15 @@
 import { computed, onActivated, onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import { del, errorMessage, get, post } from '../api'
-import type { ProxyInfo, ProxyLog, ProxyRule, ProxyUpstream } from '../types'
+import type {
+  FirewallAllowResult,
+  ManagedCertificate,
+  ProxyInfo,
+  ProxyLog,
+  ProxyRule,
+  ProxyUpstream,
+  WorkbenchCertificate,
+} from '../types'
 import { useAuthStore } from '../stores/auth'
 import { useUiStore } from '../stores/ui'
 import { useI18nStore } from '../stores/i18n'
@@ -65,17 +73,35 @@ const blank = () => ({
   rules: [] as ProxyRule[],
 })
 const form = ref(blank())
-const managedCerts = ref<Array<{ id: string; name: string; certPath: string; keyPath: string; notAfter: string }>>([])
+const managedCerts = ref<ManagedCertificate[]>([])
 const selectedCertId = ref('')
+const workbenchCert = ref<WorkbenchCertificate | null>(null)
+const importOpen = ref(false)
+const importing = ref(false)
+const importError = ref('')
+const importForm = ref({ name: '', certPem: '', keyPem: '', password: '' })
+const certFileInput = ref<HTMLInputElement | null>(null)
+const keyFileInput = ref<HTMLInputElement | null>(null)
+const firewallBusy = ref<string | null>(null)
+const firewallRule = ref<{ port: number; command: string } | null>(null)
 
 async function loadManagedCerts() {
   try {
-    const response = await get<{ ok: boolean; certificates: Array<{ id: string; name: string; certPath: string; keyPath: string; notAfter: string }> }>(
+    const response = await get<{ ok: boolean; certificates: ManagedCertificate[] }>(
       '/api/tls/certificates',
     )
     if (response.ok) managedCerts.value = response.certificates
   } catch {
     managedCerts.value = []
+  }
+}
+
+async function loadWorkbenchCert() {
+  try {
+    const response = await get<WorkbenchCertificate>('/api/tls/workbench')
+    workbenchCert.value = response.available ? response : null
+  } catch {
+    workbenchCert.value = null
   }
 }
 
@@ -86,7 +112,91 @@ function applyManagedCert() {
   form.value.keyPath = cert.keyPath
 }
 
+function useWorkbenchCert() {
+  const cert = workbenchCert.value
+  if (!cert?.certPath || !cert.keyPath) return
+  form.value.tls = true
+  form.value.certPath = cert.certPath
+  form.value.keyPath = cert.keyPath
+  selectedCertId.value = ''
+}
+
+async function loadPemFile(event: Event, field: 'certPem' | 'keyPem') {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importForm.value[field] = await file.text()
+  input.value = ''
+}
+
+async function submitImport() {
+  importError.value = ''
+  if (
+    !importForm.value.certPem.includes('BEGIN CERTIFICATE') ||
+    !importForm.value.keyPem.includes('PRIVATE KEY')
+  ) {
+    importError.value = t('proxy.import.required')
+    return
+  }
+  importing.value = true
+  try {
+    const response = await post<{ ok: boolean; certificate?: ManagedCertificate }>(
+      '/api/tls/certificates/import',
+      importForm.value,
+    )
+    if (!response.ok || !response.certificate) throw new Error(t('proxy.import.failed'))
+    await loadManagedCerts()
+    selectedCertId.value = response.certificate.id
+    applyManagedCert()
+    form.value.tls = true
+    importOpen.value = false
+    importForm.value = { name: '', certPem: '', keyPem: '', password: '' }
+    ui.notify('success', t('proxy.import.done'))
+  } catch (err) {
+    importError.value = errorMessage(err)
+  } finally {
+    importing.value = false
+  }
+}
+
+function needsFirewall(proxy: ProxyInfo) {
+  const host = (proxy.listenHost || '').toLowerCase()
+  return host !== '127.0.0.1' && host !== '::1' && host !== 'localhost' && host !== '[::1]'
+}
+
+async function allowFirewall(proxy: ProxyInfo) {
+  firewallBusy.value = proxy.id
+  try {
+    const response = await post<FirewallAllowResult>('/api/firewall/allow', { port: proxy.listenPort })
+    if (response.applied) {
+      ui.notify('success', t('proxy.firewall.done'), `${proxy.listenPort}/tcp`)
+    } else if (response.requiresElevation) {
+      firewallRule.value = {
+        port: proxy.listenPort,
+        command: response.command || `sudo ufw allow ${proxy.listenPort}/tcp`,
+      }
+    } else {
+      ui.toastError(response.error || t('proxy.firewall.failed'), t('proxy.firewall.failed'))
+    }
+  } catch (err) {
+    ui.toastError(err, t('proxy.firewall.failed'))
+  } finally {
+    firewallBusy.value = null
+  }
+}
+
+async function copyFirewallCommand() {
+  if (!firewallRule.value) return
+  try {
+    await navigator.clipboard.writeText(firewallRule.value.command)
+    ui.notify('success', t('proxy.firewall.copied'))
+  } catch {
+    ui.toastError(t('proxy.firewall.copyFailed'), t('proxy.firewall.copyFailed'))
+  }
+}
+
 const canOperate = computed(() => auth.user?.role === 'admin' || auth.user?.role === 'operator')
+const canAdmin = computed(() => auth.user?.role === 'admin')
 const activeCount = computed(() => proxies.value.filter((proxy) => proxy.running).length)
 const totalRequests = computed(() => proxies.value.reduce((total, proxy) => total + proxy.requests, 0))
 const totalErrors = computed(() => proxies.value.reduce((total, proxy) => total + proxy.errors, 0))
@@ -110,6 +220,7 @@ function openCreate() {
   formError.value = ''
   editorOpen.value = true
   void loadManagedCerts()
+  void loadWorkbenchCert()
 }
 
 function openEdit(proxy: ProxyInfo) {
@@ -145,6 +256,7 @@ function openEdit(proxy: ProxyInfo) {
     )
     if (match) selectedCertId.value = match.id
   })
+  void loadWorkbenchCert()
 }
 
 function addUpstream() {
@@ -382,6 +494,9 @@ onBeforeUnmount(stopLogPolling)
             <Icon :name="proxy.running ? 'stop' : 'play'" :size="15" />{{ proxy.running ? t('proxy.card.stop') : t('proxy.card.start') }}
           </button>
           <button class="button button--ghost" @click="showLogs(proxy)"><Icon name="terminal" :size="15" />{{ t('proxy.card.logs') }}</button>
+          <button v-if="canAdmin && needsFirewall(proxy)" class="button button--ghost" :disabled="firewallBusy === proxy.id" @click="allowFirewall(proxy)">
+            <span v-if="firewallBusy === proxy.id" class="spinner spinner--sm" /><Icon v-else name="shield" :size="15" />{{ t('proxy.card.firewall') }}
+          </button>
         </div>
       </article>
     </div>
@@ -466,6 +581,14 @@ onBeforeUnmount(stopLogPolling)
                   <option v-for="cert in managedCerts" :key="cert.id" :value="cert.id">{{ cert.name }} · {{ cert.notAfter }}</option>
                 </select>
               </label>
+              <div v-if="form.tls" class="proxy-cert-tools">
+                <button v-if="workbenchCert" type="button" class="link-button" @click="useWorkbenchCert">
+                  <Icon name="shield" :size="14" />{{ t('proxy.editor.useWorkbenchCert') }}
+                </button>
+                <button v-if="canAdmin" type="button" class="link-button" @click="importOpen = true">
+                  <Icon name="upload" :size="14" />{{ t('proxy.editor.importCert') }}
+                </button>
+              </div>
               <div v-if="form.tls" class="form-grid">
                 <label class="field"><span>{{ t('proxy.editor.certPath') }}</span><input v-model="form.certPath" class="mono" placeholder="/etc/ssl/certs/site.pem" /></label>
                 <label class="field"><span>{{ t('proxy.editor.keyPath') }}</span><input v-model="form.keyPath" class="mono" placeholder="/etc/ssl/private/site.key" /></label>
@@ -564,6 +687,69 @@ onBeforeUnmount(stopLogPolling)
               </button>
             </footer>
           </form>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="importOpen" class="modal-scrim" @click.self="importOpen = false">
+          <form class="modal-card" @submit.prevent="submitImport">
+            <header class="modal-head">
+              <div><span class="eyebrow">{{ t('proxy.import.eyebrow') }}</span><h3>{{ t('proxy.import.title') }}</h3></div>
+              <button type="button" class="icon-button" @click="importOpen = false"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <label class="field">
+                <span>{{ t('proxy.import.name') }}</span>
+                <input v-model="importForm.name" :placeholder="t('proxy.import.namePlaceholder')" />
+              </label>
+              <label class="field">
+                <span>{{ t('proxy.import.cert') }}</span>
+                <textarea v-model="importForm.certPem" class="mono proxy-pem" rows="5" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                <button type="button" class="link-button" @click="certFileInput?.click()"><Icon name="upload" :size="14" />{{ t('proxy.import.chooseFile') }}</button>
+                <input ref="certFileInput" type="file" accept=".pem,.crt,.cer" hidden @change="loadPemFile($event, 'certPem')" />
+              </label>
+              <label class="field">
+                <span>{{ t('proxy.import.key') }}</span>
+                <textarea v-model="importForm.keyPem" class="mono proxy-pem" rows="5" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+                <button type="button" class="link-button" @click="keyFileInput?.click()"><Icon name="upload" :size="14" />{{ t('proxy.import.chooseFile') }}</button>
+                <input ref="keyFileInput" type="file" accept=".pem,.key" hidden @change="loadPemFile($event, 'keyPem')" />
+              </label>
+              <label class="field">
+                <span>{{ t('proxy.import.password') }}</span>
+                <input v-model="importForm.password" type="password" autocomplete="off" :placeholder="t('proxy.import.passwordHint')" />
+              </label>
+              <div v-if="importError" class="inline-alert inline-alert--danger"><Icon name="alert" :size="16" />{{ importError }}</div>
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="importOpen = false">{{ t('proxy.editor.cancel') }}</button>
+              <button type="submit" class="button button--primary" :disabled="importing">
+                <span v-if="importing" class="spinner" /><Icon v-else name="upload" :size="15" />{{ t('proxy.import.submit') }}
+              </button>
+            </footer>
+          </form>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="firewallRule" class="modal-scrim" @click.self="firewallRule = null">
+          <div class="modal-card">
+            <header class="modal-head">
+              <div><span class="eyebrow">{{ t('proxy.firewall.eyebrow') }}</span><h3>{{ t('proxy.firewall.title', { port: firewallRule.port }) }}</h3></div>
+              <button type="button" class="icon-button" @click="firewallRule = null"><Icon name="close" :size="18" /></button>
+            </header>
+            <div class="modal-body">
+              <p class="muted">{{ t('proxy.firewall.elevation') }}</p>
+              <pre class="proxy-command mono">{{ firewallRule.command }}</pre>
+            </div>
+            <footer class="modal-foot">
+              <button type="button" class="button" @click="firewallRule = null">{{ t('proxy.firewall.close') }}</button>
+              <button type="button" class="button button--primary" @click="copyFirewallCommand"><Icon name="copy" :size="15" />{{ t('proxy.firewall.copy') }}</button>
+            </footer>
+          </div>
         </div>
       </Transition>
     </Teleport>

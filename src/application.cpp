@@ -30,6 +30,7 @@
 
 #include "certificate.h"
 #include "crypto.h"
+#include "firewall.h"
 #include "http_probe.h"
 #include "ipc.h"
 #include "net_probe.h"
@@ -2979,6 +2980,43 @@ void Application::register_certificate_routes() {
     send_json(resp, 200, certificates_->list());
   });
 
+  // The control plane's own HTTPS certificate. The reverse-proxy editor can
+  // reuse these paths directly instead of asking the operator to copy the
+  // private key. Only local paths and public certificate metadata are exposed.
+  app_.get("/api/tls/workbench",
+           [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
+                  uvcpp::uvcpp_web_next) {
+             const auto principal = auth_.require_module(req, resp, "proxy", "debug");
+             if (!principal) return;
+             if (options_.tls_cert.empty() || options_.tls_key.empty()) {
+               send_json(resp, 200, {{"ok", true}, {"available", false}});
+               return;
+             }
+             std::error_code cert_ec;
+             std::error_code key_ec;
+             auto cert_path = std::filesystem::absolute(options_.tls_cert, cert_ec);
+             auto key_path = std::filesystem::absolute(options_.tls_key, key_ec);
+             if (cert_ec) cert_path = options_.tls_cert;
+             if (key_ec) key_path = options_.tls_key;
+             nlohmann::json out = {{"ok", true},
+                                   {"available", true},
+                                   {"source", "workbench"},
+                                   {"name", "Workbench HTTPS"},
+                                   {"certPath", cert_path.string()},
+                                   {"keyPath", key_path.string()}};
+             const std::string pem = read_file(cert_path, 4 * 1024 * 1024);
+             if (!pem.empty()) {
+               std::string error;
+               const auto info = inspect_certificate(pem, &error);
+               if (info.is_object()) {
+                 out["certificate"] = info;
+                 out["subject"] = info.value("subject", std::string());
+                 out["notAfter"] = info.value("notAfter", std::string());
+               }
+             }
+             send_json(resp, 200, out);
+           });
+
   app_.post("/api/tls/certificates/generate",
             [this](uvcpp::uvcpp_web_request& req, uvcpp::uvcpp_web_response& resp,
                    uvcpp::uvcpp_web_next) {
@@ -3537,6 +3575,63 @@ void Application::register_proxy_routes() {
     int limit = 100;
     if (const std::string* value = req.query("limit")) limit = std::atoi(value->c_str());
     send_json(resp, 200, {{"ok", true}, {"logs", proxies_->logs(*id, after, limit)}});
+  });
+
+  // Host firewall helper for a proxy listener. Detection is read-only; the
+  // allow action runs `ufw`/`firewall-cmd` on the thread pool, without a shell,
+  // and reports the exact command when non-interactive sudo is not permitted.
+  app_.get("/api/firewall", [this](uvcpp::uvcpp_web_request& req,
+                                   uvcpp::uvcpp_web_response& resp,
+                                   uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require_module(req, resp, "proxy", "debug");
+    if (!principal) return;
+    send_json(resp, 200, firewall_status_json());
+  });
+
+  app_.post("/api/firewall/allow", [this](uvcpp::uvcpp_web_request& req,
+                                          uvcpp::uvcpp_web_response& resp,
+                                          uvcpp::uvcpp_web_next next) {
+    const auto principal = auth_.require_module(req, resp, "proxy", "admin.settings");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const int port = int_field(*body, "port", 0);
+    if (port < 1 || port > 65535) {
+      send_error(resp, 400, "port must be between 1 and 65535", "bad_request");
+      return;
+    }
+    const std::string protocol = lower(string_field(*body, "protocol", "tcp"));
+    if (protocol != "tcp") {
+      send_error(resp, 400, "only tcp is supported", "bad_request");
+      return;
+    }
+    const User user = principal->user;
+    const std::string peer_ip = req.peer_ip();
+    const std::string target = std::to_string(port) + "/" + protocol;
+    const bool queued = post_job(
+        [port]() {
+          const auto result = firewall_allow_tcp(port);
+          nlohmann::json payload = {{"ok", true},
+                                    {"supported", result.supported},
+                                    {"applied", result.applied},
+                                    {"requiresElevation", result.requires_elevation},
+                                    {"tool", result.tool},
+                                    {"command", result.command},
+                                    {"output", result.output}};
+          if (!result.error.empty()) payload["error"] = result.error;
+          return JobResult{200, std::move(payload)};
+        },
+        &resp, next,
+        [this, user, peer_ip, target](JobResult& result) {
+          const bool applied = result.body.value("applied", false);
+          const bool elevation = result.body.value("requiresElevation", false);
+          std::string detail = applied ? "applied" : (elevation ? "requires_elevation" : "failed");
+          if (result.body.contains("error") && result.body["error"].is_string()) {
+            detail += ": " + result.body["error"].get<std::string>();
+          }
+          store_.audit(user.id, user.username, "firewall.allow", target, detail, peer_ip);
+        });
+    if (!queued) return;
   });
 }
 

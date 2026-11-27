@@ -50,6 +50,10 @@ Treat access to uvscope as equivalent to code execution with the daemon user's n
   there is no network-facing control channel for a child.
 - Isolated children inherit the daemon user and environment. Resource limits are the operator's
   responsibility.
+- The optional firewall helper runs fixed `ufw`/`firewall-cmd` **allow** commands with a numeric
+  TCP port, never through a shell, and never enables or flushes the firewall. It does not elevate
+  on its own: if passwordless sudo is granted for those commands, an admin session can add allow
+  rules.
 
 ## Hardening for shared machines
 

@@ -89,6 +89,7 @@ Each module must be enabled in Settings and the role must have `debug`.
 | GET | `/api/tls/certificates/:id` | Metadata plus parsed certificate chain |
 | GET | `/api/tls/certificates/:id/cert` | Download the certificate PEM |
 | DELETE | `/api/tls/certificates/:id` | Delete a managed certificate (admin) |
+| GET | `/api/tls/workbench` | This workbench's own `--tls-cert` / `--tls-key` paths and public metadata |
 | POST | `/api/preview` | `{html, baseUrl, mode: safe\|scripts}` → `{id, url}` preview token (8 MiB, 120 s) |
 | DELETE | `/api/preview/:id` | Drop a preview token |
 | GET | `/preview/:id` | Token-based HTML with `CSP: sandbox allow-scripts` (no auth) |
@@ -96,6 +97,8 @@ Each module must be enabled in Settings and the role must have `debug`.
 | POST | `/api/proxies/:id/start` | Start a proxy |
 | POST | `/api/proxies/:id/stop` | Stop a proxy |
 | DELETE | `/api/proxies/:id` | Stop and delete a proxy |
+| GET | `/api/firewall` | Detected host firewall tool and persisted enabled state |
+| POST | `/api/firewall/allow` | `{port, protocol?: "tcp"}` → add a TCP allow rule (admin) |
 
 `encoding` is `text` or `hex`. Probe results always include `ok`; protocol failures are reported in
 the result rather than as an API error.
@@ -384,6 +387,25 @@ The CA key never leaves the daemon. Deleting the vault does not remove the CA; d
 
 Deleting a certificate still referenced by a proxy returns `409 certificate_in_use`.
 
+### Workbench HTTPS certificate
+
+`GET /api/tls/workbench` exposes the certificate the daemon itself was started with
+(`--tls-cert` / `--tls-key`). The reverse-proxy editor uses it for a one-click "use the same
+certificate" option:
+
+```json
+{"ok": true, "available": true, "source": "workbench", "name": "Workbench HTTPS",
+ "certPath": "/home/me/.config/uvscope/tls/server.crt",
+ "keyPath": "/home/me/.config/uvscope/tls/server.key",
+ "subject": "CN=example", "notAfter": "Nov 22 14:06:00 2041 GMT",
+ "certificate": {"…": "parsed profile"}}
+```
+
+When the daemon runs without TLS, `available` is `false` and no paths are returned. Only local
+paths and public certificate metadata are exposed; key material is never returned. Paths are
+absolute, so a supervised proxy child resolves them regardless of its working directory. The route
+requires the `proxy` module and the `debug` permission.
+
 ## Reverse proxy routing rules
 
 Upstream requests run on a per-instance worker pool (default 4 threads, 32 queued jobs). The
@@ -536,6 +558,24 @@ another upstream for any method because nothing was sent. A failed send, or an u
 responding `502`/`503`/`504`, retries only for idempotent methods (`GET`, `HEAD`, `OPTIONS`,
 `TRACE`); other methods return the failure instead of risking a duplicate request. There is no
 active health checking: an upstream is tried again on the next request.
+
+### Host firewall helper
+
+`GET /api/firewall` detects `ufw` or `firewalld` and reports its persisted enabled state.
+`POST /api/firewall/allow` takes `{port, protocol: "tcp"}` (admin) and adds an allow rule:
+
+```json
+{"ok": true, "supported": true, "applied": false, "requiresElevation": true,
+ "tool": "ufw", "command": "sudo /usr/sbin/ufw allow 8765/tcp",
+ "output": "sudo: a password is required"}
+```
+
+The daemon runs unprivileged, so it first tries a non-interactive `sudo -n`; it never prompts and
+never uses a shell. When elevation is unavailable, `applied` is `false`, `requiresElevation` is
+`true`, and `command` is the exact command to run on the host. An unsupported platform returns
+`supported: false`. The helper only adds an allow rule; it never enables, disables or flushes the
+firewall, and it never adds a deny rule. Attempts are written to the audit log as
+`firewall.allow`.
 
 ## Virtual terminals
 

@@ -46,7 +46,7 @@ const en: Record<string, string> = {
     'Decodes a PEM bundle certificate by certificate, or one DER certificate. You can also fetch an https:// URL directly to capture the live peer chain, ALPN and verification result, and manage server certificates: generate self-signed or local-CA-signed RSA/ECDSA certificates with SANs, import a certificate/key pair for the reverse proxy, and renew generated certificates in place. Install the local root certificate on clients that should trust your proxies.',
   'help.modules.proxy.title': 'Reverse proxy',
   'help.modules.proxy.text':
-    'Each proxy owns a host:port and forwards HTTP requests to a target or a weighted upstream pool, with retries, health checks, a circuit breaker and WebSocket pass-through. Ordered exact/prefix/regex rules can redirect or rewrite paths first. Proxies can run in a supervised child process; logs and metrics stream into the gateway panel.',
+    'Each proxy owns a host:port and forwards HTTP requests to a target or a weighted upstream pool, with retries, health checks, a circuit breaker and WebSocket pass-through. Ordered exact/prefix/regex rules can redirect or rewrite paths first. TLS listeners can reuse the workbench certificate, import a pair inline, or pick one from the vault. The gateway can also add the listener port to a local ufw/firewalld allow list, or show the exact command when elevation is required. Proxies can run in a supervised child process; logs and metrics stream into the gateway panel.',
 
   'help.keyboard': 'Keyboard',
   'help.shortcuts': 'Shortcuts',
@@ -149,7 +149,7 @@ const zh: Record<string, string> = {
     '逐张解析 PEM 证书包，或解析单张 DER 证书。也可以直接抓取 https:// 地址，获取实时证书链、ALPN 与校验结果，并管理服务端证书：生成带 SAN 的自签名或本地 CA 签发的 RSA/ECDSA 证书、导入证书/私钥供反向代理使用，以及原地续期已生成证书。需要信任本地代理的客户端应安装本地根证书。',
   'help.modules.proxy.title': '反向代理',
   'help.modules.proxy.text':
-    '每个代理占用一个 host:port，将 HTTP 请求转发到目标或加权上游池，并支持重试、健康检查、熔断与 WebSocket 透传。按顺序执行的精确/前缀/正则规则可以在转发前跳转或改写路径。代理可在受监督的子进程中运行；日志与指标持续流入网关面板。',
+    '每个代理占用一个 host:port，将 HTTP 请求转发到目标或加权上游池，并支持重试、健康检查、熔断与 WebSocket 透传。按顺序执行的精确/前缀/正则规则可以在转发前跳转或改写路径。TLS 监听可直接复用工作台证书、在页面内导入证书对，或从证书库中选择。网关还可把监听端口加入本机 ufw/firewalld 放行列表；需要提权时显示可直接执行的命令。代理可在受监督的子进程中运行；日志与指标持续流入网关面板。',
 
   'help.keyboard': '键盘',
   'help.shortcuts': '快捷键',
