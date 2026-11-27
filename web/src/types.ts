@@ -113,6 +113,43 @@ export interface ProxyUpstream {
   weight: number
 }
 
+export interface ManagedCertificate {
+  id: string
+  name: string
+  certPath: string
+  keyPath: string
+  notAfter: string
+  subject?: string
+  source?: string
+}
+
+export interface WorkbenchCertificate {
+  ok: boolean
+  available: boolean
+  source?: string
+  name?: string
+  certPath?: string
+  keyPath?: string
+  subject?: string
+  notAfter?: string
+  certificate?: CertificateInfo
+}
+
+export interface FirewallStatus {
+  ok: boolean
+  supported: boolean
+  tool?: string
+  enabled?: boolean
+  error?: string
+}
+
+export interface FirewallAllowResult extends FirewallStatus {
+  applied?: boolean
+  requiresElevation?: boolean
+  command?: string
+  output?: string
+}
+
 export interface ProxyInfo {
   id: string
   name: string

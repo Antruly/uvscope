@@ -32,6 +32,7 @@ const en: Record<string, string> = {
   'proxy.card.stop': 'Stop',
   'proxy.card.start': 'Start',
   'proxy.card.logs': 'Logs',
+  'proxy.card.firewall': 'Allow firewall',
 
   'proxy.status.running': 'running',
   'proxy.status.error': 'error',
@@ -73,6 +74,8 @@ const en: Record<string, string> = {
   'proxy.editor.customCert': 'Custom paths',
   'proxy.editor.certPath': 'Certificate path',
   'proxy.editor.keyPath': 'Private key path',
+  'proxy.editor.useWorkbenchCert': 'Use this workbench certificate',
+  'proxy.editor.importCert': 'Import certificate',
   'proxy.editor.hint':
     'HTTP/1.1 forwarding with ordered redirect/rewrite rules, weighted upstreams with health checks, and WebSocket upgrade pass-through.',
   'proxy.editor.cancel': 'Cancel',
@@ -121,6 +124,31 @@ const en: Record<string, string> = {
   'proxy.notify.deleted': 'Proxy deleted',
 
   'proxy.confirm.delete': 'Delete reverse proxy “{name}”? Its listener will be stopped.',
+
+  'proxy.import.eyebrow': 'Certificate vault',
+  'proxy.import.title': 'Import certificate',
+  'proxy.import.name': 'Name',
+  'proxy.import.namePlaceholder': 'Site certificate',
+  'proxy.import.cert': 'Certificate (PEM)',
+  'proxy.import.key': 'Private key (PEM)',
+  'proxy.import.chooseFile': 'Choose file',
+  'proxy.import.password': 'Key password',
+  'proxy.import.passwordHint': 'Leave empty for an unencrypted key',
+  'proxy.import.submit': 'Import & select',
+  'proxy.import.done': 'Certificate imported',
+  'proxy.import.required': 'Paste a PEM certificate and its private key.',
+  'proxy.import.failed': 'Could not import the certificate',
+
+  'proxy.firewall.eyebrow': 'Host firewall',
+  'proxy.firewall.title': 'Allow TCP {port}',
+  'proxy.firewall.elevation':
+    'uvscope cannot change the host firewall without elevated privileges. Run this command on the host, or allow passwordless sudo for the firewall tool:',
+  'proxy.firewall.done': 'Firewall rule added',
+  'proxy.firewall.failed': 'Could not update the firewall',
+  'proxy.firewall.copied': 'Command copied',
+  'proxy.firewall.copyFailed': 'Could not copy the command',
+  'proxy.firewall.copy': 'Copy command',
+  'proxy.firewall.close': 'Close',
 }
 
 const zh: Record<string, string> = {
@@ -155,6 +183,7 @@ const zh: Record<string, string> = {
   'proxy.card.stop': '停止',
   'proxy.card.start': '启动',
   'proxy.card.logs': '日志',
+  'proxy.card.firewall': '放行防火墙',
 
   'proxy.status.running': '运行中',
   'proxy.status.error': '异常',
@@ -196,6 +225,8 @@ const zh: Record<string, string> = {
   'proxy.editor.customCert': '自定义路径',
   'proxy.editor.certPath': '证书路径',
   'proxy.editor.keyPath': '私钥路径',
+  'proxy.editor.useWorkbenchCert': '使用本机 HTTPS 证书',
+  'proxy.editor.importCert': '导入证书',
   'proxy.editor.hint': 'HTTP/1.1 转发，支持按顺序执行的跳转/改写规则、带健康检查的加权上游，以及 WebSocket 升级透传。',
   'proxy.editor.cancel': '取消',
   'proxy.editor.save': '保存并启动',
@@ -243,6 +274,31 @@ const zh: Record<string, string> = {
   'proxy.notify.deleted': '代理已删除',
 
   'proxy.confirm.delete': '删除反向代理“{name}”？其监听器将被停止。',
+
+  'proxy.import.eyebrow': '证书库',
+  'proxy.import.title': '导入证书',
+  'proxy.import.name': '名称',
+  'proxy.import.namePlaceholder': '站点证书',
+  'proxy.import.cert': '证书（PEM）',
+  'proxy.import.key': '私钥（PEM）',
+  'proxy.import.chooseFile': '选择文件',
+  'proxy.import.password': '私钥密码',
+  'proxy.import.passwordHint': '未加密私钥留空',
+  'proxy.import.submit': '导入并选择',
+  'proxy.import.done': '证书已导入',
+  'proxy.import.required': '请粘贴 PEM 证书及其匹配的私钥。',
+  'proxy.import.failed': '无法导入证书',
+
+  'proxy.firewall.eyebrow': '主机防火墙',
+  'proxy.firewall.title': '放行 TCP {port}',
+  'proxy.firewall.elevation':
+    'uvscope 没有提权权限，无法直接修改主机防火墙。请在主机上执行下面的命令，或为防火墙工具配置免密 sudo：',
+  'proxy.firewall.done': '防火墙规则已添加',
+  'proxy.firewall.failed': '无法更新防火墙',
+  'proxy.firewall.copied': '命令已复制',
+  'proxy.firewall.copyFailed': '无法复制命令',
+  'proxy.firewall.copy': '复制命令',
+  'proxy.firewall.close': '关闭',
 }
 
 export default { en, zh }
