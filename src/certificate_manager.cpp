@@ -247,7 +247,8 @@ bool build_leaf(const NormalizedInput& input, int days, X509* issuer,
   X509_set_pubkey(cert.get(), key.get());
   // <wincred.h> (pulled in by uv.h) defines X509_NAME as a credential type,
   // so the typedef is unusable after that include. Use the struct tag directly.
-  struct X509_name_st* cert_name = X509_get_subject_name(cert.get());
+  struct X509_name_st* cert_name = const_cast<struct X509_name_st*>(
+      X509_get_subject_name(cert.get()));
   if (cert_name == nullptr ||
       X509_NAME_add_entry_by_txt(
           cert_name, "CN", MBSTRING_ASC,
@@ -256,8 +257,11 @@ bool build_leaf(const NormalizedInput& input, int days, X509* issuer,
     if (error) *error = "could not set the certificate subject";
     return false;
   }
-  X509_set_issuer_name(cert.get(), issuer != nullptr ? X509_get_subject_name(issuer)
-                                                     : cert_name);
+  X509_set_issuer_name(
+      cert.get(),
+      issuer != nullptr
+          ? const_cast<struct X509_name_st*>(X509_get_subject_name(issuer))
+          : cert_name);
 
   X509V3_CTX ctx;
   X509V3_set_ctx_nodb(&ctx);
@@ -307,7 +311,8 @@ bool build_ca(const std::string& common_name, int days, CertificateMaterial* out
   X509_gmtime_adj(X509_getm_notAfter(cert.get()),
                   static_cast<long>(days) * 24 * 60 * 60);
   X509_set_pubkey(cert.get(), key.get());
-  struct X509_name_st* name = X509_get_subject_name(cert.get());
+  struct X509_name_st* name = const_cast<struct X509_name_st*>(
+      X509_get_subject_name(cert.get()));
   if (name == nullptr ||
       X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                  reinterpret_cast<const unsigned char*>(common_name.c_str()),
@@ -339,7 +344,8 @@ std::string certificate_common_name(X509* cert) {
   if (cert == nullptr) return {};
   // <wincred.h> (pulled in by uv.h) defines X509_NAME as a credential type,
   // so the typedef is unusable after that include. Use the struct tag directly.
-  struct X509_name_st* name = X509_get_subject_name(cert);
+  struct X509_name_st* name = const_cast<struct X509_name_st*>(
+      X509_get_subject_name(cert));
   const int index = X509_NAME_get_index_by_NID(name, NID_commonName, -1);
   if (index < 0) return {};
   ASN1_STRING* data = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(name, index));
