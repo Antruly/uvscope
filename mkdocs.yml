@@ -50,6 +50,7 @@ nav:
       - Security policy: https://github.com/Antruly/uvscope/blob/main/SECURITY.md
       - Development plan (中文): DEVELOPMENT_PLAN.zh-CN.md
       - libuvcpp upstream notes (中文): LIBUVCPP_UPSTREAM.zh-CN.md
+      - Windows transparent capture (中文): TRANSPARENT_WINDOWS.zh-CN.md
 
 markdown_extensions:
   - admonition
