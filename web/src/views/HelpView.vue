@@ -91,6 +91,7 @@ const shortcuts = [
           <div class="note-row"><span>{{ t('help.note.isolation') }}</span><strong>{{ t('help.note.isolationText') }}</strong></div>
           <div class="note-row"><span>{{ t('help.note.preview') }}</span><strong>{{ t('help.note.previewText') }}</strong></div>
           <div class="note-row"><span>{{ t('help.note.language') }}</span><strong>{{ t('help.note.languageText') }}</strong></div>
+          <div class="note-row"><span>{{ t('help.note.routing') }}</span><strong>{{ t('help.note.routingText') }}</strong></div>
           <div class="note-row"><span>{{ t('help.note.exposure') }}</span><strong>{{ t('help.note.exposureText') }}</strong></div>
         </div>
       </section>

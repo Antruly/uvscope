@@ -71,6 +71,7 @@ class Application {
   void register_dashboard_routes();
   void register_debug_routes();
   void register_socks5_routes();
+  void register_routing_routes();
   void register_terminal_routes();
   void register_ws_routes();
   void register_quic_routes();

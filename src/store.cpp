@@ -946,6 +946,35 @@ bool Store::delete_socks5_server(const std::string& id, std::string* error) {
   return set_setting("socks5.servers", out.dump(), error);
 }
 
+std::vector<AddressGroup> Store::address_groups() const {
+  std::vector<AddressGroup> out;
+  const nlohmann::json parsed =
+      nlohmann::json::parse(setting("routing.groups", "[]"), nullptr, false);
+  if (!parsed.is_array()) return out;
+  custom_groups_from_json(parsed, &out, nullptr);
+  return out;
+}
+
+bool Store::save_address_groups(const std::vector<AddressGroup>& groups,
+                                std::string* error) {
+  return set_setting("routing.groups", custom_groups_to_json(groups).dump(), error);
+}
+
+RoutingConfig Store::routing_config() const {
+  RoutingConfig config;
+  std::vector<AddressGroup> groups = builtin_address_groups();
+  for (auto& group : address_groups()) groups.push_back(std::move(group));
+  const nlohmann::json parsed =
+      nlohmann::json::parse(setting("routing.rules", "{}"), nullptr, false);
+  if (!parsed.is_object()) return config;
+  routing_config_from_json(parsed, groups, &config, nullptr);
+  return config;
+}
+
+bool Store::save_routing_config(const RoutingConfig& config, std::string* error) {
+  return set_setting("routing.rules", routing_config_json(config).dump(), error);
+}
+
 std::vector<ProxyConfig> Store::proxies() const {
   std::vector<ProxyConfig> out;
   const auto table = query("SELECT id,name,listen_host,listen_port,target,auto_start,tls,"

@@ -6563,3 +6563,139 @@ button.nav-item {
   vertical-align: super;
   opacity: 0.8;
 }
+
+/* ---------------------------------------------------------------------------
+   Address groups and routing rules
+   --------------------------------------------------------------------------- */
+.routing-columns {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  margin-top: 18px;
+}
+
+.routing-group-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.routing-group-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-soft);
+  padding: 14px;
+}
+
+.routing-group-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.routing-group-card p {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.routing-group-card__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.routing-custom-list,
+.routing-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.routing-custom-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+
+.routing-custom-row p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.routing-custom-row__actions,
+.routing-rule__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.routing-group-form {
+  margin-top: 14px;
+}
+
+.routing-rule {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+
+.routing-rule__index {
+  display: grid;
+  place-items: center;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--panel-hover);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.routing-rule__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.routing-default {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+
+.routing-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.routing-match__form {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.routing-match__result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.routing-match__error {
+  margin-top: 12px;
+  color: var(--danger);
+  font-size: 13px;
+}

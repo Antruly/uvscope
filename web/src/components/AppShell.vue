@@ -44,9 +44,10 @@ const sections = computed(() => {
     { label: t('nav.tls'), icon: 'shield', to: '/tls', module: 'tls' },
   ].filter((item) => !item.module || auth.moduleEnabled(item.module as keyof typeof auth.modules))
 
-  const gateway: NavItem[] = [{ label: t('nav.proxy'), icon: 'route', to: '/proxy', module: 'proxy' }].filter(
-    (item) => !item.module || auth.moduleEnabled(item.module as keyof typeof auth.modules),
-  )
+  const gateway: NavItem[] = [
+    { label: t('nav.proxy'), icon: 'route', to: '/proxy', module: 'proxy' },
+  ].filter((item) => !item.module || auth.moduleEnabled(item.module as keyof typeof auth.modules))
+  if (auth.canAdminSettings) gateway.push({ label: t('nav.routing'), icon: 'globe', to: '/routing' })
 
   const system: NavItem[] = [
     ...(auth.canAdminUsers ? [{ label: t('nav.users'), icon: 'users', to: '/users' }] : []),

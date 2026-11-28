@@ -81,6 +81,12 @@ Each module must be enabled in Settings and the role must have `debug`.
 | DELETE | `/api/socks5/servers/:id` | Stop and delete a SOCKS5 server |
 | GET | `/api/socks5/servers/:id/events?after=&limit=` | Server event log |
 | GET | `/api/socks5/servers/:id/sessions` | CONNECT / BIND / UDP ASSOCIATE attempts |
+| GET | `/api/routing` | Address groups (built-in + custom), rules and the default action |
+| POST | `/api/routing/groups` | `{name, description, cidrs[]}` → create a custom group |
+| PUT | `/api/routing/groups/:id` | Update a custom group (built-in groups are read-only) |
+| DELETE | `/api/routing/groups/:id` | Delete a custom group that no rule references |
+| PUT | `/api/routing/rules` | `{rules: [{groupId, action, proxy?}], default: {action, proxy?}}` |
+| POST | `/api/routing/match` | `{address}` → containing groups and the resulting decision |
 | POST | `/api/tls/inspect` | `{pem, encoding}` → certificate profile; PEM bundles return `certificates[]` |
 | POST | `/api/tls/probe` | `{url, timeoutMs, insecure}` → live peer chain + verification |
 | GET | `/api/tls/certificates` | Managed certificate metadata (no private keys) |
@@ -331,6 +337,30 @@ With `isolated: true` the server runs in a `--socks5-child` process. Its snapsho
 desired-state supervisor restarts the child if it exits unexpectedly and the snapshot reports the
 new `pid`; `POST .../stop` clears the desired state and `POST .../start` re-arms it. Deleting the
 server unregisters it first, then stops the child and waits for it to be reaped.
+
+### Address groups and routing rules
+
+`GET /api/routing` returns the built-in groups (`mainland`, `overseas`, `loopback`), custom groups,
+the ordered rule list and the default action. All of it is admin-only (`admin.settings`).
+
+- `mainland` is the APNIC allocation list for `CN`, embedded into the binary at build time from
+  `data/geo/cn-cidrs.txt` (regenerate with `scripts/gen-geo-cidrs.py`). `GET /api/routing` reports
+  the range counts under `geo`; a group whose data is missing reports `available: false` instead of
+  silently matching nothing.
+- `overseas` is a complement predicate: a public address that is not in `mainland` and not
+  private, loopback, link-local, multicast or documentation space. Private ranges match no
+  built-in group, so they fall through to the default action.
+- Built-in groups cannot be edited or deleted. A custom group cannot be deleted while a rule
+  references it.
+- Rules are evaluated in order; the first group that contains the destination wins. `POST
+  /api/routing/match` returns `{ok, address, groups[], matched, groupId, ruleId, action, proxy,
+  reason}` where `groups[]` is every group containing the address and `reason` is `rule` or
+  `default`.
+- `action` is `direct` or `proxy`. A proxy target carries `{protocol, host, port, username}`.
+  Upstream credentials are not persisted yet; a rule that includes a `password` is rejected with
+  `bad_request` rather than dropping the secret silently.
+- Custom groups are stored as CIDR text in the `routing.groups` setting; rules live in
+  `routing.rules`. The rule ids are generated on save and are stable across updates.
 
 `POST /api/transport/listeners` binds a local port; `transport` is `tcp` or `udp`. TCP listeners
 produce accepted-session records with `peer`, `state`, byte counters and a per-session event log.

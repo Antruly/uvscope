@@ -73,6 +73,9 @@ const en: Record<string, string> = {
   'help.note.language': 'Language & theme',
   'help.note.languageText':
     'Both persist locally. Language follows the browser on first visit; theme can follow the system.',
+  'help.note.routing': 'Routing',
+  'help.note.routingText':
+    'Address groups are evaluated top to bottom and the first group containing the destination decides. Built-in groups are read-only and shared by every proxy client.',
   'help.note.exposure': 'Exposure',
   'help.note.exposureText': 'Bind to 127.0.0.1 unless you have a trusted private network.',
 
@@ -174,6 +177,9 @@ const zh: Record<string, string> = {
   'help.note.previewText': '沙箱 HTML 从不执行脚本。远程图片与媒体仅在勾选选项后加载。',
   'help.note.language': '语言与主题',
   'help.note.languageText': '二者都保存在本地。语言在首次访问时跟随浏览器；主题可跟随系统。',
+  'help.note.routing': '路由',
+  'help.note.routingText':
+    '地址组自上而下匹配，命中即决定动作。内置地址组只读，所有代理客户端共用。',
   'help.note.exposure': '暴露面',
   'help.note.exposureText': '除非处于可信私有网络，否则绑定到 127.0.0.1。',
 

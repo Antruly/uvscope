@@ -10,6 +10,8 @@
 #include <db/uvcpp_db.h>
 #include <nlohmann/json.hpp>
 
+#include "routing.h"
+
 namespace uvscope {
 
 struct User {
@@ -241,6 +243,13 @@ class Store {
   std::optional<Socks5ServerConfig> socks5_server(const std::string& id) const;
   bool save_socks5_server(const Socks5ServerConfig& server, std::string* error);
   bool delete_socks5_server(const std::string& id, std::string* error);
+
+  // Address groups and routing rules shared by the outbound proxy clients.
+  // Built-in groups live in routing.cpp; only custom groups are persisted.
+  std::vector<AddressGroup> address_groups() const;
+  bool save_address_groups(const std::vector<AddressGroup>& groups, std::string* error);
+  RoutingConfig routing_config() const;
+  bool save_routing_config(const RoutingConfig& config, std::string* error);
 
   std::vector<ProxyConfig> proxies() const;
   std::optional<ProxyConfig> proxy(const std::string& id) const;

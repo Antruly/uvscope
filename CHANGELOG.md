@@ -4,6 +4,19 @@ All notable changes to uvscope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Address groups and routing rules** (`/api/routing`, Address Groups page). Built-in
+  `mainland` / `overseas` / `loopback` groups are read-only; custom groups hold CIDR text. Rules
+  are evaluated top to bottom and the first group containing the destination decides between
+  `direct` and an upstream `proxy` (`socks5` or `http`). `POST /api/routing/match` explains the
+  decision for a single address, including every group that contains it. The mainland list is
+  generated from APNIC delegation data by `scripts/gen-geo-cidrs.py` and embedded at build time;
+  `overseas` is the complement of mainland among public addresses. Upstream proxy credentials are
+  not persisted yet: a rule that carries a password is rejected instead of silently dropping it.
+
 ## [1.0.1] - 2026-10-27
 
 ### Added

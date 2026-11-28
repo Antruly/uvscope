@@ -59,6 +59,7 @@ Most tools stop at request/response. uvscope is built around the whole handshake
 | TCP / UDP server listeners with sessions, datagrams and replies | Stable |
 | SOCKS5 client for HTTP/TCP/UDP with authentication and error classification | Stable |
 | SOCKS5 server (CONNECT / BIND / UDP ASSOCIATE) with authentication and session logs | Stable |
+| Named address groups (built-in mainland / overseas / loopback, custom CIDR sets) and first-match routing rules shared by the proxy clients | Stable |
 | Virtual terminal (Unix PTY / Windows ConPTY) with an offline command library | Stable — off by default |
 
 ### Gateway and long-lived services

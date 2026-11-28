@@ -731,6 +731,7 @@ bool Application::initialize() {
   register_dashboard_routes();
   register_debug_routes();
   register_socks5_routes();
+  register_routing_routes();
   register_terminal_routes();
   register_ws_routes();
   register_quic_routes();
@@ -2115,6 +2116,239 @@ void Application::register_socks5_routes() {
       return;
     }
     send_json(resp, 200, result);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Address groups and routing rules
+//
+// The built-in groups are shared by the SOCKS5 and HTTP proxy clients; custom
+// groups are stored as CIDR text so the settings page can round-trip them.
+// ---------------------------------------------------------------------------
+namespace {
+
+std::vector<AddressGroup> all_address_groups(const Store& store) {
+  std::vector<AddressGroup> groups = builtin_address_groups();
+  for (auto& group : store.address_groups()) groups.push_back(std::move(group));
+  return groups;
+}
+
+bool group_name_taken(const std::vector<AddressGroup>& groups,
+                      const std::string& name, const std::string& except_id) {
+  const std::string wanted = lower(name);
+  for (const auto& group : groups) {
+    if (group.id == except_id) continue;
+    if (lower(group.name) == wanted) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+void Application::register_routing_routes() {
+  app_.get("/api/routing", [this](uvcpp::uvcpp_web_request& req,
+                                  uvcpp::uvcpp_web_response& resp,
+                                  uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const auto groups = all_address_groups(store_);
+    nlohmann::json list = nlohmann::json::array();
+    std::size_t ipv4_ranges = 0;
+    std::size_t ipv6_ranges = 0;
+    for (const auto& group : groups) {
+      list.push_back(address_group_json(group));
+      if (group.id != "mainland") continue;
+      for (const auto& range : group.ranges) {
+        if (range.v6) {
+          ++ipv6_ranges;
+        } else {
+          ++ipv4_ranges;
+        }
+      }
+    }
+    const auto config = store_.routing_config();
+    send_json(resp, 200,
+              {{"ok", true},
+               {"groups", list},
+               {"routing", routing_config_json(config)},
+               {"geo",
+                {{"source", kGeoMainlandSource},
+                 {"ipv4Ranges", ipv4_ranges},
+                 {"ipv6Ranges", ipv6_ranges}}}});
+  });
+
+  app_.post("/api/routing/groups", [this](uvcpp::uvcpp_web_request& req,
+                                          uvcpp::uvcpp_web_response& resp,
+                                          uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    AddressGroup group;
+    std::string error;
+    if (!custom_group_from_json(*body, &group, &error)) {
+      send_error(resp, 400, error, "bad_request");
+      return;
+    }
+    auto groups = store_.address_groups();
+    if (group_name_taken(builtin_address_groups(), group.name, std::string()) ||
+        group_name_taken(groups, group.name, std::string())) {
+      send_error(resp, 400, "an address group with that name already exists",
+                 "duplicate_group");
+      return;
+    }
+    group.id = make_id();
+    groups.push_back(group);
+    if (!store_.save_address_groups(groups, &error)) {
+      send_error(resp, 500, error, "persist_failed");
+      return;
+    }
+    audit_event(store_, req, principal->user, "routing.group.create",
+                group.id, group.name);
+    send_json(resp, 200, {{"ok", true}, {"group", address_group_json(group)}});
+  });
+
+  app_.put("/api/routing/groups/:id", [this](uvcpp::uvcpp_web_request& req,
+                                             uvcpp::uvcpp_web_response& resp,
+                                             uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id) {
+      send_error(resp, 400, "group id is required", "bad_request");
+      return;
+    }
+    for (const auto& group : builtin_address_groups()) {
+      if (group.id == *id) {
+        send_error(resp, 400, "built-in address groups cannot be modified",
+                   "builtin_group");
+        return;
+      }
+    }
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    AddressGroup updated;
+    std::string error;
+    if (!custom_group_from_json(*body, &updated, &error)) {
+      send_error(resp, 400, error, "bad_request");
+      return;
+    }
+    auto groups = store_.address_groups();
+    auto it = std::find_if(groups.begin(), groups.end(),
+                           [&](const AddressGroup& group) { return group.id == *id; });
+    if (it == groups.end()) {
+      send_error(resp, 404, "address group not found", "not_found");
+      return;
+    }
+    if (group_name_taken(builtin_address_groups(), updated.name, *id) ||
+        group_name_taken(groups, updated.name, *id)) {
+      send_error(resp, 400, "an address group with that name already exists",
+                 "duplicate_group");
+      return;
+    }
+    updated.id = *id;
+    *it = std::move(updated);
+    if (!store_.save_address_groups(groups, &error)) {
+      send_error(resp, 500, error, "persist_failed");
+      return;
+    }
+    audit_event(store_, req, principal->user, "routing.group.update", *id, "");
+    send_json(resp, 200, {{"ok", true}, {"group", address_group_json(*it)}});
+  });
+
+  app_.del("/api/routing/groups/:id", [this](uvcpp::uvcpp_web_request& req,
+                                             uvcpp::uvcpp_web_response& resp,
+                                             uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const std::string* id = req.param("id");
+    if (!id) {
+      send_error(resp, 400, "group id is required", "bad_request");
+      return;
+    }
+    for (const auto& group : builtin_address_groups()) {
+      if (group.id == *id) {
+        send_error(resp, 400, "built-in address groups cannot be modified",
+                   "builtin_group");
+        return;
+      }
+    }
+    auto groups = store_.address_groups();
+    const auto before = groups.size();
+    groups.erase(std::remove_if(groups.begin(), groups.end(),
+                                [&](const AddressGroup& group) {
+                                  return group.id == *id;
+                                }),
+                 groups.end());
+    if (groups.size() == before) {
+      send_error(resp, 404, "address group not found", "not_found");
+      return;
+    }
+    for (const auto& rule : store_.routing_config().rules) {
+      if (rule.groupId != *id) continue;
+      send_error(resp, 400, "the address group is used by a routing rule",
+                 "group_in_use");
+      return;
+    }
+    std::string error;
+    if (!store_.save_address_groups(groups, &error)) {
+      send_error(resp, 500, error, "persist_failed");
+      return;
+    }
+    audit_event(store_, req, principal->user, "routing.group.delete", *id, "");
+    send_json(resp, 200, {{"ok", true}});
+  });
+
+  app_.put("/api/routing/rules", [this](uvcpp::uvcpp_web_request& req,
+                                        uvcpp::uvcpp_web_response& resp,
+                                        uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const auto groups = all_address_groups(store_);
+    RoutingConfig config;
+    std::string error;
+    if (!routing_config_from_json(*body, groups, &config, &error)) {
+      send_error(resp, 400, error, "bad_request");
+      return;
+    }
+    if (!store_.save_routing_config(config, &error)) {
+      send_error(resp, 500, error, "persist_failed");
+      return;
+    }
+    audit_event(store_, req, principal->user, "routing.rules.update", "",
+                std::to_string(config.rules.size()) + " rules");
+    send_json(resp, 200, {{"ok", true}, {"routing", routing_config_json(config)}});
+  });
+
+  app_.post("/api/routing/match", [this](uvcpp::uvcpp_web_request& req,
+                                         uvcpp::uvcpp_web_response& resp,
+                                         uvcpp::uvcpp_web_next) {
+    const auto principal = auth_.require(req, resp, "admin.settings");
+    if (!principal) return;
+    const auto body = parse_json(req, resp);
+    if (!body) return;
+    const std::string address = string_field(*body, "address");
+    IpAddress ip;
+    std::string error;
+    if (!parse_ip_address(address, &ip, &error)) {
+      send_error(resp, 400, error, "bad_request");
+      return;
+    }
+    const auto groups = all_address_groups(store_);
+    const auto config = store_.routing_config();
+    const auto decision = route_decide(config, groups, ip);
+    send_json(resp, 200,
+              {{"ok", true},
+               {"address", address},
+               {"groups", matching_group_ids(groups, ip)},
+               {"matched", decision.matched},
+               {"groupId", decision.groupId},
+               {"ruleId", decision.ruleId},
+               {"action", decision.action},
+               {"proxy", routing_proxy_json(decision.proxy)},
+               {"reason", decision.reason}});
   });
 }
 
@@ -4061,6 +4295,96 @@ int Application::self_check() {
   check(!hash.empty(), "password hash created");
   check(password_verify("correct horse battery staple", hash), "password verifies");
   check(!password_verify("wrong password", hash), "wrong password rejected");
+
+  // Address groups and routing rules. Offline: the mainland list is embedded at
+  // build time, so this also proves the generated data reached the binary.
+  {
+    std::string routing_error;
+    IpAddress ip;
+    check(parse_ip_address("127.0.0.1", &ip, &routing_error) && ip.valid && !ip.v6,
+          "IP literal parsing normalises IPv4");
+    check(parse_ip_address("::ffff:1.2.3.4", &ip, &routing_error) && !ip.v6,
+          "IPv4-mapped IPv6 normalises to IPv4");
+    IpRange subnet;
+    check(parse_cidr_range("192.168.5.0/24", &subnet, &routing_error),
+          "CIDR parses");
+    IpAddress inside;
+    IpAddress outside;
+    parse_ip_address("192.168.5.7", &inside, nullptr);
+    parse_ip_address("192.168.6.1", &outside, nullptr);
+    check(ip_in_range(subnet, inside) && !ip_in_range(subnet, outside),
+          "CIDR containment is exact");
+
+    AddressGroup lan;
+    routing_error.clear();
+    check(custom_group_from_json(
+              {{"name", "lan"}, {"cidrs", {"10.0.0.0/8", "10.1.0.0/16"}}},
+              &lan, &routing_error),
+          "custom address group parses");
+    lan.id = "lan";
+
+    std::vector<AddressGroup> all = builtin_address_groups();
+    all.push_back(lan);
+    auto find_group = [&all](const char* id) -> const AddressGroup* {
+      for (const auto& group : all) {
+        if (group.id == id) return &group;
+      }
+      return nullptr;
+    };
+
+    IpAddress loopback_ip;
+    IpAddress cn_ip;
+    IpAddress public_ip;
+    IpAddress private_ip;
+    parse_ip_address("127.0.0.1", &loopback_ip, nullptr);
+    parse_ip_address("1.0.1.1", &cn_ip, nullptr);
+    parse_ip_address("8.8.8.8", &public_ip, nullptr);
+    parse_ip_address("10.0.0.1", &private_ip, nullptr);
+
+    const AddressGroup* loopback = find_group("loopback");
+    check(loopback != nullptr && group_contains(all, *loopback, loopback_ip),
+          "loopback group contains 127.0.0.1");
+    const AddressGroup* mainland = find_group("mainland");
+    check(mainland != nullptr && !mainland->ranges.empty() &&
+              group_contains(all, *mainland, cn_ip),
+          "embedded mainland ranges load and match 1.0.1.1");
+    const AddressGroup* overseas = find_group("overseas");
+    check(overseas != nullptr && group_contains(all, *overseas, public_ip),
+          "public address outside the mainland is overseas");
+    check(overseas != nullptr && !group_contains(all, *overseas, private_ip),
+          "private address is not overseas");
+    check(overseas != nullptr && !group_contains(all, *overseas, cn_ip),
+          "mainland address is not overseas");
+    const AddressGroup* custom = find_group("lan");
+    check(custom != nullptr && group_contains(all, *custom, private_ip),
+          "custom group matches its CIDR");
+
+    nlohmann::json rules = nlohmann::json::array();
+    rules.push_back({{"groupId", "lan"},
+                     {"action", "proxy"},
+                     {"proxy",
+                      {{"protocol", "socks5"}, {"host", "127.0.0.1"}, {"port", 1080}}}});
+    const nlohmann::json routing_input = {{"rules", rules},
+                                          {"default", {{"action", "direct"}}}};
+    RoutingConfig config;
+    routing_error.clear();
+    check(routing_config_from_json(routing_input, all, &config, &routing_error),
+          "routing rules parse against the available groups");
+    const auto lan_decision = route_decide(config, all, private_ip);
+    check(lan_decision.matched && lan_decision.action == "proxy" &&
+              lan_decision.groupId == "lan",
+          "a rule routes its group to the proxy");
+    const auto fallback = route_decide(config, all, public_ip);
+    check(!fallback.matched && fallback.action == "direct",
+          "unmatched addresses use the default action");
+
+    RoutingConfig rejected;
+    nlohmann::json unknown = {{"rules", nlohmann::json::array()}};
+    unknown["rules"].push_back({{"groupId", "does-not-exist"}, {"action", "direct"}});
+    routing_error.clear();
+    check(!routing_config_from_json(unknown, all, &rejected, &routing_error),
+          "a rule with an unknown group is rejected");
+  }
 
   const auto temp = std::filesystem::temp_directory_path() / ("uvscope-selfcheck-" + random_hex(6));
   std::string error;

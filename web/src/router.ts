@@ -76,6 +76,12 @@ export const router = createRouter({
       meta: { title: 'Users & Roles', titleKey: 'nav.users', icon: 'users', componentName: 'UsersView', admin: 'users' },
     },
     {
+      path: '/routing',
+      name: 'routing',
+      component: () => import('./views/RoutingView.vue'),
+      meta: { title: 'Address Groups', titleKey: 'nav.routing', icon: 'globe', componentName: 'RoutingView', admin: 'settings' },
+    },
+    {
       path: '/settings',
       name: 'settings',
       component: () => import('./views/SettingsView.vue'),

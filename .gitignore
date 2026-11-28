@@ -30,7 +30,9 @@ yarn-error.log*
 uvscope.db
 uvscope.db-wal
 uvscope.db-shm
-data/
+data/*
+!data/geo/
+!data/geo/**
 *.log
 
 # Dependencies and SDKs

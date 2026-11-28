@@ -1401,6 +1401,71 @@ if issued_meta and ca_meta.get("certPath"):
     check(status == 200 and deleted.get("ok") is True,
           f"issued certificate delete failed: {deleted}")
 
+# Address groups and routing rules: the built-in groups are read-only, custom
+# groups round-trip CIDR text, and the matcher follows rule order.
+status, routing = call("GET", "/api/routing")
+check(status == 200 and routing.get("ok") is True, f"routing read failed: {routing}")
+group_ids = {group.get("id") for group in routing.get("groups", [])}
+check({"mainland", "overseas", "loopback"} <= group_ids,
+      f"built-in address groups missing: {group_ids}")
+mainland = next((g for g in routing.get("groups", []) if g.get("id") == "mainland"), {})
+check(mainland.get("rangeCount", 0) > 0,
+      "the embedded mainland ranges are empty")
+status, created_group = call("POST", "/api/routing/groups", {
+    "name": "smoke-lan", "cidrs": ["10.77.0.0/16", "10.78.0.0/16"],
+})
+check(status == 200 and created_group.get("ok") is True,
+      f"custom address group create failed: {created_group}")
+smoke_group = created_group.get("group", {}).get("id", "")
+check(bool(smoke_group), "custom address group has no id")
+if smoke_group:
+    status, rules = call("PUT", "/api/routing/rules", {
+        "rules": [
+            {"groupId": smoke_group, "action": "proxy",
+             "proxy": {"protocol": "socks5", "host": "127.0.0.1", "port": 1080}},
+            {"groupId": "overseas", "action": "proxy",
+             "proxy": {"protocol": "socks5", "host": "127.0.0.1", "port": 1080}},
+        ],
+        "default": {"action": "direct"},
+    })
+    check(status == 200 and rules.get("ok") is True,
+          f"routing rules save failed: {rules}")
+
+    status, matched = call("POST", "/api/routing/match", {"address": "10.77.1.2"})
+    check(matched.get("action") == "proxy" and matched.get("groupId") == smoke_group,
+          f"custom group did not route to the proxy: {matched}")
+    status, overseas = call("POST", "/api/routing/match", {"address": "8.8.8.8"})
+    check(overseas.get("action") == "proxy" and overseas.get("groupId") == "overseas",
+          f"overseas address did not route to the proxy: {overseas}")
+    status, private_ip = call("POST", "/api/routing/match", {"address": "172.20.1.1"})
+    check(private_ip.get("reason") == "default" and private_ip.get("action") == "direct",
+          f"unmatched private address did not use the default action: {private_ip}")
+    status, loopback = call("POST", "/api/routing/match", {"address": "127.0.0.1"})
+    check(loopback.get("reason") == "default" and "loopback" in loopback.get("groups", []),
+          f"loopback address did not fall through to the default: {loopback}")
+
+    # Built-in groups are immutable and a referenced group cannot be deleted.
+    status, _ = call("DELETE", "/api/routing/groups/mainland")
+    check(status == 400, "a built-in address group was deleted")
+    status, _ = call("DELETE", f"/api/routing/groups/{smoke_group}")
+    check(status == 400, "an address group referenced by a rule was deleted")
+
+    # Upstream credentials are not persisted yet; the API must say so instead
+    # of silently dropping the password.
+    status, rejected_proxy = call("PUT", "/api/routing/rules", {
+        "rules": [{"groupId": "overseas", "action": "proxy",
+                   "proxy": {"protocol": "socks5", "host": "127.0.0.1",
+                             "port": 1080, "password": "x"}}],
+        "default": {"action": "direct"},
+    })
+    check(status == 400 and "password" in rejected_proxy.get("error", ""),
+          f"proxy credentials were accepted: {rejected_proxy}")
+
+    call("PUT", "/api/routing/rules", {"rules": [], "default": {"action": "direct"}})
+    status, deleted_group = call("DELETE", f"/api/routing/groups/{smoke_group}")
+    check(status == 200 and deleted_group.get("ok") is True,
+          f"custom address group delete failed: {deleted_group}")
+
 # Virtual terminal: the module is off by default, then a real PTY round-trip.
 status, settings = call("PUT", "/api/settings", {"modules": {"terminal": True}})
 check(status == 200 and settings.get("ok") is True,
