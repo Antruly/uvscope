@@ -348,7 +348,8 @@ std::string certificate_common_name(X509* cert) {
       X509_get_subject_name(cert));
   const int index = X509_NAME_get_index_by_NID(name, NID_commonName, -1);
   if (index < 0) return {};
-  ASN1_STRING* data = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(name, index));
+  const ASN1_STRING* data =
+      X509_NAME_ENTRY_get_data(X509_NAME_get_entry(name, index));
   if (data == nullptr) return {};
   unsigned char* utf8 = nullptr;
   const int len = ASN1_STRING_to_UTF8(&utf8, data);
